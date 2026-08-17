@@ -1,0 +1,276 @@
+:root {
+  --color-bg: #f5f6f8;
+  --color-bg-hover: #ffffff;
+  --color-top-bar-bg: #ffffff;
+  --color-top-bar-hover: #f5f6f8;
+  --color-text: #1a1d24;
+  --color-text-muted: #6b7280;
+  --color-primary-action: #2563eb;
+  --color-primary-action-hover: #dde3ea;
+  --color-accent-green: #16803c;
+  --color-accent-red: #dc2626;
+  --color-accent-blue: #6b7280;
+  --color-surface: #ffffff;
+  --color-border: #e2e5ea;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 14px;
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-header-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero-logo {
+  width: 72px;
+  height: 72px;
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 20px;
+}
+
+.field {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.btn {
+  background: var(--color-primary-action-hover);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 13px;
+}
+
+.btn-primary {
+  background: var(--color-primary-action);
+  color: white;
+  border-color: var(--color-primary-action);
+}
+
+.btn-danger {
+  color: var(--color-accent-red);
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+.version-diff-panel {
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--color-bg);
+}
+
+.version-diff-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.version-diff-controls select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.version-diff-body {
+  font-size: 13px;
+  line-height: 1.7;
+  border-radius: 6px;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.version-diff-added {
+  background: rgba(22, 128, 60, 0.18);
+  color: var(--color-accent-green);
+}
+
+.version-diff-removed {
+  background: rgba(220, 38, 38, 0.18);
+  color: var(--color-accent-red);
+  text-decoration: line-through;
+}
+
+/* Character grid (home page) */
+.character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.character-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 150ms ease;
+}
+
+.character-card:hover {
+  border-color: var(--color-primary-action);
+}
+
+.character-card-portrait {
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 40px;
+  overflow: hidden;
+}
+
+.character-card-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.character-card-body {
+  padding: 12px 14px;
+}
+
+.character-card-name {
+  font-weight: 700;
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+.character-card-snippet {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Character portrait picker (detail page header) */
+.portrait-picker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.portrait-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 32px;
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.portrait-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Field editor (personality/scenario/greeting) */
+.field-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.field-editor-title {
+  font-weight: 700;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.content-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.content-textarea:read-only {
+  opacity: 0.7;
+  cursor: default;
+}
