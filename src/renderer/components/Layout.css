@@ -1,0 +1,44 @@
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-shrink: 0;
+  background: var(--color-top-bar-bg);
+  border-bottom: 1px solid var(--color-border);
+  padding: 10px 24px;
+}
+
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.topbar-logo {
+  width: 24px;
+  height: 24px;
+}
+
+.topbar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.topbar a {
+  display: block;
+  padding: 8px 14px;
+  border-radius: 6px;
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.topbar a:hover,
+.topbar a.active {
+  background: var(--color-top-bar-hover);
+}
