@@ -12,7 +12,7 @@ import {
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
-import { chooseCharacterImage, deleteCharacterImage } from './images';
+import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { Database } from 'sql.js';
@@ -179,6 +179,39 @@ function registerIPCHandlers() {
   ipcMain.handle('characters:update', (_, id: string, input: UpdateCharacterInput) =>
     characterService.updateCharacter(id, input)
   );
+
+  // Clones a character's name (suffixed), portrait file, and every field's full version
+  // history into a brand-new character -- independent from the source from that point on.
+  ipcMain.handle('characters:clone', (_, id: string) => {
+    const source = characterService.getCharacterById(id);
+    if (!source) {
+      throw new Error(`Character with id ${id} not found`);
+    }
+
+    const cloned = characterService.createCharacter({ name: `${source.name} (Copy)` });
+    const clonedImageUrl = source.imageUrl ? cloneCharacterImage(source.imageUrl) : null;
+    if (clonedImageUrl) {
+      characterService.updateCharacter(cloned.id, { imageUrl: clonedImageUrl });
+    }
+
+    const sourceFields = fieldService.getFieldsByCharacter(source.id);
+    for (const fieldType of FIELD_TYPES) {
+      const newField = fieldService.createField(cloned.id, fieldType);
+      const sourceField = sourceFields.find((f) => f.fieldType === fieldType);
+      const sourceVersions = sourceField ? fieldVersionService.getVersionsByField(sourceField.id) : [];
+
+      if (sourceVersions.length === 0) {
+        fieldVersionService.createVersion({ fieldId: newField.id, content: '' });
+      } else {
+        for (const version of sourceVersions) {
+          fieldVersionService.createVersion({ fieldId: newField.id, content: version.content });
+        }
+      }
+    }
+
+    return characterService.getCharacterById(cloned.id)!;
+  });
+
   ipcMain.handle('characters:delete', (_, id: string) => {
     const existing = characterService.getCharacterById(id);
     characterService.deleteCharacter(id);

@@ -10,6 +10,7 @@ declare global {
         getById: (id: string) => Promise<Character | null>;
         create: (input: CreateCharacterInput) => Promise<Character>;
         update: (id: string, input: UpdateCharacterInput) => Promise<Character>;
+        clone: (id: string) => Promise<Character>;
         delete: (id: string) => Promise<{ success: boolean }>;
       };
       fields: {

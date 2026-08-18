@@ -38,6 +38,22 @@ export async function chooseCharacterImage(window: BrowserWindow | null): Promis
   return destPath;
 }
 
+/** Copies an existing portrait file to a new uuid-named file in userData/images, so a cloned
+ * character's image has its own independent lifecycle (deleting one character's image can't
+ * orphan another's). Returns null if the source file is missing or unreadable. */
+export function cloneCharacterImage(imagePath: string): string | null {
+  try {
+    const ext = path.extname(imagePath).toLowerCase().replace('.', '') || 'png';
+    const imagesDir = getImagesDir();
+    fs.mkdirSync(imagesDir, { recursive: true });
+    const destPath = path.join(imagesDir, `${uuidv4()}.${ext}`);
+    fs.copyFileSync(imagePath, destPath);
+    return destPath;
+  } catch {
+    return null;
+  }
+}
+
 /** Best-effort cleanup when a character is deleted or its image is replaced -- an orphaned
  * file left behind isn't a correctness problem, just wasted disk space, so failures here are
  * swallowed rather than surfaced to the user. */
