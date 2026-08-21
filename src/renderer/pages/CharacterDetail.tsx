@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { CharacterField, FIELD_TYPES } from '../../shared/types/characterField';
+import { CharacterImage } from '../../shared/types/characterImage';
 import FieldEditor from '../components/FieldEditor';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
@@ -15,6 +16,8 @@ export default function CharacterDetail() {
   const navigate = useNavigate();
   const [character, setCharacter] = useState<Character | null>(null);
   const [fields, setFields] = useState<CharacterField[]>([]);
+  const [images, setImages] = useState<CharacterImage[]>([]);
+  const [imageIndex, setImageIndex] = useState(0);
   const [nameDraft, setNameDraft] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
 
@@ -22,10 +25,11 @@ export default function CharacterDetail() {
     if (characterId) load(characterId);
   }, [characterId]);
 
-  async function load(id: string) {
-    const [c, fieldList] = await Promise.all([
+  async function load(id: string, preferImageId?: string) {
+    const [c, fieldList, imageList] = await Promise.all([
       window.electronAPI.characters.getById(id),
       window.electronAPI.fields.getByCharacter(id),
+      window.electronAPI.characterImages.getByCharacter(id),
     ]);
     if (!c) {
       navigate('/');
@@ -34,6 +38,9 @@ export default function CharacterDetail() {
     setCharacter(c);
     setNameDraft(c.name);
     setFields(fieldList);
+    setImages(imageList);
+    const preferredIndex = preferImageId ? imageList.findIndex((img) => img.id === preferImageId) : -1;
+    setImageIndex(preferredIndex >= 0 ? preferredIndex : 0);
   }
 
   async function handleNameBlur() {
@@ -45,29 +52,42 @@ export default function CharacterDetail() {
     }
   }
 
-  async function handleChooseImage() {
+  async function handleAddImage() {
     if (!characterId) return;
     setImageBusy(true);
     try {
-      const path = await window.electronAPI.images.choose();
-      if (path) {
-        await window.electronAPI.characters.update(characterId, { imageUrl: path });
-        await load(characterId);
+      const added = await window.electronAPI.characterImages.add(characterId);
+      if (added) {
+        await load(characterId, added.id);
       }
     } finally {
       setImageBusy(false);
     }
   }
 
-  async function handleRemoveImage() {
+  async function handleRemoveCurrentImage() {
     if (!characterId) return;
-    await window.electronAPI.characters.update(characterId, { imageUrl: null });
+    const current = images[imageIndex];
+    if (!current) return;
+    if (!confirm('Remove this image? This cannot be undone.')) return;
+    await window.electronAPI.characterImages.remove(current.id);
     await load(characterId);
+  }
+
+  function showPrevImage() {
+    if (images.length < 2) return;
+    setImageIndex((i) => (i - 1 + images.length) % images.length);
+  }
+
+  function showNextImage() {
+    if (images.length < 2) return;
+    setImageIndex((i) => (i + 1) % images.length);
   }
 
   if (!character) return <div className="text-muted">Loading…</div>;
 
   const fieldsByType = new Map(fields.map((f) => [f.fieldType, f]));
+  const currentImage = images[imageIndex];
 
   return (
     <div className="character-detail-page">
@@ -97,14 +117,50 @@ export default function CharacterDetail() {
 
       <div className="character-detail-portrait-panel">
         <div className="character-detail-portrait-large">
-          {character.imageUrl ? <img src={`file://${character.imageUrl}`} alt={character.name} /> : <span>?</span>}
+          {currentImage ? <img src={`file://${currentImage.path}`} alt={character.name} /> : <span>?</span>}
+
+          {images.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="portrait-nav-btn portrait-nav-prev"
+                onClick={showPrevImage}
+                aria-label="Previous image"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="portrait-nav-btn portrait-nav-next"
+                onClick={showNextImage}
+                aria-label="Next image"
+              >
+                ›
+              </button>
+            </>
+          )}
         </div>
+
+        {images.length > 1 && (
+          <div className="portrait-dots">
+            {images.map((img, i) => (
+              <button
+                key={img.id}
+                type="button"
+                className={`portrait-dot${i === imageIndex ? ' active' : ''}`}
+                onClick={() => setImageIndex(i)}
+                aria-label={`Show image ${i + 1} of ${images.length}`}
+              />
+            ))}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" disabled={imageBusy} onClick={handleChooseImage} style={{ flex: 1 }}>
-            {imageBusy ? 'Choosing…' : character.imageUrl ? 'Change Portrait…' : 'Choose Portrait…'}
+          <button className="btn" disabled={imageBusy} onClick={handleAddImage} style={{ flex: 1 }}>
+            {imageBusy ? 'Adding…' : 'Add Image…'}
           </button>
-          {character.imageUrl && (
-            <button className="btn btn-danger" onClick={handleRemoveImage}>
+          {currentImage && (
+            <button className="btn btn-danger" onClick={handleRemoveCurrentImage}>
               Remove
             </button>
           )}

@@ -23,8 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('fieldVersions:delete', id),
   },
 
-  images: {
-    choose: () => ipcRenderer.invoke('images:choose'),
+  characterImages: {
+    getByCharacter: (characterId: string) => ipcRenderer.invoke('characterImages:getByCharacter', characterId),
+    getAllGroupedByCharacter: () => ipcRenderer.invoke('characterImages:getAllGroupedByCharacter'),
+    add: (characterId: string) => ipcRenderer.invoke('characterImages:add', characterId),
+    remove: (id: string) => ipcRenderer.invoke('characterImages:remove', id),
   },
 
   dbLocation: {

@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
+import { CharacterImage } from '../../shared/types/characterImage';
+
+// Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
+// instead of shrinking further.
+function tileMinWidthFor(count: number): number {
+  if (count <= 4) return 300;
+  if (count <= 8) return 240;
+  if (count <= 16) return 200;
+  if (count <= 30) return 170;
+  return 140;
+}
 
 export default function CharacterList() {
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [coverImages, setCoverImages] = useState<Record<string, CharacterImage[]>>({});
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -13,7 +25,12 @@ export default function CharacterList() {
 
   async function load() {
     setLoading(true);
-    setCharacters(await window.electronAPI.characters.getAll());
+    const [characterList, images] = await Promise.all([
+      window.electronAPI.characters.getAll(),
+      window.electronAPI.characterImages.getAllGroupedByCharacter(),
+    ]);
+    setCharacters(characterList);
+    setCoverImages(images);
     setLoading(false);
   }
 
@@ -72,29 +89,31 @@ export default function CharacterList() {
       ) : characters.length === 0 ? (
         <div className="text-muted">No characters yet -- create one above.</div>
       ) : (
-        <div className="character-grid">
-          {characters.map((character) => (
-            <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
-              <div className="character-card-portrait">
-                {character.imageUrl ? (
-                  <img src={`file://${character.imageUrl}`} alt={character.name} />
-                ) : (
-                  <span>?</span>
-                )}
-              </div>
-              <div className="character-card-body">
-                <p className="character-card-name">{character.name}</p>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn" onClick={(e) => handleClone(e, character.id)}>
-                    Clone
-                  </button>
-                  <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
-                    Delete
-                  </button>
+        <div
+          className="character-grid"
+          style={{ '--tile-min-width': `${tileMinWidthFor(characters.length)}px` } as React.CSSProperties}
+        >
+          {characters.map((character) => {
+            const cover = coverImages[character.id]?.[0];
+            return (
+              <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
+                <div className="character-card-portrait">
+                  {cover ? <img src={`file://${cover.path}`} alt={character.name} /> : <span>?</span>}
                 </div>
-              </div>
-            </Link>
-          ))}
+                <div className="character-card-body">
+                  <p className="character-card-name">{character.name}</p>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                      Clone
+                    </button>
+                    <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
