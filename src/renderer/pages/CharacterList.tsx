@@ -33,6 +33,13 @@ export default function CharacterList() {
     await load();
   }
 
+  async function handleClone(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    await window.electronAPI.characters.clone(id);
+    await load();
+  }
+
   return (
     <div>
       <div className="page-header page-header-hero">
@@ -77,9 +84,14 @@ export default function CharacterList() {
               </div>
               <div className="character-card-body">
                 <p className="character-card-name">{character.name}</p>
-                <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
-                  Delete
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                    Clone
+                  </button>
+                  <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
+                    Delete
+                  </button>
+                </div>
               </div>
             </Link>
           ))}

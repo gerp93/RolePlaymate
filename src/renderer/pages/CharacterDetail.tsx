@@ -70,39 +70,45 @@ export default function CharacterDetail() {
   const fieldsByType = new Map(fields.map((f) => [f.fieldType, f]));
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="portrait-picker">
-          <div className="portrait-preview">
-            {character.imageUrl ? <img src={`file://${character.imageUrl}`} alt={character.name} /> : <span>?</span>}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onBlur={handleNameBlur}
-              style={{ fontSize: 22, fontWeight: 700, border: 'none', background: 'transparent', padding: '4px 0' }}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn" disabled={imageBusy} onClick={handleChooseImage}>
-                {imageBusy ? 'Choosing…' : character.imageUrl ? 'Change Portrait…' : 'Choose Portrait…'}
-              </button>
-              {character.imageUrl && (
-                <button className="btn btn-danger" onClick={handleRemoveImage}>
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
+    <div className="character-detail-page">
+      <div className="character-detail-fields">
+        <div className="page-header">
+          <input
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={handleNameBlur}
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              border: 'none',
+              background: 'transparent',
+              padding: '4px 0',
+              width: '100%',
+            }}
+          />
         </div>
-      </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 820 }}>
         {FIELD_TYPES.map((fieldType) => {
           const field = fieldsByType.get(fieldType);
           if (!field) return null;
           return <FieldEditor key={field.id} field={field} placeholder={FIELD_PLACEHOLDERS[fieldType]} />;
         })}
+      </div>
+
+      <div className="character-detail-portrait-panel">
+        <div className="character-detail-portrait-large">
+          {character.imageUrl ? <img src={`file://${character.imageUrl}`} alt={character.name} /> : <span>?</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" disabled={imageBusy} onClick={handleChooseImage} style={{ flex: 1 }}>
+            {imageBusy ? 'Choosing…' : character.imageUrl ? 'Change Portrait…' : 'Choose Portrait…'}
+          </button>
+          {character.imageUrl && (
+            <button className="btn btn-danger" onClick={handleRemoveImage}>
+              Remove
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
