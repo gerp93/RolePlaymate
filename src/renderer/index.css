@@ -338,7 +338,7 @@ textarea {
 
 .content-textarea {
   width: 100%;
-  min-height: 120px;
+  min-height: 280px;
   resize: vertical;
   line-height: 1.6;
 }
@@ -346,4 +346,48 @@ textarea {
 .content-textarea:read-only {
   opacity: 0.7;
   cursor: default;
+}
+
+.content-preview {
+  width: 100%;
+  min-height: 280px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-hover);
+  cursor: text;
+}
+
+.content-preview:hover {
+  border-color: var(--color-primary-action);
+}
+
+.content-preview-empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.content-paragraph {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.content-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.content-list {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.content-list:last-child {
+  margin-bottom: 0;
+}
+
+.content-macro {
+  color: var(--color-accent-blue);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 0.92em;
 }
