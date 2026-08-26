@@ -59,6 +59,46 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
       <GroupHeading>Scene instructions</GroupHeading>
       <Section title="Instructions (this turn)" icon="🎬" body={debug.directions} defaultOpen />
 
+      <GroupHeading>Lore ({debug.lore?.selected.length ?? 0} injected)</GroupHeading>
+      {debug.lore && (debug.lore.selected.length > 0 || debug.lore.rejected.length > 0) ? (
+        <Panel
+          title={`Lorebook (${debug.lore.selected.length}/${debug.lore.consideredCount} fired)`}
+          icon="📖"
+          body={renderLoreText(debug.lore)}
+        >
+          <pre className="debug-body">
+            <span className="seg-tag">{`Pool: ${debug.lore.consideredCount} in scope → ${debug.lore.selected.length} injected, ${debug.lore.rejected.length} rejected\n`}</span>
+            <span className="seg-tag">{`Token budget: ~${debug.lore.budgetTokensUsed}/${debug.lore.budgetTokensMax}\n\n`}</span>
+            {debug.lore.selected.length > 0 && (
+              <span className="seg-tag">{'── INJECTED ──\n'}</span>
+            )}
+            {debug.lore.selected.map((entry) => (
+              <span key={entry.entryId} className={entry.scope === 'personal' ? 'seg-assistant' : 'seg-user'}>
+                {`  [${entry.scope}] ${entry.title} — ${
+                  entry.reason === 'always-on' ? 'always on' : `key "${entry.matchedKey}"`
+                } (~${entry.estimatedTokens}t, ${entry.lorebookName})\n`}
+              </span>
+            ))}
+            {debug.lore.rejected.length > 0 && (
+              <>
+                <span className="seg-tag">{'\n── REJECTED (matched but did not fit) ──\n'}</span>
+                {debug.lore.rejected.map((entry) => (
+                  <span key={entry.entryId} className="seg-text">
+                    {`  ${entry.title} (~${entry.estimatedTokens}t)\n`}
+                  </span>
+                ))}
+              </>
+            )}
+          </pre>
+        </Panel>
+      ) : (
+        <EmptySection title="Lorebook" icon="📖" />
+      )}
+
+      {/* The exact text the keys were tested against -- the first thing to check when an
+          entry didn't fire and you expected it to. */}
+      <Section title="Lore Scan Window" icon="🔎" body={debug.lore?.scanText ?? ''} />
+
       <GroupHeading>Memories</GroupHeading>
       <Section
         title={`Memories (${debug.memories.length})`}
@@ -91,6 +131,11 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
         <span>📊 History: {debug.historyLength} turns</span>
         <span className="debug-stats-divider">│</span>
         <span className={debug.memories.length ? '' : 'text-muted'}>🧠 Memories: {debug.memories.length}</span>
+        <span className="debug-stats-divider">│</span>
+        <span className={debug.lore?.selected.length ? '' : 'text-muted'}>
+          📖 Lore: {debug.lore?.selected.length ?? 0}
+          {debug.lore ? ` (~${debug.lore.budgetTokensUsed}t)` : ''}
+        </span>
         <span className="debug-stats-divider">│</span>
         <span>
           🔢 Tokens: {debug.inputTokens ?? '?'} in → {debug.outputTokens ?? '?'} out
@@ -125,6 +170,24 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
       {debug.error && <Section title="Error" icon="❌" body={debug.error} defaultOpen />}
     </div>
   );
+}
+
+function renderLoreText(lore: NonNullable<ChatDebugInfo['lore']>): string {
+  const lines = [
+    `Pool: ${lore.consideredCount} in scope, ${lore.selected.length} injected, ${lore.rejected.length} rejected`,
+    `Token budget: ~${lore.budgetTokensUsed}/${lore.budgetTokensMax}`,
+    '',
+    ...lore.selected.map(
+      (e) =>
+        `  [${e.scope}] ${e.title} — ${
+          e.reason === 'always-on' ? 'always on' : `key "${e.matchedKey}"`
+        } (${e.lorebookName})`
+    ),
+  ];
+  if (lore.rejected.length > 0) {
+    lines.push('', '-- rejected --', ...lore.rejected.map((e) => `  ${e.title}`));
+  }
+  return lines.join('\n');
 }
 
 function renderHistoryText(entries: ReturnType<typeof buildHistoryEntries>): string {

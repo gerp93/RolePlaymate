@@ -557,9 +557,6 @@ function registerLorebookHandlers() {
   ipcMain.handle('loreVersions:updateContent', (_, versionId: string, content: string) =>
     lorebookService.updateVersionContent(versionId, content)
   );
-  ipcMain.handle('loreVersions:activate', (_, versionId: string) =>
-    lorebookService.activateVersion(versionId)
-  );
   ipcMain.handle('loreVersions:delete', (_, versionId: string) => {
     lorebookService.deleteVersion(versionId);
     return { success: true };

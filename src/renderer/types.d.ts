@@ -10,6 +10,15 @@ import {
 } from '../shared/types/userPersona';
 import { Conversation, CreateConversationInput } from '../shared/types/conversation';
 import { Message } from '../shared/types/message';
+import {
+  Lorebook,
+  LorebookEntry,
+  LorebookEntryVersion,
+  CreateLorebookInput,
+  UpdateLorebookInput,
+  CreateLorebookEntryInput,
+  UpdateLorebookEntryInput,
+} from '../shared/types/lorebook';
 
 declare global {
   interface Window {
@@ -58,6 +67,33 @@ declare global {
         isGenerating: (conversationId: string) => Promise<boolean>;
         /** Returns an unsubscribe function -- call it on effect teardown. */
         onStream: (callback: (payload: ChatStreamEvent) => void) => () => void;
+      };
+      lorebooks: {
+        getWorldBooks: () => Promise<Lorebook[]>;
+        getById: (id: string) => Promise<Lorebook | null>;
+        create: (input: CreateLorebookInput) => Promise<Lorebook>;
+        update: (id: string, input: UpdateLorebookInput) => Promise<Lorebook>;
+        delete: (id: string) => Promise<{ success: true }>;
+        /** Creates the book on first request rather than alongside every character. */
+        getPersonalBook: (characterId: string) => Promise<Lorebook>;
+        getForCharacter: (
+          characterId: string
+        ) => Promise<{ world: Lorebook[]; personal: Lorebook | null }>;
+        getCharacterIds: (lorebookId: string) => Promise<string[]>;
+        attach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
+        detach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
+      };
+      loreEntries: {
+        getByBook: (lorebookId: string) => Promise<LorebookEntry[]>;
+        create: (input: CreateLorebookEntryInput) => Promise<LorebookEntry>;
+        update: (id: string, input: UpdateLorebookEntryInput) => Promise<LorebookEntry>;
+        delete: (id: string) => Promise<{ success: true }>;
+      };
+      loreVersions: {
+        getByEntry: (entryId: string) => Promise<LorebookEntryVersion[]>;
+        create: (entryId: string, content: string) => Promise<LorebookEntryVersion>;
+        updateContent: (versionId: string, content: string) => Promise<LorebookEntryVersion>;
+        delete: (versionId: string) => Promise<{ success: true }>;
       };
       conversations: {
         getAll: () => Promise<Conversation[]>;

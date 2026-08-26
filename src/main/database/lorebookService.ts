@@ -311,6 +311,13 @@ export class LorebookService {
   // Deliberately the same model as CharacterFieldVersion: active always tracks the latest,
   // self-healed on read, and "save as new version" duplicates rather than overwriting.
 
+  /**
+   * NOTE: active always tracks the latest version, exactly as character fields behave --
+   * there is deliberately no "activate an older version" operation. An earlier draft had
+   * one, and it fought this self-healing read: the lore scan (which reads is_active
+   * directly) respected the manual switch while the editor silently undid it. One rule,
+   * one behaviour: to make older text live again, save it as a new version.
+   */
   getVersions(entryId: string): LorebookEntryVersion[] {
     const versions = this.db
       .prepare(
@@ -419,30 +426,6 @@ export class LorebookService {
           .run(new Date().toISOString(), mostRecent.id);
       }
     });
-  }
-
-  /** Activates a specific version, so lore can be switched between variants the way
-   * character fields can. */
-  activateVersion(versionId: string): LorebookEntryVersion {
-    const row = this.db
-      .prepare(`SELECT ${VERSION_COLUMNS} FROM lorebook_entry_versions WHERE id = ?`)
-      .get(versionId);
-    if (!row) throw new Error(`Lorebook entry version with id ${versionId} not found`);
-    const version = rowToVersion(row);
-
-    const now = new Date().toISOString();
-    transaction(this.db, () => {
-      this.db
-        .prepare(
-          `UPDATE lorebook_entry_versions SET is_active = 0, updated_at = ? WHERE entry_id = ? AND is_active = 1`
-        )
-        .run(now, version.entryId);
-      this.db
-        .prepare(`UPDATE lorebook_entry_versions SET is_active = 1, updated_at = ? WHERE id = ?`)
-        .run(now, versionId);
-    });
-
-    return { ...version, isActive: true };
   }
 
   // --- Everything in scope for one character, ready for the matcher --------------------

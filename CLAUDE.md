@@ -104,6 +104,39 @@ before generation (so a crash can't lose it), the reply only on success -- the
 source wrote its error text into the transcript, poisoning the context of every
 later turn.
 
+## Lorebooks
+
+Reference material injected only when the conversation is about it, so a
+large setting doesn't have to live in a character's fields and burn context
+every turn. Not ported from KVGenius -- it never built one.
+
+Two scopes share `lorebook_entries` but mean different things in the prompt.
+**World** books are shared setting material, many-to-many with characters via
+`character_lorebooks`, injected as common knowledge. **Personal** books hold
+one character's private history, owned outright by that character, injected as
+things *that character* remembers and explicitly not common knowledge -- a model
+told "the mutiny happened" as world fact lets anyone reference it, whereas
+"you remember the mutiny" keeps it in the character's head. Personal books
+refuse to be attached elsewhere, and are edited on the character page rather
+than beside the shared books, so private history never looks attachable.
+
+Entry text is versioned exactly like character fields, including the rule that
+**active always tracks the latest version** -- there is no "activate an older
+version". An earlier draft had one and it fought `ensureLatestIsActive`: the
+lore scan (which reads `is_active` directly) honoured the manual switch while
+the editor silently undid it. To make older text live again, save it as a new
+version.
+
+`chat/loreMatcher.ts` does keyword matching -- deterministic, free, and works
+with Ollama absent. Keys match on **word boundaries**, not substrings ("Ash"
+must not fire inside "ashamed"), and are regex-escaped since real keys contain
+things like `Vance (captain)`. The scan window is the last few messages plus
+the pending one. Budgeting mirrors the memory retriever: always-on first, then
+priority, then reject-but-continue so a short entry still fits after a long one
+is skipped. Rejected entries are reported, not dropped silently -- the debug
+console's Lore section is the only practical way to answer "why didn't my entry
+fire?", and it also shows the exact scan window.
+
 Templates and stop phrases currently live as constants in
 `chat/promptTemplates.ts`, and the Ollama host is still the
 `localhost:11434` default; both move into `app-config.json` when the settings

@@ -4,6 +4,7 @@ import CharacterDetail from './pages/CharacterDetail';
 import Settings from './pages/Settings';
 import Chat from './pages/Chat';
 import Personas from './pages/Personas';
+import Lorebooks from './pages/Lorebooks';
 import Layout from './components/Layout';
 import { ThemeProvider } from './context/ThemeContext';
 import './themes.css';
@@ -19,6 +20,7 @@ function App() {
             <Route path="/chat" element={<Chat />} />
             <Route path="/chat/:conversationId" element={<Chat />} />
             <Route path="/personas" element={<Personas />} />
+            <Route path="/lorebooks" element={<Lorebooks />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

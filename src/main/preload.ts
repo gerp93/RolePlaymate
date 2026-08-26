@@ -59,6 +59,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  lorebooks: {
+    getWorldBooks: () => ipcRenderer.invoke('lorebooks:getWorldBooks'),
+    getById: (id: string) => ipcRenderer.invoke('lorebooks:getById', id),
+    create: (input: unknown) => ipcRenderer.invoke('lorebooks:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('lorebooks:update', id, input),
+    delete: (id: string) => ipcRenderer.invoke('lorebooks:delete', id),
+    getPersonalBook: (characterId: string) =>
+      ipcRenderer.invoke('lorebooks:getPersonalBook', characterId),
+    getForCharacter: (characterId: string) =>
+      ipcRenderer.invoke('lorebooks:getForCharacter', characterId),
+    getCharacterIds: (lorebookId: string) =>
+      ipcRenderer.invoke('lorebooks:getCharacterIds', lorebookId),
+    attach: (characterId: string, lorebookId: string) =>
+      ipcRenderer.invoke('lorebooks:attach', characterId, lorebookId),
+    detach: (characterId: string, lorebookId: string) =>
+      ipcRenderer.invoke('lorebooks:detach', characterId, lorebookId),
+  },
+
+  loreEntries: {
+    getByBook: (lorebookId: string) => ipcRenderer.invoke('loreEntries:getByBook', lorebookId),
+    create: (input: unknown) => ipcRenderer.invoke('loreEntries:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('loreEntries:update', id, input),
+    delete: (id: string) => ipcRenderer.invoke('loreEntries:delete', id),
+  },
+
+  loreVersions: {
+    getByEntry: (entryId: string) => ipcRenderer.invoke('loreVersions:getByEntry', entryId),
+    create: (entryId: string, content: string) =>
+      ipcRenderer.invoke('loreVersions:create', entryId, content),
+    updateContent: (versionId: string, content: string) =>
+      ipcRenderer.invoke('loreVersions:updateContent', versionId, content),
+    delete: (versionId: string) => ipcRenderer.invoke('loreVersions:delete', versionId),
+  },
+
   conversations: {
     getAll: () => ipcRenderer.invoke('conversations:getAll'),
     getById: (id: string) => ipcRenderer.invoke('conversations:getById', id),
