@@ -18,6 +18,7 @@ export default function CharacterList() {
   const [coverImages, setCoverImages] = useState<Record<string, CharacterImage[]>>({});
   const [newName, setNewName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     load();
@@ -57,6 +58,20 @@ export default function CharacterList() {
     await load();
   }
 
+  async function handleImport() {
+    setImporting(true);
+    try {
+      const result = await window.electronAPI.characters.importFromHtml();
+      if (!result) return;
+      await load();
+      if (result.warnings.length > 0) {
+        alert(`Imported "${result.character.name}" with some gaps:\n\n${result.warnings.join('\n')}`);
+      }
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header page-header-hero">
@@ -80,6 +95,9 @@ export default function CharacterList() {
           />
           <button className="btn btn-primary" onClick={handleCreate}>
             Create Character
+          </button>
+          <button className="btn" disabled={importing} onClick={handleImport}>
+            {importing ? 'Importing…' : 'Import from HTML…'}
           </button>
         </div>
       </div>

@@ -13,6 +13,7 @@ declare global {
         update: (id: string, input: UpdateCharacterInput) => Promise<Character>;
         clone: (id: string) => Promise<Character>;
         delete: (id: string) => Promise<{ success: boolean }>;
+        importFromHtml: () => Promise<{ character: Character; warnings: string[] } | null>;
       };
       fields: {
         getByCharacter: (characterId: string) => Promise<CharacterField[]>;

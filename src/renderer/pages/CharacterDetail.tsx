@@ -9,6 +9,7 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
   scenario: 'The setting or context the conversation takes place in...',
   greeting: 'The first message the character sends to start the chat...',
+  dialogue: 'Sample exchanges showing how the character speaks...',
 };
 
 export default function CharacterDetail() {
@@ -19,6 +20,7 @@ export default function CharacterDetail() {
   const [images, setImages] = useState<CharacterImage[]>([]);
   const [imageIndex, setImageIndex] = useState(0);
   const [nameDraft, setNameDraft] = useState('');
+  const [descriptionDraft, setDescriptionDraft] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export default function CharacterDetail() {
     }
     setCharacter(c);
     setNameDraft(c.name);
+    setDescriptionDraft(c.description ?? '');
     setFields(fieldList);
     setImages(imageList);
     const preferredIndex = preferImageId ? imageList.findIndex((img) => img.id === preferImageId) : -1;
@@ -48,6 +51,14 @@ export default function CharacterDetail() {
     const trimmed = nameDraft.trim();
     if (trimmed && trimmed !== character.name) {
       await window.electronAPI.characters.update(characterId, { name: trimmed });
+      await load(characterId);
+    }
+  }
+
+  async function handleDescriptionBlur() {
+    if (!characterId || !character) return;
+    if (descriptionDraft !== (character.description ?? '')) {
+      await window.electronAPI.characters.update(characterId, { description: descriptionDraft });
       await load(characterId);
     }
   }
@@ -103,6 +114,20 @@ export default function CharacterDetail() {
               border: 'none',
               background: 'transparent',
               padding: '4px 0',
+              width: '100%',
+            }}
+          />
+          <input
+            value={descriptionDraft}
+            onChange={(e) => setDescriptionDraft(e.target.value)}
+            onBlur={handleDescriptionBlur}
+            placeholder="Short description or tagline..."
+            className="text-muted"
+            style={{
+              fontSize: 14,
+              border: 'none',
+              background: 'transparent',
+              padding: '2px 0 4px',
               width: '100%',
             }}
           />

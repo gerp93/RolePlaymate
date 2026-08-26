@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: string, input: UpdateCharacterInput) => ipcRenderer.invoke('characters:update', id, input),
     clone: (id: string) => ipcRenderer.invoke('characters:clone', id),
     delete: (id: string) => ipcRenderer.invoke('characters:delete', id),
+    importFromHtml: () => ipcRenderer.invoke('characters:importFromHtml'),
   },
 
   fields: {

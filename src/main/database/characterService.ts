@@ -11,6 +11,7 @@ function rowToCharacter(columns: string[], row: any[]): Character {
   return {
     id: obj.id,
     name: obj.name,
+    description: obj.description ?? null,
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
   };
@@ -19,6 +20,7 @@ function rowToCharacter(columns: string[], row: any[]): Character {
 const SELECT_COLUMNS = `
   id,
   name,
+  description,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -48,12 +50,10 @@ export class CharacterService {
     const id = uuidv4();
     const now = new Date().toISOString();
 
-    this.db.run(`INSERT INTO characters (id, name, image_url, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)`, [
-      id,
-      input.name,
-      now,
-      now,
-    ]);
+    this.db.run(
+      `INSERT INTO characters (id, name, image_url, description, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)`,
+      [id, input.name, input.description ?? null, now, now]
+    );
 
     saveDatabase(this.db);
 
@@ -67,8 +67,9 @@ export class CharacterService {
     }
 
     const now = new Date().toISOString();
-    this.db.run(`UPDATE characters SET name = ?, updated_at = ? WHERE id = ?`, [
+    this.db.run(`UPDATE characters SET name = ?, description = ?, updated_at = ? WHERE id = ?`, [
       input.name ?? existing.name,
+      input.description ?? existing.description,
       now,
       id,
     ]);
