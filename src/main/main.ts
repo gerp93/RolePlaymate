@@ -441,7 +441,15 @@ function registerIPCHandlers() {
   // Seeds the character's active greeting as the opening assistant message, so it lands in
   // the transcript and in the model's context rather than being a render-time flourish.
   ipcMain.handle('conversations:create', (_, input: CreateConversationInput) => {
-    const built = promptBuilder.buildSystemPrompt(input.characterId, {});
+    // Resolve the persona first: the greeting contains {{user}}, so building it without the
+    // persona would greet "User" by name in a conversation that has one selected.
+    const persona = input.userPersonaId
+      ? conversationService.getPersona(input.userPersonaId)
+      : null;
+    const built = promptBuilder.buildSystemPrompt(input.characterId, {
+      personaName: persona?.name ?? null,
+      personaBackground: persona?.background ?? null,
+    });
     return conversationService.createConversation({ ...input, greeting: built.greeting });
   });
 

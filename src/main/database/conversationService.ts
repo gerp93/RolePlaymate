@@ -98,9 +98,12 @@ function rowToPersona(row: Record<string, unknown>): UserPersona {
  * rather than stored in full, since the title only ever appears in a list row. */
 const TITLE_MAX_LENGTH = 60;
 
+/** Placeholder until the first user message names the conversation. */
+export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
+
 export function deriveTitle(text: string): string {
   const flat = text.trim().replace(/\s+/g, ' ');
-  if (!flat) return 'New conversation';
+  if (!flat) return DEFAULT_CONVERSATION_TITLE;
   return flat.length <= TITLE_MAX_LENGTH ? flat : `${flat.slice(0, TITLE_MAX_LENGTH)}…`;
 }
 
@@ -146,7 +149,7 @@ export class ConversationService {
         )
         .run(
           id,
-          input.title?.trim() || 'New conversation',
+          input.title?.trim() || DEFAULT_CONVERSATION_TITLE,
           input.model,
           input.characterId,
           input.userPersonaId ?? null,

@@ -1,4 +1,8 @@
-import { ConversationService } from '../database/conversationService';
+import {
+  ConversationService,
+  deriveTitle,
+  DEFAULT_CONVERSATION_TITLE,
+} from '../database/conversationService';
 import { PromptBuilder } from './promptBuilder';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
 import { Message } from '../../shared/types/message';
@@ -159,6 +163,16 @@ export class ChatSessionManager {
       role: 'user',
       content: request.userMessage,
     });
+
+    // Name the conversation after its opening line, as the source did -- a sidebar full of
+    // "New conversation" is unusable once there is more than one.
+    const conversation = this.conversations.getConversation(request.conversationId);
+    if (conversation?.title === DEFAULT_CONVERSATION_TITLE) {
+      this.conversations.renameConversation(
+        request.conversationId,
+        deriveTitle(request.userMessage)
+      );
+    }
 
     const controller = new AbortController();
     session.abort = controller;

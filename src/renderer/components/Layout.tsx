@@ -4,6 +4,8 @@ import './Layout.css';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Characters', end: true },
+  { to: '/chat', label: 'Chat', end: false },
+  { to: '/personas', label: 'Personas', end: false },
   { to: '/settings', label: 'Settings', end: false },
 ];
 
