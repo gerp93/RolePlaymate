@@ -8,3 +8,4 @@ empty commit. Add a one-line entry below with the date and why, so the
 commit shows a real diff instead of nothing.
 
 - 2026-08-17 — created this file
+- 2026-08-26 — swapped sql.js for node:sqlite; requires Electron >= 35

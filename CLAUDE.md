@@ -11,7 +11,17 @@ AI chatbot characters are made of individually editable, versionable fields
 used by the app itself -- it's a plain library/versioning tool, modeled on
 [TrackDraft](https://github.com/gerp93/TrackDraft)'s song/part/version split
 applied to character cards instead of lyrics. Data is stored locally in a
-`sql.js`-backed SQLite file.
+`node:sqlite`-backed SQLite file (WAL mode, foreign keys enforced).
+
+`node:sqlite` is a Node built-in, so there is no native module to rebuild and
+nothing to unpack from the asar -- but it requires **Node >= 22.13, which means
+Electron >= 35**. Don't drop the Electron major below that. Writes go straight
+to disk; there is no "save the database" step (the old `sql.js` build had to
+re-serialize the whole file on every mutation). Multi-statement writes go
+through `transaction()` in `database/schema.ts`, which is re-entrant because
+some read paths write (`getVersionsByField` self-heals the active-version
+invariant). Because WAL keeps recent commits in a `-wal` sidecar, anything that
+copies the database file must close it first -- see `dbLocation.setDbPath`.
 
 ## Commands
 
@@ -26,7 +36,7 @@ npm run package      # electron-builder, produces installers in release/
 ## Architecture
 
 - `src/main/` — Electron main process: `main.ts` (window, IPC handlers,
-  auto-updater wiring), `database/` (sql.js schema + per-entity services),
+  auto-updater wiring), `database/` (`node:sqlite` schema + per-entity services),
   `dbLocation.ts` (relocatable SQLite file), `images.ts` (native file picker
   for portraits, copies into `userData/images/`).
 - `src/renderer/` — React UI (Vite), `pages/` for routed screens,

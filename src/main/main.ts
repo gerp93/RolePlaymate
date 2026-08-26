@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
-import { initDatabase, saveDatabase } from './database/schema';
+import { initDatabase, closeDatabase, transaction } from './database/schema';
 import {
   getEffectiveDbPath,
   getDefaultDbPath,
@@ -17,7 +17,7 @@ import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from 
 import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
-import { Database } from 'sql.js';
+import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 
 // Packaged builds resolve app.getPath('userData') from build.productName ("RolePlaymate"),
@@ -26,7 +26,7 @@ import * as fs from 'fs';
 app.setName('roleplaymate');
 
 let mainWindow: BrowserWindow | null = null;
-let db: Database | null = null;
+let db: DatabaseSync | null = null;
 let characterService: CharacterService;
 let fieldService: CharacterFieldService;
 let fieldVersionService: FieldVersionService;
@@ -136,8 +136,8 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
   });
 }
 
-app.whenReady().then(async () => {
-  db = await initDatabase();
+app.whenReady().then(() => {
+  db = initDatabase();
   characterService = new CharacterService(db);
   fieldService = new CharacterFieldService(db);
   fieldVersionService = new FieldVersionService(db);
@@ -156,12 +156,16 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (db) {
-    saveDatabase(db);
-  }
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Closing the database belongs here rather than in `window-all-closed`: on macOS that fires
+// without quitting, and a closed handle would break the `activate` -> createWindow path.
+app.on('before-quit', () => {
+  closeDatabase();
+  db = null;
 });
 
 function registerIPCHandlers() {
@@ -172,14 +176,16 @@ function registerIPCHandlers() {
   // Creating a character also creates its three fixed fields (personality/scenario/greeting),
   // each with a blank first version -- unlike TrackDraft's freely-added Parts, a character's
   // fields are a fixed set, so there's no separate "add field" action.
-  ipcMain.handle('characters:create', (_, input: CreateCharacterInput) => {
-    const character = characterService.createCharacter(input);
-    for (const fieldType of FIELD_TYPES) {
-      const field = fieldService.createField(character.id, fieldType);
-      fieldVersionService.createVersion({ fieldId: field.id, content: '' });
-    }
-    return character;
-  });
+  ipcMain.handle('characters:create', (_, input: CreateCharacterInput) =>
+    transaction(db!, () => {
+      const character = characterService.createCharacter(input);
+      for (const fieldType of FIELD_TYPES) {
+        const field = fieldService.createField(character.id, fieldType);
+        fieldVersionService.createVersion({ fieldId: field.id, content: '' });
+      }
+      return character;
+    })
+  );
 
   ipcMain.handle('characters:update', (_, id: string, input: UpdateCharacterInput) =>
     characterService.updateCharacter(id, input)
@@ -194,34 +200,48 @@ function registerIPCHandlers() {
       throw new Error(`Character with id ${id} not found`);
     }
 
-    const cloned = characterService.createCharacter({
-      name: `${source.name} (Copy)`,
-      description: source.description ?? undefined,
-    });
-
-    for (const image of characterImageService.getImagesByCharacter(source.id)) {
-      const clonedPath = cloneCharacterImage(image.path);
-      if (clonedPath) {
-        characterImageService.addImage(cloned.id, clonedPath);
-      }
-    }
+    // Copy the image files up front, outside the transaction: file writes can't be rolled
+    // back, so doing them inside would leave the DB consistent but the disk not. If the
+    // transaction below fails, these copies are orphaned in userData/images -- unreferenced
+    // and harmless, which is a better trade than the machinery to undo them.
+    const clonedImagePaths = characterImageService
+      .getImagesByCharacter(source.id)
+      .map((image) => cloneCharacterImage(image.path))
+      .filter((clonedPath): clonedPath is string => clonedPath !== null);
 
     const sourceFields = fieldService.getFieldsByCharacter(source.id);
-    for (const fieldType of FIELD_TYPES) {
-      const newField = fieldService.createField(cloned.id, fieldType);
-      const sourceField = sourceFields.find((f) => f.fieldType === fieldType);
-      const sourceVersions = sourceField ? fieldVersionService.getVersionsByField(sourceField.id) : [];
+    const sourceVersionsByType = new Map(
+      FIELD_TYPES.map((fieldType) => {
+        const sourceField = sourceFields.find((f) => f.fieldType === fieldType);
+        return [fieldType, sourceField ? fieldVersionService.getVersionsByField(sourceField.id) : []];
+      })
+    );
 
-      if (sourceVersions.length === 0) {
-        fieldVersionService.createVersion({ fieldId: newField.id, content: '' });
-      } else {
-        for (const version of sourceVersions) {
-          fieldVersionService.createVersion({ fieldId: newField.id, content: version.content });
+    return transaction(db!, () => {
+      const cloned = characterService.createCharacter({
+        name: `${source.name} (Copy)`,
+        description: source.description ?? undefined,
+      });
+
+      for (const clonedPath of clonedImagePaths) {
+        characterImageService.addImage(cloned.id, clonedPath);
+      }
+
+      for (const fieldType of FIELD_TYPES) {
+        const newField = fieldService.createField(cloned.id, fieldType);
+        const sourceVersions = sourceVersionsByType.get(fieldType) ?? [];
+
+        if (sourceVersions.length === 0) {
+          fieldVersionService.createVersion({ fieldId: newField.id, content: '' });
+        } else {
+          for (const version of sourceVersions) {
+            fieldVersionService.createVersion({ fieldId: newField.id, content: version.content });
+          }
         }
       }
-    }
 
-    return characterService.getCharacterById(cloned.id)!;
+      return characterService.getCharacterById(cloned.id)!;
+    });
   });
 
   ipcMain.handle('characters:delete', (_, id: string) => {
@@ -248,22 +268,34 @@ function registerIPCHandlers() {
     const html = fs.readFileSync(htmlFilePath, 'utf-8');
     const parsed = parseCharacterHtml(html);
 
-    const character = characterService.createCharacter({
-      name: parsed.name,
-      description: parsed.description ?? undefined,
+    // Copy the portrait before opening the transaction, for the same reason as in
+    // characters:clone -- file writes aren't transactional.
+    const localAvatarPath = resolveLocalAvatarPath(htmlFilePath, parsed.avatarSrc);
+    const copiedPath = localAvatarPath ? cloneCharacterImage(localAvatarPath) : null;
+
+    const character = transaction(db!, () => {
+      const created = characterService.createCharacter({
+        name: parsed.name,
+        description: parsed.description ?? undefined,
+      });
+
+      for (const fieldType of FIELD_TYPES) {
+        const field = fieldService.createField(created.id, fieldType);
+        fieldVersionService.createVersion({
+          fieldId: field.id,
+          content: parsed.fields[fieldType] ?? '',
+        });
+      }
+
+      if (copiedPath) {
+        characterImageService.addImage(created.id, copiedPath);
+      }
+
+      return created;
     });
 
-    for (const fieldType of FIELD_TYPES) {
-      const field = fieldService.createField(character.id, fieldType);
-      fieldVersionService.createVersion({ fieldId: field.id, content: parsed.fields[fieldType] ?? '' });
-    }
-
-    const localAvatarPath = resolveLocalAvatarPath(htmlFilePath, parsed.avatarSrc);
     if (localAvatarPath) {
-      const copiedPath = cloneCharacterImage(localAvatarPath);
-      if (copiedPath) {
-        characterImageService.addImage(character.id, copiedPath);
-      } else {
+      if (!copiedPath) {
         parsed.warnings.push('Found a portrait image but could not copy it.');
       }
     } else if (parsed.avatarSrc) {
@@ -335,9 +367,10 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('dbLocation:set', (_, newPath: string) => {
-    if (db) {
-      saveDatabase(db);
-    }
+    // Must close before setDbPath copies the file: under WAL the most recent commits can
+    // still be sitting in the `-wal` sidecar, and a clean close() checkpoints them in.
+    closeDatabase();
+    db = null;
     setDbPath(newPath);
     app.relaunch();
     app.exit();
@@ -345,9 +378,8 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('dbLocation:resetToDefault', () => {
-    if (db) {
-      saveDatabase(db);
-    }
+    closeDatabase();
+    db = null;
     resetToDefaultDbPath();
     app.relaunch();
     app.exit();
