@@ -11,7 +11,6 @@ function rowToCharacter(columns: string[], row: any[]): Character {
   return {
     id: obj.id,
     name: obj.name,
-    imageUrl: obj.imageUrl ?? null,
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
   };
@@ -20,7 +19,6 @@ function rowToCharacter(columns: string[], row: any[]): Character {
 const SELECT_COLUMNS = `
   id,
   name,
-  image_url as imageUrl,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -69,9 +67,8 @@ export class CharacterService {
     }
 
     const now = new Date().toISOString();
-    this.db.run(`UPDATE characters SET name = ?, image_url = ?, updated_at = ? WHERE id = ?`, [
+    this.db.run(`UPDATE characters SET name = ?, updated_at = ? WHERE id = ?`, [
       input.name ?? existing.name,
-      input.imageUrl !== undefined ? input.imageUrl : existing.imageUrl,
       now,
       id,
     ]);
@@ -81,8 +78,8 @@ export class CharacterService {
     return this.getCharacterById(id)!;
   }
 
-  /** Cascades to character_fields and character_field_versions (enforced in service code --
-   * see schema.ts's note on sql.js not actually honoring ON DELETE CASCADE). */
+  /** Cascades to character_fields, character_field_versions, and character_images (enforced
+   * in service code -- see schema.ts's note on sql.js not actually honoring ON DELETE CASCADE). */
   deleteCharacter(id: string): void {
     const fieldStmt = this.db.prepare(`SELECT id FROM character_fields WHERE character_id = ?`);
     fieldStmt.bind([id]);
@@ -96,6 +93,7 @@ export class CharacterService {
       this.db.run(`DELETE FROM character_field_versions WHERE field_id = ?`, [fieldId]);
     }
     this.db.run(`DELETE FROM character_fields WHERE character_id = ?`, [id]);
+    this.db.run(`DELETE FROM character_images WHERE character_id = ?`, [id]);
     this.db.run(`DELETE FROM characters WHERE id = ?`, [id]);
 
     saveDatabase(this.db);

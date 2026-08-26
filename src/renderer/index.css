@@ -163,10 +163,12 @@ textarea {
   text-decoration: line-through;
 }
 
-/* Character grid (home page) */
+/* Character grid (home page) -- --tile-min-width is set inline per render, based on how many
+   characters there are: fewer characters get bigger tiles, more characters get smaller tiles
+   packed tighter, and past a floor the grid just scrolls (.main-content already does this). */
 .character-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min-width, 220px), 1fr));
   gap: 16px;
 }
 
@@ -185,7 +187,7 @@ textarea {
 }
 
 .character-card-portrait {
-  height: 160px;
+  aspect-ratio: 4 / 3;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -248,6 +250,7 @@ textarea {
 }
 
 .character-detail-portrait-large {
+  position: relative;
   flex: 1;
   min-height: 0;
   border-radius: var(--radius);
@@ -266,6 +269,57 @@ textarea {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Portrait gallery: prev/next overlay buttons + position dots (only rendered when a
+   character has more than one image). */
+.portrait-nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.portrait-nav-btn:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.portrait-nav-prev {
+  left: 10px;
+}
+
+.portrait-nav-next {
+  right: 10px;
+}
+
+.portrait-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.portrait-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--color-border);
+}
+
+.portrait-dot.active {
+  background: var(--color-primary-action);
 }
 
 /* Field editor (personality/scenario/greeting) */

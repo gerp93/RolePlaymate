@@ -12,6 +12,7 @@ import {
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
+import { CharacterImageService } from './database/characterImageService';
 import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
@@ -27,6 +28,7 @@ let db: Database | null = null;
 let characterService: CharacterService;
 let fieldService: CharacterFieldService;
 let fieldVersionService: FieldVersionService;
+let characterImageService: CharacterImageService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -137,6 +139,7 @@ app.whenReady().then(async () => {
   characterService = new CharacterService(db);
   fieldService = new CharacterFieldService(db);
   fieldVersionService = new FieldVersionService(db);
+  characterImageService = new CharacterImageService(db);
 
   registerIPCHandlers();
 
@@ -180,8 +183,9 @@ function registerIPCHandlers() {
     characterService.updateCharacter(id, input)
   );
 
-  // Clones a character's name (suffixed), portrait file, and every field's full version
-  // history into a brand-new character -- independent from the source from that point on.
+  // Clones a character's name (suffixed), every portrait image, and every field's full
+  // version history into a brand-new character -- independent from the source from that
+  // point on.
   ipcMain.handle('characters:clone', (_, id: string) => {
     const source = characterService.getCharacterById(id);
     if (!source) {
@@ -189,9 +193,12 @@ function registerIPCHandlers() {
     }
 
     const cloned = characterService.createCharacter({ name: `${source.name} (Copy)` });
-    const clonedImageUrl = source.imageUrl ? cloneCharacterImage(source.imageUrl) : null;
-    if (clonedImageUrl) {
-      characterService.updateCharacter(cloned.id, { imageUrl: clonedImageUrl });
+
+    for (const image of characterImageService.getImagesByCharacter(source.id)) {
+      const clonedPath = cloneCharacterImage(image.path);
+      if (clonedPath) {
+        characterImageService.addImage(cloned.id, clonedPath);
+      }
     }
 
     const sourceFields = fieldService.getFieldsByCharacter(source.id);
@@ -213,9 +220,9 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('characters:delete', (_, id: string) => {
-    const existing = characterService.getCharacterById(id);
+    const images = characterImageService.getImagesByCharacter(id);
     characterService.deleteCharacter(id);
-    if (existing?.imageUrl) deleteCharacterImage(existing.imageUrl);
+    for (const image of images) deleteCharacterImage(image.path);
     return { success: true };
   });
 
@@ -234,9 +241,21 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
-  // Image handlers
-  ipcMain.handle('images:choose', async () => {
-    return chooseCharacterImage(mainWindow);
+  // Character image (gallery) handlers
+  ipcMain.handle('characterImages:getByCharacter', (_, characterId: string) =>
+    characterImageService.getImagesByCharacter(characterId)
+  );
+  ipcMain.handle('characterImages:getAllGroupedByCharacter', () => characterImageService.getAllGroupedByCharacter());
+  ipcMain.handle('characterImages:add', async (_, characterId: string) => {
+    const path = await chooseCharacterImage(mainWindow);
+    if (!path) return null;
+    return characterImageService.addImage(characterId, path);
+  });
+  ipcMain.handle('characterImages:remove', (_, id: string) => {
+    const existing = characterImageService.getImageById(id);
+    characterImageService.removeImage(id);
+    if (existing) deleteCharacterImage(existing.path);
+    return { success: true };
   });
 
   // Database location handlers

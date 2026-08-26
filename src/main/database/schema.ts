@@ -1,6 +1,7 @@
 import initSqlJs, { Database } from 'sql.js';
 import * as path from 'path';
 import * as fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from '../dbLocation';
 
 let dbInstance: Database | null = null;
@@ -75,11 +76,53 @@ export async function initDatabase(dbPath?: string): Promise<Database> {
   db.run(`CREATE INDEX IF NOT EXISTS idx_fields_character ON character_fields(character_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_field_versions_field ON character_field_versions(field_id)`);
 
+  // A character can have zero or more portrait images, ordered by position (0 = cover,
+  // shown on the character list tile). Replaces the old single `characters.image_url` column,
+  // which is left in place (unused going forward) purely so migrateLegacyPortraits below can
+  // still read pre-existing single portraits on upgrade.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS character_images (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_character_images_character ON character_images(character_id)`);
+
+  migrateLegacyPortraits(db);
+
   saveDatabase(db, dbPath);
 
   console.log('Database initialized at:', dbPath);
 
   return db;
+}
+
+/** One-time upgrade path: characters created before multi-image support had a single
+ * `image_url` column. Adopt that value as each such character's first character_images row
+ * (skipping any character that already has images, so this is safe to run on every startup). */
+function migrateLegacyPortraits(db: Database): void {
+  const stmt = db.prepare(`
+    SELECT id, image_url, created_at FROM characters
+    WHERE image_url IS NOT NULL AND image_url != ''
+      AND id NOT IN (SELECT DISTINCT character_id FROM character_images)
+  `);
+  const rows: { id: string; imageUrl: string; createdAt: string }[] = [];
+  while (stmt.step()) {
+    const [id, imageUrl, createdAt] = stmt.get();
+    rows.push({ id: id as string, imageUrl: imageUrl as string, createdAt: createdAt as string });
+  }
+  stmt.free();
+
+  for (const row of rows) {
+    db.run(
+      `INSERT INTO character_images (id, character_id, path, position, created_at) VALUES (?, ?, ?, 0, ?)`,
+      [uuidv4(), row.id, row.imageUrl, row.createdAt]
+    );
+  }
 }
 
 export function saveDatabase(db: Database, dbPath?: string): void {
