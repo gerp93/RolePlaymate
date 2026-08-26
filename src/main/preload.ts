@@ -39,6 +39,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('dbLocation:resetToDefault'),
   },
 
+  chat: {
+    previewSystemPrompt: (
+      characterId: string,
+      options?: { personaId?: string; directions?: string; memories?: string[] }
+    ) => ipcRenderer.invoke('chat:previewSystemPrompt', characterId, options),
+  },
+
+  personas: {
+    getAll: () => ipcRenderer.invoke('personas:getAll'),
+  },
+
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },

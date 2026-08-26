@@ -44,6 +44,22 @@ export interface ChatDebugInfo {
   error?: string;
 }
 
+/** The assembled prompt for one turn, returned across IPC so the renderer (and the debug
+ * console) can show what would be sent without the main process having to re-derive it. */
+export interface BuiltPrompt {
+  /** Sections 1-5 joined with a blank line. */
+  prompt: string;
+  characterName: string;
+  /** Section 1 alone -- what the character's own field versions contributed. */
+  baseSystemPrompt: string;
+  /** Section 2 alone. */
+  characterInstructions: string;
+  stopPhrases: string[];
+  /** The character's active greeting, macro-substituted. Seeded as a conversation's first
+   * assistant message rather than being part of the system prompt. */
+  greeting: string;
+}
+
 export interface ChatSendRequest {
   conversationId: string;
   message: string;

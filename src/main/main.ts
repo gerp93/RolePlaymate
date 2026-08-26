@@ -13,6 +13,8 @@ import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
+import { ConversationService } from './database/conversationService';
+import { PromptBuilder } from './chat/promptBuilder';
 import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
 import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
@@ -31,6 +33,8 @@ let characterService: CharacterService;
 let fieldService: CharacterFieldService;
 let fieldVersionService: FieldVersionService;
 let characterImageService: CharacterImageService;
+let conversationService: ConversationService;
+let promptBuilder: PromptBuilder;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -142,6 +146,8 @@ app.whenReady().then(() => {
   fieldService = new CharacterFieldService(db);
   fieldVersionService = new FieldVersionService(db);
   characterImageService = new CharacterImageService(db);
+  conversationService = new ConversationService(db);
+  promptBuilder = new PromptBuilder(characterService, fieldService, fieldVersionService);
 
   registerIPCHandlers();
 
@@ -385,6 +391,27 @@ function registerIPCHandlers() {
     app.exit();
     return { success: true };
   });
+
+  // Chat handlers.
+  //
+  // Only prompt composition so far -- no model is involved yet. This exists so the
+  // assembled prompt (macro substitution, section order, which fields contributed, the
+  // greeting that would seed the conversation) can be inspected on its own, before
+  // streaming and Ollama are wired up and failures get harder to attribute.
+  ipcMain.handle(
+    'chat:previewSystemPrompt',
+    (_, characterId: string, options?: { personaId?: string; directions?: string; memories?: string[] }) => {
+      const persona = options?.personaId ? conversationService.getPersona(options.personaId) : null;
+      return promptBuilder.buildSystemPrompt(characterId, {
+        personaName: persona?.name ?? null,
+        personaBackground: persona?.background ?? null,
+        directions: options?.directions,
+        memories: options?.memories,
+      });
+    }
+  );
+
+  ipcMain.handle('personas:getAll', () => conversationService.listPersonas());
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());

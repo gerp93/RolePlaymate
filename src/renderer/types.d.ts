@@ -2,6 +2,8 @@ import { Character, CreateCharacterInput, UpdateCharacterInput } from '../shared
 import { CharacterField } from '../shared/types/characterField';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
+import { BuiltPrompt } from '../shared/types/chat';
+import { UserPersona } from '../shared/types/userPersona';
 
 declare global {
   interface Window {
@@ -37,6 +39,15 @@ declare global {
         browseNew: () => Promise<string | null>;
         set: (newPath: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
+      };
+      chat: {
+        previewSystemPrompt: (
+          characterId: string,
+          options?: { personaId?: string; directions?: string; memories?: string[] }
+        ) => Promise<BuiltPrompt>;
+      };
+      personas: {
+        getAll: () => Promise<UserPersona[]>;
       };
       app: {
         getVersion: () => Promise<string>;

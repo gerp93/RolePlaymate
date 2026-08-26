@@ -7,10 +7,13 @@ with code in this repository.
 
 RolePlaymate is an Electron desktop app: a character-writing notepad where
 AI chatbot characters are made of individually editable, versionable fields
-(personality, scenario, opening greeting), plus a portrait image. No AI is
-used by the app itself -- it's a plain library/versioning tool, modeled on
+(personality, scenario, opening greeting), plus a portrait image. The library
+half is a plain versioning tool, modeled on
 [TrackDraft](https://github.com/gerp93/TrackDraft)'s song/part/version split
-applied to character cards instead of lyrics. Data is stored locally in a
+applied to character cards instead of lyrics. Roleplay chat is being added on
+top of it (see "Chat" below); it talks to a **local** Ollama server, so the app
+still ships no model and makes no network calls of its own, and the library
+stays fully usable with Ollama absent. Data is stored locally in a
 `node:sqlite`-backed SQLite file (WAL mode, foreign keys enforced).
 
 `node:sqlite` is a Node built-in, so there is no native module to rebuild and
@@ -37,8 +40,9 @@ npm run package      # electron-builder, produces installers in release/
 
 - `src/main/` — Electron main process: `main.ts` (window, IPC handlers,
   auto-updater wiring), `database/` (`node:sqlite` schema + per-entity services),
-  `dbLocation.ts` (relocatable SQLite file), `images.ts` (native file picker
-  for portraits, copies into `userData/images/`).
+  `chat/` (prompt composition; see below), `dbLocation.ts` (relocatable SQLite
+  file), `images.ts` (native file picker for portraits, copies into
+  `userData/images/`).
 - `src/renderer/` — React UI (Vite), `pages/` for routed screens,
   `components/` for the character/field editor pieces, `utils/themes.ts` for
   the VisualAssault theme switcher.
@@ -57,6 +61,32 @@ auto-created alongside the character itself.
 [VisualAssault](https://github.com/gerp93/VisualAssault)
 `packages/css/themes.css` at a pinned tag — re-run
 `scripts/update-visual-assault-css.sh <tag>` to bump it, never hand-edit.
+
+## Chat (in progress)
+
+Roleplay chat is being ported from
+[gerp93/KVGenius](https://github.com/gerp93/KVGenius)'s refactor branch, where
+it was reduced to a thin HTTP client against a local **Ollama** server. Image
+generation stays in KVGenius -- different models, different server.
+
+`src/main/chat/promptBuilder.ts` composes the system prompt from each
+character's **currently active** field version, so switching a field's active
+version changes the next reply. Sections are joined by a blank line and each is
+skipped when blank: character (name/description/personality/scenario/example
+dialogue) -> character instructions -> persona (only when the persona has BOTH
+a name and a background) -> retrieved memories -> per-turn directions. The
+greeting is deliberately *not* in the system prompt; it seeds the conversation
+as its first assistant message.
+
+`{{char}}`/`{{user}}` macros in field content are substituted before the text
+reaches a model -- `{{user}}` resolves to the selected persona's name, or
+"User" when none is selected.
+
+Templates and stop phrases currently live as constants in
+`chat/promptTemplates.ts`; they move into `app-config.json` when the settings
+layer lands. `chat:previewSystemPrompt` is a temporary IPC handler for
+inspecting the assembled prompt without a model running -- remove it once the
+debug console exists.
 
 ## Release pipeline
 
