@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CharacterField, FIELD_LABELS } from '../../shared/types/characterField';
 import { CharacterFieldVersion } from '../../shared/types/fieldVersion';
 import VersionSwitcher from './VersionSwitcher';
+import FormattedContent from './FormattedContent';
 
 interface Props {
   field: CharacterField;
@@ -19,6 +20,7 @@ export default function FieldEditor({ field, placeholder }: Props) {
   const [viewedVersionId, setViewedVersionId] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState('');
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved'>('idle');
+  const [mode, setMode] = useState<'preview' | 'edit'>('preview');
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSave = useRef<{ id: string; content: string } | null>(null);
@@ -44,6 +46,7 @@ export default function FieldEditor({ field, placeholder }: Props) {
     setViewedVersionId(version?.id ?? null);
     setDraftContent(version?.content ?? '');
     setSaveState('idle');
+    setMode('preview');
   }
 
   function handleSelectViewed(versionId: string) {
@@ -93,6 +96,19 @@ export default function FieldEditor({ field, placeholder }: Props) {
     scheduleSave(next);
   }
 
+  function enterEditMode() {
+    setMode('edit');
+  }
+
+  function exitEditMode() {
+    flushPendingSave();
+    setMode('preview');
+  }
+
+  useEffect(() => {
+    if (mode === 'edit') textareaRef.current?.focus();
+  }, [mode]);
+
   const latestVersion = latestOf(versions);
   const isEditable = !!latestVersion && viewedVersionId === latestVersion.id;
 
@@ -135,16 +151,26 @@ export default function FieldEditor({ field, placeholder }: Props) {
         )}
       </div>
 
-      <textarea
-        ref={textareaRef}
-        className="content-textarea"
-        value={draftContent}
-        onChange={(e) => isEditable && handleContentChange(e.target.value)}
-        onBlur={() => flushPendingSave()}
-        readOnly={!isEditable}
-        placeholder={placeholder}
-        spellCheck
-      />
+      {mode === 'edit' ? (
+        <textarea
+          ref={textareaRef}
+          className="content-textarea"
+          value={draftContent}
+          onChange={(e) => isEditable && handleContentChange(e.target.value)}
+          onBlur={exitEditMode}
+          readOnly={!isEditable}
+          placeholder={placeholder}
+          spellCheck
+        />
+      ) : (
+        <div className="content-preview" onClick={enterEditMode} tabIndex={0} role="button">
+          {draftContent ? (
+            <FormattedContent text={draftContent} />
+          ) : (
+            <span className="content-preview-empty">{placeholder}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
