@@ -44,10 +44,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
       characterId: string,
       options?: { personaId?: string; directions?: string; memories?: string[] }
     ) => ipcRenderer.invoke('chat:previewSystemPrompt', characterId, options),
+    send: (request: unknown) => ipcRenderer.invoke('chat:send', request),
+    cancel: (conversationId: string) => ipcRenderer.invoke('chat:cancel', conversationId),
+    isGenerating: (conversationId: string) => ipcRenderer.invoke('chat:isGenerating', conversationId),
+
+    // The only push channel in the bridge. Returns an unsubscribe closure so a React effect
+    // can clean up -- without one, every remount leaks a listener and Electron warns at ten.
+    // The raw IpcRendererEvent is never forwarded: it carries `sender`, which would hand the
+    // renderer a way around context isolation.
+    onStream: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('chat:stream', handler);
+      return () => ipcRenderer.removeListener('chat:stream', handler);
+    },
+  },
+
+  conversations: {
+    getAll: () => ipcRenderer.invoke('conversations:getAll'),
+    getById: (id: string) => ipcRenderer.invoke('conversations:getById', id),
+    getMessages: (id: string) => ipcRenderer.invoke('conversations:getMessages', id),
+    create: (input: unknown) => ipcRenderer.invoke('conversations:create', input),
+    rename: (id: string, title: string) => ipcRenderer.invoke('conversations:rename', id, title),
+    delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
+  },
+
+  ollama: {
+    listModels: () => ipcRenderer.invoke('ollama:listModels'),
   },
 
   personas: {
     getAll: () => ipcRenderer.invoke('personas:getAll'),
+    create: (input: unknown) => ipcRenderer.invoke('personas:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('personas:update', id, input),
+    delete: (id: string) => ipcRenderer.invoke('personas:delete', id),
   },
 
   app: {

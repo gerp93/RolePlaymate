@@ -82,8 +82,31 @@ as its first assistant message.
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
 "User" when none is selected.
 
+`chat/ollamaClient.ts` is a thin `fetch` client against the Ollama HTTP API --
+no dependency, no model in-process. It streams `/api/chat` (the source never
+did) and keeps a non-streaming path for the short internal calls where partial
+output is useless. `chat/chatSession.ts` holds per-conversation state in a Map;
+the source used module globals, which is why it could only ever have one live
+conversation.
+
+**Chat is the only feature that pushes to the renderer.** Everything else is
+`ipcRenderer.invoke` request/response. `chat:send` returns a `streamId`
+immediately and tokens follow on a single `chat:stream` channel carrying a
+discriminated union (`token` | `done` | `error` | `cancelled`) -- one listener,
+one switch, one cleanup path. `preload.ts`'s `onStream` returns an unsubscribe
+closure; call it on effect teardown or every remount leaks a listener. Exactly
+one terminal event is always emitted, including when generation throws: the
+source left its generating flag set on an exception, which stuck the UI with no
+way out but a restart.
+
+Errors are never persisted as assistant turns. The user's message is written
+before generation (so a crash can't lose it), the reply only on success -- the
+source wrote its error text into the transcript, poisoning the context of every
+later turn.
+
 Templates and stop phrases currently live as constants in
-`chat/promptTemplates.ts`; they move into `app-config.json` when the settings
+`chat/promptTemplates.ts`, and the Ollama host is still the
+`localhost:11434` default; both move into `app-config.json` when the settings
 layer lands. `chat:previewSystemPrompt` is a temporary IPC handler for
 inspecting the assembled prompt without a model running -- remove it once the
 debug console exists.

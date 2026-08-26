@@ -2,8 +2,14 @@ import { Character, CreateCharacterInput, UpdateCharacterInput } from '../shared
 import { CharacterField } from '../shared/types/characterField';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
-import { BuiltPrompt } from '../shared/types/chat';
-import { UserPersona } from '../shared/types/userPersona';
+import { BuiltPrompt, ChatStreamEvent, ChatSendRequest } from '../shared/types/chat';
+import {
+  UserPersona,
+  CreateUserPersonaInput,
+  UpdateUserPersonaInput,
+} from '../shared/types/userPersona';
+import { Conversation, CreateConversationInput } from '../shared/types/conversation';
+import { Message } from '../shared/types/message';
 
 declare global {
   interface Window {
@@ -45,9 +51,32 @@ declare global {
           characterId: string,
           options?: { personaId?: string; directions?: string; memories?: string[] }
         ) => Promise<BuiltPrompt>;
+        send: (
+          request: ChatSendRequest & { characterId: string; personaId?: string; model: string }
+        ) => Promise<{ streamId: string }>;
+        cancel: (conversationId: string) => Promise<{ cancelled: boolean }>;
+        isGenerating: (conversationId: string) => Promise<boolean>;
+        /** Returns an unsubscribe function -- call it on effect teardown. */
+        onStream: (callback: (payload: ChatStreamEvent) => void) => () => void;
+      };
+      conversations: {
+        getAll: () => Promise<Conversation[]>;
+        getById: (id: string) => Promise<Conversation | null>;
+        getMessages: (id: string) => Promise<Message[]>;
+        create: (input: CreateConversationInput) => Promise<Conversation>;
+        rename: (id: string, title: string) => Promise<Conversation>;
+        delete: (id: string) => Promise<{ success: true }>;
+      };
+      ollama: {
+        listModels: () => Promise<
+          { available: true; models: string[] } | { available: false; models: string[]; message: string }
+        >;
       };
       personas: {
         getAll: () => Promise<UserPersona[]>;
+        create: (input: CreateUserPersonaInput) => Promise<UserPersona>;
+        update: (id: string, input: UpdateUserPersonaInput) => Promise<UserPersona>;
+        delete: (id: string) => Promise<{ success: true }>;
       };
       app: {
         getVersion: () => Promise<string>;

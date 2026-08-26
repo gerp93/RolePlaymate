@@ -15,10 +15,16 @@ import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
 import { ConversationService } from './database/conversationService';
 import { PromptBuilder } from './chat/promptBuilder';
+import { OllamaClient } from './chat/ollamaClient';
+import { ChatSessionManager } from './chat/chatSession';
 import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
 import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
+import { CreateConversationInput } from '../shared/types/conversation';
+import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
+import { ChatSendRequest, ChatStreamEvent } from '../shared/types/chat';
+import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 
@@ -35,6 +41,8 @@ let fieldVersionService: FieldVersionService;
 let characterImageService: CharacterImageService;
 let conversationService: ConversationService;
 let promptBuilder: PromptBuilder;
+let ollamaClient: OllamaClient;
+let chatSessions: ChatSessionManager;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -148,6 +156,8 @@ app.whenReady().then(() => {
   characterImageService = new CharacterImageService(db);
   conversationService = new ConversationService(db);
   promptBuilder = new PromptBuilder(characterService, fieldService, fieldVersionService);
+  ollamaClient = new OllamaClient();
+  chatSessions = new ChatSessionManager(conversationService, promptBuilder, ollamaClient);
 
   registerIPCHandlers();
 
@@ -412,8 +422,112 @@ function registerIPCHandlers() {
   );
 
   ipcMain.handle('personas:getAll', () => conversationService.listPersonas());
+  ipcMain.handle('personas:create', (_, input: CreateUserPersonaInput) =>
+    conversationService.createPersona(input)
+  );
+  ipcMain.handle('personas:update', (_, id: string, input: UpdateUserPersonaInput) =>
+    conversationService.updatePersona(id, input)
+  );
+  ipcMain.handle('personas:delete', (_, id: string) => {
+    conversationService.deletePersona(id);
+    return { success: true };
+  });
+
+  // Conversation handlers
+  ipcMain.handle('conversations:getAll', () => conversationService.listConversations());
+  ipcMain.handle('conversations:getById', (_, id: string) => conversationService.getConversation(id));
+  ipcMain.handle('conversations:getMessages', (_, id: string) => conversationService.getMessages(id));
+
+  // Seeds the character's active greeting as the opening assistant message, so it lands in
+  // the transcript and in the model's context rather than being a render-time flourish.
+  ipcMain.handle('conversations:create', (_, input: CreateConversationInput) => {
+    const built = promptBuilder.buildSystemPrompt(input.characterId, {});
+    return conversationService.createConversation({ ...input, greeting: built.greeting });
+  });
+
+  ipcMain.handle('conversations:rename', (_, id: string, title: string) =>
+    conversationService.renameConversation(id, title)
+  );
+
+  ipcMain.handle('conversations:delete', (_, id: string) => {
+    chatSessions.dropSession(id);
+    conversationService.deleteConversation(id);
+    return { success: true };
+  });
+
+  // Ollama handlers -- the app stays fully usable when the server is absent, so these
+  // report unavailability rather than throwing it at the user as an unhandled rejection.
+  ipcMain.handle('ollama:listModels', async () => {
+    try {
+      return { available: true as const, models: await ollamaClient.listModels() };
+    } catch (error) {
+      return { available: false as const, models: [], message: (error as Error).message };
+    }
+  });
+
+  registerChatHandlers();
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('updates:check', () => checkForUpdatesNow());
+}
+
+/**
+ * Chat is the only feature here that pushes to the renderer rather than answering it: a
+ * reply arrives token by token, so `chat:send` returns a streamId immediately and the tokens
+ * follow as events.
+ *
+ * One channel carrying a discriminated union, not four channels -- one listener
+ * registration, one switch, one cleanup path in the renderer.
+ */
+function registerChatHandlers() {
+  ipcMain.handle('chat:send', (event, request: ChatSendRequest & { characterId: string; personaId?: string; model: string }) => {
+    const streamId = randomUUID();
+    const sender = event.sender;
+
+    const send = (payload: ChatStreamEvent) => {
+      // The window can close mid-stream; sending to a destroyed webContents throws.
+      if (!sender.isDestroyed()) sender.send('chat:stream', payload);
+    };
+
+    const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+
+    // Deliberately not awaited: the handler returns the streamId straight away so the
+    // renderer can subscribe before tokens start arriving.
+    void (async () => {
+      try {
+        const { message, debug } = await chatSessions.generate(
+          {
+            conversationId: request.conversationId,
+            characterId: request.characterId,
+            personaName: persona?.name ?? null,
+            personaBackground: persona?.background ?? null,
+            userMessage: request.message,
+            model: request.model,
+            directions: request.directions,
+            samplers: request.samplers,
+          },
+          (text) => send({ streamId, type: 'token', text })
+        );
+        send({ streamId, type: 'done', message, debug });
+      } catch (error) {
+        // A cancel is a user action, not a failure -- the renderer treats them differently.
+        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+          send({ streamId, type: 'cancelled' });
+        } else {
+          send({ streamId, type: 'error', message: (error as Error).message });
+        }
+      }
+    })();
+
+    return { streamId };
+  });
+
+  ipcMain.handle('chat:cancel', (_, conversationId: string) => ({
+    cancelled: chatSessions.cancel(conversationId),
+  }));
+
+  ipcMain.handle('chat:isGenerating', (_, conversationId: string) =>
+    chatSessions.isGenerating(conversationId)
+  );
 }
