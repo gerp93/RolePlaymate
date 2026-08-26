@@ -34,10 +34,13 @@ export async function initDatabase(dbPath?: string): Promise<Database> {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       image_url TEXT,
+      description TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `);
+
+  ensureDescriptionColumn(db);
 
   // "fields" are content records (versioned personality/scenario/greeting text) -- every
   // character gets exactly one of each field_type, created alongside the character itself.
@@ -99,6 +102,25 @@ export async function initDatabase(dbPath?: string): Promise<Database> {
   console.log('Database initialized at:', dbPath);
 
   return db;
+}
+
+/** One-time upgrade path: characters created before the description field existed have no
+ * `description` column -- add it (as NULL for existing rows) if it isn't already there. */
+function ensureDescriptionColumn(db: Database): void {
+  const stmt = db.prepare(`PRAGMA table_info(characters)`);
+  let hasDescription = false;
+  while (stmt.step()) {
+    const row = stmt.getAsObject();
+    if (row.name === 'description') {
+      hasDescription = true;
+      break;
+    }
+  }
+  stmt.free();
+
+  if (!hasDescription) {
+    db.run(`ALTER TABLE characters ADD COLUMN description TEXT`);
+  }
 }
 
 /** One-time upgrade path: characters created before multi-image support had a single

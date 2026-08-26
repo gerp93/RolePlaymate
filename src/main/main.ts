@@ -14,9 +14,11 @@ import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
 import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
+import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { Database } from 'sql.js';
+import * as fs from 'fs';
 
 // Packaged builds resolve app.getPath('userData') from build.productName ("RolePlaymate"),
 // while `electron .` in dev resolves it from package.json's "name" ("roleplaymate") -- pin it
@@ -192,7 +194,10 @@ function registerIPCHandlers() {
       throw new Error(`Character with id ${id} not found`);
     }
 
-    const cloned = characterService.createCharacter({ name: `${source.name} (Copy)` });
+    const cloned = characterService.createCharacter({
+      name: `${source.name} (Copy)`,
+      description: source.description ?? undefined,
+    });
 
     for (const image of characterImageService.getImagesByCharacter(source.id)) {
       const clonedPath = cloneCharacterImage(image.path);
@@ -224,6 +229,50 @@ function registerIPCHandlers() {
     characterService.deleteCharacter(id);
     for (const image of images) deleteCharacterImage(image.path);
     return { success: true };
+  });
+
+  // Imports a character from a saved chatbot-profile HTML page (tested against SpicyChat's
+  // "Save Page As..." export). Parses name/description/fields programmatically, skipping and
+  // reporting anything it can't find rather than failing the whole import.
+  ipcMain.handle('characters:importFromHtml', async () => {
+    if (!mainWindow) return null;
+
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import character from HTML',
+      properties: ['openFile'],
+      filters: [{ name: 'HTML pages', extensions: ['html', 'htm'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+
+    const htmlFilePath = picked.filePaths[0];
+    const html = fs.readFileSync(htmlFilePath, 'utf-8');
+    const parsed = parseCharacterHtml(html);
+
+    const character = characterService.createCharacter({
+      name: parsed.name,
+      description: parsed.description ?? undefined,
+    });
+
+    for (const fieldType of FIELD_TYPES) {
+      const field = fieldService.createField(character.id, fieldType);
+      fieldVersionService.createVersion({ fieldId: field.id, content: parsed.fields[fieldType] ?? '' });
+    }
+
+    const localAvatarPath = resolveLocalAvatarPath(htmlFilePath, parsed.avatarSrc);
+    if (localAvatarPath) {
+      const copiedPath = cloneCharacterImage(localAvatarPath);
+      if (copiedPath) {
+        characterImageService.addImage(character.id, copiedPath);
+      } else {
+        parsed.warnings.push('Found a portrait image but could not copy it.');
+      }
+    } else if (parsed.avatarSrc) {
+      parsed.warnings.push(
+        'Portrait image was not found next to the HTML file -- save the page as "Webpage, Complete" to include it, or add one manually.'
+      );
+    }
+
+    return { character: characterService.getCharacterById(character.id)!, warnings: parsed.warnings };
   });
 
   // Field (content) handlers
