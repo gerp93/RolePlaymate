@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from '../dbLocation';
+import { CHAT_DDL } from './chatSchema';
 
 let dbInstance: DatabaseSync | null = null;
 
@@ -80,6 +81,8 @@ export function initDatabase(dbPath?: string): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_character_images_character ON character_images(character_id);
   `);
+
+  db.exec(CHAT_DDL);
 
   ensureDescriptionColumn(db);
   migrateLegacyPortraits(db);

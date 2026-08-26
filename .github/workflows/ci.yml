@@ -1,0 +1,45 @@
+name: CI
+
+# Build + typecheck gate on every PR. Until this existed the repo had no
+# PR-triggered CI at all -- auto-release.yml only fires on push to main and
+# cut-release.yml is manual -- so nothing checked a branch before it merged.
+#
+# Local for now: KVG_Standards has a reusable CI gate for Go repos
+# (ci-go.yml) but no Electron/Node equivalent yet. Move to a
+# `ci-electron.yml` reusable workflow once one exists, the same way
+# auto-release.yml calls release-electron.yml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Node bundled by the pinned Electron (35 -> Node 22.16).
+          # node:sqlite needs >= 22.13, so don't drop below 22 here either.
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        # Skip the ~111 MB Electron binary: this job only typechecks and builds,
+        # and the types tsc needs (electron.d.ts) ship in the npm package itself,
+        # not the downloaded runtime.
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
