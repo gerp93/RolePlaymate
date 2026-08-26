@@ -14,6 +14,7 @@ import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
 import { ConversationService } from './database/conversationService';
+import { LorebookService } from './database/lorebookService';
 import { PromptBuilder } from './chat/promptBuilder';
 import { OllamaClient } from './chat/ollamaClient';
 import { ChatSessionManager } from './chat/chatSession';
@@ -24,6 +25,12 @@ import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
 import { ChatSendRequest, ChatStreamEvent } from '../shared/types/chat';
+import {
+  CreateLorebookInput,
+  UpdateLorebookInput,
+  CreateLorebookEntryInput,
+  UpdateLorebookEntryInput,
+} from '../shared/types/lorebook';
 import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
@@ -43,6 +50,7 @@ let conversationService: ConversationService;
 let promptBuilder: PromptBuilder;
 let ollamaClient: OllamaClient;
 let chatSessions: ChatSessionManager;
+let lorebookService: LorebookService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -157,7 +165,13 @@ app.whenReady().then(() => {
   conversationService = new ConversationService(db);
   promptBuilder = new PromptBuilder(characterService, fieldService, fieldVersionService);
   ollamaClient = new OllamaClient();
-  chatSessions = new ChatSessionManager(conversationService, promptBuilder, ollamaClient);
+  lorebookService = new LorebookService(db);
+  chatSessions = new ChatSessionManager(
+    conversationService,
+    promptBuilder,
+    ollamaClient,
+    lorebookService
+  );
 
   registerIPCHandlers();
 
@@ -473,11 +487,83 @@ function registerIPCHandlers() {
     }
   });
 
+  registerLorebookHandlers();
   registerChatHandlers();
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('updates:check', () => checkForUpdatesNow());
+}
+
+function registerLorebookHandlers() {
+  ipcMain.handle('lorebooks:getWorldBooks', () => lorebookService.listWorldBooks());
+  ipcMain.handle('lorebooks:getById', (_, id: string) => lorebookService.getBook(id));
+  ipcMain.handle('lorebooks:create', (_, input: CreateLorebookInput) =>
+    lorebookService.createBook(input)
+  );
+  ipcMain.handle('lorebooks:update', (_, id: string, input: UpdateLorebookInput) =>
+    lorebookService.updateBook(id, input)
+  );
+  ipcMain.handle('lorebooks:delete', (_, id: string) => {
+    lorebookService.deleteBook(id);
+    return { success: true };
+  });
+
+  // A character's personal book is created on demand rather than alongside every character,
+  // so characters that never need one don't accumulate empty books.
+  ipcMain.handle('lorebooks:getPersonalBook', (_, characterId: string) => {
+    const character = characterService.getCharacterById(characterId);
+    if (!character) throw new Error(`Character with id ${characterId} not found`);
+    return lorebookService.getOrCreatePersonalBook(characterId, character.name);
+  });
+
+  ipcMain.handle('lorebooks:getForCharacter', (_, characterId: string) =>
+    lorebookService.getBooksForCharacter(characterId)
+  );
+  ipcMain.handle('lorebooks:getCharacterIds', (_, lorebookId: string) =>
+    lorebookService.getCharacterIdsForBook(lorebookId)
+  );
+  ipcMain.handle('lorebooks:attach', (_, characterId: string, lorebookId: string) => {
+    lorebookService.attachBook(characterId, lorebookId);
+    return { success: true };
+  });
+  ipcMain.handle('lorebooks:detach', (_, characterId: string, lorebookId: string) => {
+    lorebookService.detachBook(characterId, lorebookId);
+    return { success: true };
+  });
+
+  // Entries
+  ipcMain.handle('loreEntries:getByBook', (_, lorebookId: string) =>
+    lorebookService.listEntries(lorebookId)
+  );
+  ipcMain.handle('loreEntries:create', (_, input: CreateLorebookEntryInput) =>
+    lorebookService.createEntry(input)
+  );
+  ipcMain.handle('loreEntries:update', (_, id: string, input: UpdateLorebookEntryInput) =>
+    lorebookService.updateEntry(id, input)
+  );
+  ipcMain.handle('loreEntries:delete', (_, id: string) => {
+    lorebookService.deleteEntry(id);
+    return { success: true };
+  });
+
+  // Entry versions -- same operations the character field editor offers.
+  ipcMain.handle('loreVersions:getByEntry', (_, entryId: string) =>
+    lorebookService.getVersions(entryId)
+  );
+  ipcMain.handle('loreVersions:create', (_, entryId: string, content: string) =>
+    lorebookService.createVersion(entryId, content)
+  );
+  ipcMain.handle('loreVersions:updateContent', (_, versionId: string, content: string) =>
+    lorebookService.updateVersionContent(versionId, content)
+  );
+  ipcMain.handle('loreVersions:activate', (_, versionId: string) =>
+    lorebookService.activateVersion(versionId)
+  );
+  ipcMain.handle('loreVersions:delete', (_, versionId: string) => {
+    lorebookService.deleteVersion(versionId);
+    return { success: true };
+  });
 }
 
 /**

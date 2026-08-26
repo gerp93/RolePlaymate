@@ -4,6 +4,8 @@ import {
   DEFAULT_CONVERSATION_TITLE,
 } from '../database/conversationService';
 import { PromptBuilder } from './promptBuilder';
+import { LorebookService } from '../database/lorebookService';
+import { scanLore, splitByScope } from './loreMatcher';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
@@ -85,7 +87,8 @@ export class ChatSessionManager {
   constructor(
     private conversations: ConversationService,
     private prompts: PromptBuilder,
-    private ollama: OllamaClient
+    private ollama: OllamaClient,
+    private lorebooks: LorebookService
   ) {}
 
   /** Loads history from the database on first use, so reopening a conversation resumes it. */
@@ -143,14 +146,25 @@ export class ChatSessionManager {
     const samplers = { ...DEFAULT_SAMPLERS, ...request.samplers };
     const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
 
+    const historyTurns = session.history.slice(-historyLimit);
+
+    // Lore is scanned against the recent transcript plus the message being sent, so an entry
+    // fires on what the scene is about now rather than on anything ever mentioned.
+    const lore = scanLore(
+      this.lorebooks.getEntriesForCharacter(request.characterId),
+      historyTurns,
+      request.userMessage
+    );
+    const { world: worldLore, personal: personalLore } = splitByScope(lore.selected);
+
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       directions: request.directions,
       memories: request.memories,
+      worldLore,
+      personalLore,
     });
-
-    const historyTurns = session.history.slice(-historyLimit);
     const messages: OllamaChatMessage[] = [
       ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
       ...historyTurns,
@@ -210,6 +224,7 @@ export class ChatSessionManager {
         directions: request.directions ?? '',
         memories: request.memories ?? [],
         retrieval: null,
+        lore,
         systemPrompt: built.prompt,
         userMessage: request.userMessage,
         historyTurns,

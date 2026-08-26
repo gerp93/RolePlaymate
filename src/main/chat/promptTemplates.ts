@@ -18,6 +18,10 @@ export interface PromptTemplates {
   directions: string;
   /** Takes {memories} -- a pre-rendered "- " bulleted list. */
   memory: string;
+  /** Shared setting material. Takes {lore}. */
+  worldLore: string;
+  /** The character's own history. Takes {lore} and {char}. */
+  personalLore: string;
 }
 
 export interface StopPhraseSettings {
@@ -51,6 +55,29 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
   memory: [
     '[Key memories from this conversation - use these to maintain continuity:]',
     '{memories}',
+  ].join('\n'),
+
+  // Framed as common knowledge -- anyone in the setting could know these, so the model is
+  // free to have other characters reference them.
+  worldLore: [
+    '[WORLD INFORMATION]',
+    'Established facts about the setting. Treat these as common knowledge and stay consistent',
+    'with them. Do not recite them verbatim; use them only when they are relevant.',
+    '{lore}',
+    '[/WORLD INFORMATION]',
+  ].join('\n'),
+
+  // Deliberately NOT framed as common knowledge. Without this distinction a model told
+  // "the mutiny happened" as world fact will let any character reference it; told
+  // "you remember the mutiny", it keeps the memory in this character's head and lets them
+  // choose whether to reveal it.
+  personalLore: [
+    '[{char} - PERSONAL HISTORY]',
+    "These are {char}'s own memories and private history -- things {char} personally knows or",
+    'lived through, NOT common knowledge. Other characters do not know these unless {char}',
+    'chooses to tell them. Let them colour how {char} reacts rather than stating them outright.',
+    '{lore}',
+    '[/{char} - PERSONAL HISTORY]',
   ].join('\n'),
 };
 

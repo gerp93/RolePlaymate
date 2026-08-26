@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from '../dbLocation';
 import { CHAT_DDL } from './chatSchema';
+import { LOREBOOK_DDL } from './lorebookSchema';
 
 let dbInstance: DatabaseSync | null = null;
 
@@ -83,6 +84,7 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   `);
 
   db.exec(CHAT_DDL);
+  db.exec(LOREBOOK_DDL);
 
   ensureDescriptionColumn(db);
   migrateLegacyPortraits(db);

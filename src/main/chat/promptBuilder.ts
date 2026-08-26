@@ -3,6 +3,7 @@ import { FieldVersionService } from '../database/fieldVersionService';
 import { CharacterService } from '../database/characterService';
 import { FieldType } from '../../shared/types/characterField';
 import { BuiltPrompt } from '../../shared/types/chat';
+import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import {
   DEFAULT_TEMPLATES,
   DEFAULT_STOP_PHRASES,
@@ -17,6 +18,9 @@ export interface PromptBuildOptions {
   memories?: string[];
   /** Per-turn scene instructions. Transient -- never stored on the conversation. */
   directions?: string;
+  /** Lore entries that fired this turn, already split by scope (see loreMatcher). */
+  worldLore?: MatchedLoreEntry[];
+  personalLore?: MatchedLoreEntry[];
   templates?: Partial<PromptTemplates>;
   stopPhrases?: Partial<StopPhraseSettings>;
 }
@@ -41,6 +45,12 @@ export function substituteMacros(text: string, charName: string, userName: strin
   return text
     .replace(/\{\{char\}\}/gi, charName)
     .replace(/\{\{user\}\}/gi, userName);
+}
+
+/** Lore entries render titled so the model can tell one fact from another, rather than as a
+ * wall of bullets where a two-sentence entry blurs into the next. */
+function renderLore(entries: MatchedLoreEntry[]): string {
+  return entries.map((entry) => `- ${entry.title}: ${entry.content}`).join('\n');
 }
 
 /** Wraps content in a bracket tag, matching the convention the templates already use. */
@@ -131,6 +141,23 @@ export class PromptBuilder {
         fill(templates.personaContext, {
           persona_name: personaName,
           persona_background: substituteMacros(personaBackground, character.name, userName),
+        }).trim()
+      );
+    }
+
+    // Lore before memories: setting facts are the stable backdrop, conversation memories are
+    // the recent specifics, and the model weights later context more heavily.
+    const worldLore = options.worldLore ?? [];
+    if (worldLore.length > 0) {
+      parts.push(fill(templates.worldLore, { lore: renderLore(worldLore) }).trim());
+    }
+
+    const personalLore = options.personalLore ?? [];
+    if (personalLore.length > 0) {
+      parts.push(
+        fill(templates.personalLore, {
+          lore: renderLore(personalLore),
+          char: character.name,
         }).trim()
       );
     }

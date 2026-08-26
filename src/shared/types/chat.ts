@@ -1,5 +1,6 @@
 import { Message } from './message';
 import { MemoryRetrievalResult } from './conversationMemory';
+import { LoreScanResult } from './lorebook';
 
 /** Sampler knobs passed through to Ollama. Only temperature and maxTokens are exposed in the
  * chat UI (matching KVGenius); the rest come from settings. They are sent regardless --
@@ -28,6 +29,9 @@ export interface ChatDebugInfo {
   /** Section 4, after retrieval: the memory texts actually injected. */
   memories: string[];
   retrieval: MemoryRetrievalResult | null;
+  /** What the lore scan selected and rejected this turn, so a misfiring entry can be
+   * diagnosed in the debug console rather than by guesswork. */
+  lore: LoreScanResult | null;
   /** The fully assembled system prompt, i.e. sections 1-5 joined. */
   systemPrompt: string;
   userMessage: string;
