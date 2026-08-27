@@ -40,6 +40,60 @@ import * as fs from 'fs';
 // so both modes always read/write the same data folder instead of silently diverging.
 app.setName('roleplaymate');
 
+// Without this, a second launch (a second double-click, or Windows re-running the exe after
+// an install) starts a whole second process rather than reusing the first. If the first one
+// is stuck -- see the startup error handling below -- every relaunch attempt just adds
+// another silent zombie process instead of surfacing anything, which is exactly what a
+// process list showing several idle copies with no window looks like.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+/**
+ * Writes a line to `userData/main.log` and, before any window exists to show a dialog to,
+ * writes to stderr too. `userData` is created lazily by Electron itself, so this never
+ * assumes the directory is already there.
+ *
+ * Startup failures here previously vanished: `app.whenReady().then(...)` had no `.catch`,
+ * so a thrown error (a locked or corrupted database file, a malformed app-config.json, an
+ * antivirus/sync-folder file lock) rejected into nothing. The process stayed alive as an
+ * Electron process with no window and no visible error -- indistinguishable from "frozen".
+ */
+function logStartupFailure(context: string, error: unknown): void {
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  const line = `[${new Date().toISOString()}] ${context}: ${message}\n`;
+  process.stderr.write(line);
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), line);
+  } catch {
+    // The log write itself failing (e.g. the same locked-folder problem that caused the
+    // original error) must not stop the dialog below from at least trying to show.
+  }
+}
+
+function showStartupFailureDialog(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  dialog.showErrorBox(
+    'RolePlaymate failed to start',
+    `${message}\n\nDetails were written to:\n${path.join(app.getPath('userData'), 'main.log')}`
+  );
+}
+
+process.on('uncaughtException', (error) => {
+  logStartupFailure('uncaughtException', error);
+  showStartupFailureDialog(error);
+  app.quit();
+});
+
 let mainWindow: BrowserWindow | null = null;
 let db: DatabaseSync | null = null;
 let characterService: CharacterService;
@@ -183,6 +237,14 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+}).catch((error) => {
+  // Anything above -- most plausibly `initDatabase()` hitting a locked, corrupted, or
+  // permission-denied database file -- used to reject this promise with nothing downstream
+  // to catch it. The process survived with no window and no error, which looks exactly like
+  // "the app doesn't open": alive in the task list, using almost no resources, forever.
+  logStartupFailure('startup', error);
+  showStartupFailureDialog(error);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
