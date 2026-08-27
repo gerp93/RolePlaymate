@@ -5,25 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
-function getImagesDir(): string {
+export function getImagesDir(): string {
   return path.join(app.getPath('userData'), 'images');
 }
 
-/** Opens a native file picker for a portrait image, copies the chosen file into userData
- * (so it survives independent of wherever the user originally had it), and returns the new
- * absolute path. Returns null if the user cancels. */
-export async function chooseCharacterImage(window: BrowserWindow | null): Promise<string | null> {
-  if (!window) return null;
-
-  const result = await dialog.showOpenDialog(window, {
-    title: 'Choose a character portrait',
-    properties: ['openFile'],
-    filters: [{ name: 'Images', extensions: ALLOWED_EXTENSIONS }],
-  });
-
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  const sourcePath = result.filePaths[0];
+/** Copies one file into userData/images under a fresh uuid name, so it survives independent of
+ * wherever the user originally had it. Throws for anything outside the allowed extensions. */
+function copyImageIntoLibrary(sourcePath: string): string {
   const ext = path.extname(sourcePath).toLowerCase().replace('.', '') || 'png';
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
     throw new Error(`Unsupported image type: .${ext}`);
@@ -34,8 +22,40 @@ export async function chooseCharacterImage(window: BrowserWindow | null): Promis
 
   const destPath = path.join(imagesDir, `${uuidv4()}.${ext}`);
   fs.copyFileSync(sourcePath, destPath);
-
   return destPath;
+}
+
+/** Opens a native file picker for a single image (a persona avatar, a world book cover -- the
+ * two places that only ever hold one), copies the chosen file into userData, and returns the
+ * new absolute path. Returns null if the user cancels. */
+export async function chooseCharacterImage(window: BrowserWindow | null): Promise<string | null> {
+  if (!window) return null;
+
+  const result = await dialog.showOpenDialog(window, {
+    title: 'Choose an image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ALLOWED_EXTENSIONS }],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return copyImageIntoLibrary(result.filePaths[0]);
+}
+
+/** Same as chooseCharacterImage, but lets the user pick several portraits from one dialog --
+ * for the character gallery, the one place multiple images per subject makes sense (a persona
+ * avatar and a world book cover are each a single optional image, never a gallery). Returns an
+ * empty array if the user cancels. */
+export async function chooseCharacterImages(window: BrowserWindow | null): Promise<string[]> {
+  if (!window) return [];
+
+  const result = await dialog.showOpenDialog(window, {
+    title: 'Choose character portraits',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ALLOWED_EXTENSIONS }],
+  });
+
+  if (result.canceled) return [];
+  return result.filePaths.map(copyImageIntoLibrary);
 }
 
 /** Copies an existing portrait file to a new uuid-named file in userData/images, so a cloned

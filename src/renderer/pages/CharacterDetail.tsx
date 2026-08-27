@@ -5,6 +5,7 @@ import { CharacterField, FIELD_TYPES } from '../../shared/types/characterField';
 import { CharacterImage } from '../../shared/types/characterImage';
 import FieldEditor from '../components/FieldEditor';
 import PersonalHistoryPanel from '../components/lore/PersonalHistoryPanel';
+import { toImageUrl } from '../utils/imageUrl';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
@@ -68,9 +69,11 @@ export default function CharacterDetail() {
     if (!characterId) return;
     setImageBusy(true);
     try {
+      // The picker allows selecting several files at once; land on the first newly added one
+      // rather than staying put, so it's clear something happened.
       const added = await window.electronAPI.characterImages.add(characterId);
-      if (added) {
-        await load(characterId, added.id);
+      if (added.length > 0) {
+        await load(characterId, added[0].id);
       }
     } finally {
       setImageBusy(false);
@@ -84,6 +87,16 @@ export default function CharacterDetail() {
     if (!confirm('Remove this image? This cannot be undone.')) return;
     await window.electronAPI.characterImages.remove(current.id);
     await load(characterId);
+  }
+
+  async function handleSetCover() {
+    if (!characterId) return;
+    const current = images[imageIndex];
+    if (!current) return;
+    await window.electronAPI.characterImages.setCover(current.id);
+    // Reordering moves this image to the front of the list -- follow it, so the viewer stays
+    // on the same picture rather than landing wherever index 0 used to point.
+    await load(characterId, current.id);
   }
 
   function showPrevImage() {
@@ -147,7 +160,7 @@ export default function CharacterDetail() {
 
       <div className="character-detail-portrait-panel">
         <div className="character-detail-portrait-large">
-          {currentImage ? <img src={`file://${currentImage.path}`} alt={character.name} /> : <span>?</span>}
+          {currentImage ? <img src={toImageUrl(currentImage.path)} alt={character.name} /> : <span>?</span>}
 
           {images.length > 1 && (
             <>
@@ -183,6 +196,12 @@ export default function CharacterDetail() {
               />
             ))}
           </div>
+        )}
+
+        {images.length > 1 && imageIndex !== 0 && (
+          <button className="btn" onClick={() => void handleSetCover()} title="Show this image on the character card">
+            Set as Cover
+          </button>
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>

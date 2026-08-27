@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { CharacterImage } from '../../shared/types/characterImage';
+import { toImageUrl } from '../utils/imageUrl';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
 // instead of shrinking further.
@@ -17,6 +18,7 @@ export default function CharacterList() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [coverImages, setCoverImages] = useState<Record<string, CharacterImage[]>>({});
   const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
@@ -37,7 +39,11 @@ export default function CharacterList() {
 
   async function handleCreate() {
     const name = newName.trim();
-    if (!name) return;
+    if (!name) {
+      setNameError(true);
+      return;
+    }
+    setNameError(false);
     await window.electronAPI.characters.create({ name });
     setNewName('');
     await load();
@@ -88,7 +94,10 @@ export default function CharacterList() {
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
+            onChange={(e) => {
+              setNewName(e.target.value);
+              if (nameError) setNameError(false);
+            }}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             placeholder="New character name"
             style={{ flex: 1 }}
@@ -100,6 +109,7 @@ export default function CharacterList() {
             {importing ? 'Importing…' : 'Import from HTML…'}
           </button>
         </div>
+        {nameError && <p className="field-error">Enter a name before creating a character.</p>}
       </div>
 
       {loading ? (
@@ -116,7 +126,7 @@ export default function CharacterList() {
             return (
               <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
                 <div className="character-card-portrait">
-                  {cover ? <img src={`file://${cover.path}`} alt={character.name} /> : <span>?</span>}
+                  {cover ? <img src={toImageUrl(cover.path)} alt={character.name} /> : <span>?</span>}
                 </div>
                 <div className="character-card-body">
                   <p className="character-card-name">{character.name}</p>

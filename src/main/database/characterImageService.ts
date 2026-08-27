@@ -75,4 +75,24 @@ export class CharacterImageService {
   removeImage(id: string): void {
     this.db.prepare(`DELETE FROM character_images WHERE id = ?`).run(id);
   }
+
+  /** Makes one image the cover (position 0, the one shown on the character grid tile) by
+   * swapping positions with whichever image currently holds position 0. Simpler than
+   * resequencing the whole gallery, and it preserves the relative order of every other image. */
+  setCoverImage(imageId: string): void {
+    const target = this.getImageById(imageId);
+    if (!target) throw new Error(`Image ${imageId} not found`);
+    if (target.position === 0) return;
+
+    transaction(this.db, () => {
+      const current = this.db
+        .prepare(`SELECT id FROM character_images WHERE character_id = ? AND position = 0`)
+        .get(target.characterId) as { id: string } | undefined;
+
+      if (current) {
+        this.db.prepare(`UPDATE character_images SET position = ? WHERE id = ?`).run(target.position, current.id);
+      }
+      this.db.prepare(`UPDATE character_images SET position = 0 WHERE id = ?`).run(imageId);
+    });
+  }
 }

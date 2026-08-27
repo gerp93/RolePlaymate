@@ -15,9 +15,26 @@ import {
   MemoryWithEmbedding,
 } from './memoryRetrieval';
 import { extractMemories } from './memoryExtraction';
+import { suggestPersonaReply } from './suggestReply';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
+
+/**
+ * A generated reply that hasn't been folded into the model's context or mined for memories
+ * yet -- the redo/swipe window. It becomes real (pushed into `history`, extracted) only when
+ * the next turn starts, at which point whichever variant is currently selected is what
+ * "happened". Nothing before that point is visible to the model or to extraction, which is
+ * the whole point: redoing must not leak the response(s) you didn't keep.
+ */
+export interface PendingTurn {
+  userMessage: string;
+  assistantMessageId: string;
+  model: string;
+  systemPrompt: string;
+  stopPhrases: string[];
+  shouldExtract: boolean;
+}
 
 /**
  * Defaults ported from KVGenius's generate_chat_response. topP/topK/repetitionPenalty match
@@ -48,8 +65,11 @@ export const DEFAULT_HISTORY_LIMIT = 20;
  */
 export interface ChatSession {
   conversationId: string;
-  /** Mirrors the persisted transcript, trimmed to the history window. */
+  /** Mirrors the persisted transcript, trimmed to the history window -- but never includes the
+   * pending turn, if there is one. That's what keeps a redone response out of context until
+   * it's finalized. */
   history: OllamaChatMessage[];
+  pending: PendingTurn | null;
   abort: AbortController | null;
   lastDebug: ChatDebugInfo | null;
 }
@@ -57,6 +77,9 @@ export interface ChatSession {
 export interface GenerateRequest {
   conversationId: string;
   characterId: string;
+  /** Only needed to scan the persona's own personal history -- name/background above already
+   * carry everything the prompt itself needs. */
+  personaId?: string | null;
   personaName?: string | null;
   personaBackground?: string | null;
   userMessage: string;
@@ -115,16 +138,32 @@ export class ChatSessionManager {
     private lorebooks: LorebookService
   ) {}
 
-  /** Loads history from the database on first use, so reopening a conversation resumes it. */
+  /**
+   * Loads history from the database on first use, so reopening a conversation resumes it.
+   *
+   * If the conversation's last message is an unanswered-since assistant turn (nothing sent
+   * after it), that turn is still "pending" -- redoable, and not yet folded into `history` --
+   * exactly as it was left. This is how redo survives a conversation switch or an app
+   * restart: nothing about pending-ness is stored explicitly, it's just "the last message is
+   * an assistant reply with no newer user message".
+   */
   getSession(conversationId: string): ChatSession {
     let session = this.sessions.get(conversationId);
     if (!session) {
+      const transcript = this.conversations.getMessages(conversationId).filter((m) => m.role !== 'system');
+      const last = transcript.at(-1);
+      const precedingUser = transcript.at(-2);
+
+      const pending =
+        last?.role === 'assistant' && precedingUser?.role === 'user'
+          ? this.reconstructPending(conversationId, precedingUser.content, last.id)
+          : null;
+      const historyMessages = pending ? transcript.slice(0, -2) : transcript;
+
       session = {
         conversationId,
-        history: this.conversations
-          .getMessages(conversationId)
-          .filter((m) => m.role !== 'system')
-          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        history: historyMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        pending,
         abort: null,
         lastDebug: null,
       };
@@ -133,9 +172,64 @@ export class ChatSessionManager {
     return session;
   }
 
+  /**
+   * Rebuilds enough of a pending turn's context to redo it or extract memories from it, for a
+   * turn that outlived the process that generated it (app restart, or the very first
+   * `getSession` after the app starts).
+   *
+   * This is necessarily approximate: per-turn directions, retrieved memories and lore firing
+   * aren't recoverable, only the character/persona backdrop is. A redo issued after a restart
+   * therefore uses a slightly plainer prompt than the turn it's replacing would have. Within
+   * one continuous run this path is never hit -- `pending` is set directly by `generate`,
+   * carrying the exact prompt that turn used.
+   */
+  private reconstructPending(
+    conversationId: string,
+    userMessage: string,
+    assistantMessageId: string
+  ): PendingTurn | null {
+    const conversation = this.conversations.getConversation(conversationId);
+    if (!conversation?.characterId) return null;
+
+    try {
+      const persona = conversation.userPersonaId
+        ? this.conversations.getPersona(conversation.userPersonaId)
+        : null;
+      const built = this.prompts.buildSystemPrompt(conversation.characterId, {
+        personaName: persona?.name,
+        personaBackground: persona?.background,
+      });
+      return {
+        userMessage,
+        assistantMessageId,
+        model: conversation.model,
+        systemPrompt: built.prompt,
+        stopPhrases: built.stopPhrases,
+        shouldExtract: true,
+      };
+    } catch {
+      // Character deleted out from under the conversation -- nothing to rebuild a prompt from.
+      return null;
+    }
+  }
+
   dropSession(conversationId: string): void {
     this.sessions.get(conversationId)?.abort?.abort();
     this.sessions.delete(conversationId);
+  }
+
+  /**
+   * Deletes the conversation's last message (LIFO -- see conversationService.deleteMessage)
+   * and any memories it produced, then drops the in-memory session so the next access rebuilds
+   * `history`/`pending` from what's actually left in the database rather than an in-memory
+   * copy that still thinks the deleted turn happened.
+   */
+  deleteMessage(conversationId: string, messageId: string): void {
+    if (this.isGenerating(conversationId)) {
+      throw new Error('Cannot delete a message while a response is generating');
+    }
+    this.conversations.deleteMessage(conversationId, messageId);
+    this.dropSession(conversationId);
   }
 
   isGenerating(conversationId: string): boolean {
@@ -157,6 +251,11 @@ export class ChatSessionManager {
    * the user typed. The assistant message is persisted only on success -- an error is never
    * written as an assistant turn, which the source did, poisoning the context of every
    * later turn with its own error text.
+   *
+   * The *previous* turn's reply -- still pending if the user redid it, looked at the
+   * alternatives, and then just typed the next message without explicitly picking one -- is
+   * finalized first: whichever variant is currently selected is what "happened", folded into
+   * context and handed to extraction now that the user has moved on from it.
    */
   async generate(
     request: GenerateRequest,
@@ -169,6 +268,8 @@ export class ChatSessionManager {
 
     const samplers = { ...DEFAULT_SAMPLERS, ...request.samplers };
     const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+
+    this.finalizePending(session, historyLimit);
 
     const historyTurns = session.history.slice(-historyLimit);
 
@@ -186,12 +287,35 @@ export class ChatSessionManager {
 
     // Lore is scanned against the recent transcript plus the message being sent, so an entry
     // fires on what the scene is about now rather than on anything ever mentioned.
-    const lore = scanLore(
+    const characterLore = scanLore(
       this.lorebooks.getEntriesForCharacter(request.characterId),
       historyTurns,
       request.userMessage
     );
-    const { world: worldLore, personal: personalLore } = splitByScope(lore.selected);
+    // Scanned separately, with its own budget, rather than merged into the character's
+    // entries before scanning -- a persona's history shouldn't lose its budget race to a
+    // character with a bigger book, and keeping the two scans independent is what makes that
+    // true regardless of either book's size.
+    const personaLoreResult = request.personaId
+      ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, request.userMessage)
+      : null;
+
+    const { world: worldLore, personal: personalLore } = splitByScope(characterLore.selected);
+    const personaLore = personaLoreResult?.selected ?? [];
+
+    // Merged for the debug console, which shows one lore panel -- each entry still carries its
+    // own lorebookName ("Veridia's history" vs. "Clyde's history"), so whose memory it is stays
+    // visible even without a dedicated second panel.
+    const lore = personaLoreResult
+      ? {
+          selected: [...characterLore.selected, ...personaLoreResult.selected],
+          rejected: [...characterLore.rejected, ...personaLoreResult.rejected],
+          consideredCount: characterLore.consideredCount + personaLoreResult.consideredCount,
+          budgetTokensUsed: characterLore.budgetTokensUsed + personaLoreResult.budgetTokensUsed,
+          budgetTokensMax: characterLore.budgetTokensMax + personaLoreResult.budgetTokensMax,
+          scanText: characterLore.scanText,
+        }
+      : characterLore;
 
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
@@ -200,6 +324,7 @@ export class ChatSessionManager {
       memories: memoryTexts,
       worldLore,
       personalLore,
+      personaLore,
     });
     const messages: OllamaChatMessage[] = [
       ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
@@ -240,18 +365,6 @@ export class ChatSessionManager {
       // prefixes, collapsing whitespace) silently mangles legitimate output.
       const content = result.content.trim();
 
-      const message = this.conversations.appendMessage({
-        conversationId: request.conversationId,
-        role: 'assistant',
-        content,
-      });
-
-      session.history.push({ role: 'user', content: request.userMessage });
-      session.history.push({ role: 'assistant', content });
-      if (session.history.length > historyLimit) {
-        session.history = session.history.slice(-historyLimit);
-      }
-
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
         characterInstructions: built.characterInstructions,
@@ -274,12 +387,27 @@ export class ChatSessionManager {
       };
       session.lastDebug = debug;
 
-      if (request.extractMemories !== false) {
-        // Deliberately not awaited: extraction is a second model call, and the source ran it
-        // inline, adding roughly a second to every turn before the user saw anything. The
-        // reply is already persisted and returned; new memories land when they land.
-        void this.extract(request, built.prompt, content);
-      }
+      const { message } = this.conversations.appendAssistantMessage(
+        request.conversationId,
+        content,
+        request.model,
+        debug
+      );
+      // The model can change freely turn to turn -- keep the conversation record (and the
+      // sidebar) pointed at whichever one was actually used most recently.
+      this.conversations.updateConversationModel(request.conversationId, request.model);
+
+      // Not folded into `session.history` and not extracted -- that happens on the next
+      // `generate` or `regenerate` call, once the user has settled on a variant by moving on
+      // from this turn. See the class-level note on `pending`.
+      session.pending = {
+        userMessage: request.userMessage,
+        assistantMessageId: message.id,
+        model: request.model,
+        systemPrompt: built.prompt,
+        stopPhrases: built.stopPhrases,
+        shouldExtract: request.extractMemories !== false,
+      };
 
       return { message, debug };
     } finally {
@@ -287,6 +415,203 @@ export class ChatSessionManager {
       // equivalent flag set when generation threw, which stuck the UI in "generating"
       // permanently with no way out but a restart.
       session.abort = null;
+    }
+  }
+
+  /**
+   * Regenerates the pending turn's reply: a new variant, using the exact same context and
+   * system prompt the original response (or the last redo) used, so this is a resample of the
+   * same question rather than a chance to also change the character, persona or directions
+   * mid-turn. The model is the one exception -- an explicit `model` here lets a redo use
+   * whatever's currently selected in the composer rather than being stuck on whatever the
+   * first response used, matching that the model can change at any point in the conversation.
+   *
+   * Like the original response, the new variant is not folded into `history` or extracted --
+   * it only replaces which variant is *selected*. Nothing about the pending turn's place in
+   * the queue changes: the next `generate` call still finalizes whichever variant is selected
+   * when it runs, exactly as if this were the first response.
+   */
+  async regenerate(
+    conversationId: string,
+    onToken: (text: string) => void,
+    samplers?: Partial<SamplerParams>,
+    model?: string
+  ): Promise<GenerateResult> {
+    const session = this.getSession(conversationId);
+    if (session.abort) {
+      throw new Error('A response is already being generated for this conversation');
+    }
+    const pending = session.pending;
+    if (!pending) {
+      throw new Error('Nothing to redo -- send a message first');
+    }
+    const effectiveModel = model || pending.model;
+
+    const options = toOllamaOptions({ ...DEFAULT_SAMPLERS, ...samplers }, pending.stopPhrases);
+    const messages: OllamaChatMessage[] = [
+      ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
+      ...session.history,
+      { role: 'user' as const, content: pending.userMessage },
+    ];
+
+    const controller = new AbortController();
+    session.abort = controller;
+
+    try {
+      const result = await this.ollama.chat({
+        model: effectiveModel,
+        messages,
+        options,
+        signal: controller.signal,
+        onToken,
+      });
+      const content = result.content.trim();
+
+      // A message from before redo support has no variant of its own yet -- back one out of
+      // its current content first, or selecting the new variant below would lose it for good.
+      // Its model is unknown (it predates this column too), left null rather than guessed.
+      if (this.conversations.getVariants(pending.assistantMessageId).length === 0) {
+        const current = this.conversations.getMessage(pending.assistantMessageId);
+        if (current) this.conversations.addVariant(pending.assistantMessageId, current.content);
+      }
+
+      // The rest of the debug console (retrieval, lore, persona, directions) describes the
+      // turn as a whole and didn't change; only what was actually sent and what came back did.
+      // `lastDebug` can be null here -- a redo issued right after an app restart, before any
+      // `generate` call in this process populated it -- so this falls back to what's actually
+      // recoverable (session.history, the reconstructed prompt) rather than lying about the
+      // unrecoverable parts (retrieval, lore, per-turn directions).
+      const baseDebug: ChatDebugInfo =
+        session.lastDebug ?? {
+          baseSystemPrompt: '',
+          characterInstructions: '',
+          personaName: '',
+          personaBackground: '',
+          directions: '',
+          memories: [],
+          retrieval: null,
+          lore: null,
+          systemPrompt: pending.systemPrompt,
+          userMessage: pending.userMessage,
+          historyTurns: session.history,
+          historyLength: session.history.length,
+          fullPrompt: '',
+          stopPhrases: pending.stopPhrases,
+          rawResponse: '',
+          cleanedResponse: '',
+          inputTokens: null,
+          outputTokens: null,
+        };
+      const debug: ChatDebugInfo = {
+        ...baseDebug,
+        fullPrompt: renderMessagesForDebug(messages),
+        rawResponse: result.content,
+        cleanedResponse: content,
+        inputTokens: result.promptEvalCount,
+        outputTokens: result.evalCount,
+      };
+      session.lastDebug = debug;
+
+      const variant = this.conversations.addVariant(pending.assistantMessageId, content, effectiveModel, debug);
+      const message = this.conversations.selectVariant(pending.assistantMessageId, variant.id);
+
+      this.conversations.updateConversationModel(conversationId, effectiveModel);
+      // A later redo with no explicit model falls back to whichever one this redo just used,
+      // not all the way back to the original response's model.
+      pending.model = effectiveModel;
+
+      return { message, debug };
+    } finally {
+      session.abort = null;
+    }
+  }
+
+  /** Switches which variant of the pending message is shown -- cheap and immediate, no model
+   * call. Only the pending (most recent, unanswered-since) assistant message is redoable, so
+   * this rejects anything else rather than quietly rewriting older history. */
+  chooseVariant(conversationId: string, messageId: string, variantId: string): Message {
+    const session = this.getSession(conversationId);
+    if (!session.pending || session.pending.assistantMessageId !== messageId) {
+      throw new Error('Only the most recent response can be redone or switched between variants');
+    }
+    const message = this.conversations.selectVariant(messageId, variantId);
+    // A subsequent redo (no explicit model) picks up from whichever variant is now showing,
+    // same as it does after a redo itself picks a model.
+    if (message.model) session.pending.model = message.model;
+    return message;
+  }
+
+  /**
+   * Drafts what the user's persona might say next -- purely a suggestion for the composer,
+   * never persisted and never touching `history` or `pending`. Reads the transcript straight
+   * from the database rather than `session.history` so it reflects exactly what's on screen,
+   * including a still-pending, not-yet-finalized redo of the character's last line.
+   */
+  async suggestReply(
+    conversationId: string,
+    characterId: string,
+    personaId: string | null,
+    personaName: string | null,
+    personaBackground: string | null,
+    model: string,
+    historyLimit: number = DEFAULT_HISTORY_LIMIT
+  ): Promise<string> {
+    const transcript = this.conversations
+      .getMessages(conversationId)
+      .filter((m) => m.role !== 'system')
+      .slice(-historyLimit);
+    const recentTurns = transcript.map((m) => ({ role: m.role, content: m.content }));
+
+    // The persona's own memories should colour what they'd say next, same as a character's
+    // personal history colours its replies -- scanned the same way generate() does.
+    const personaLore = personaId
+      ? scanLore(this.lorebooks.getEntriesForPersona(personaId), recentTurns, '').selected
+      : [];
+
+    const built = this.prompts.buildSystemPrompt(characterId, { personaName, personaBackground, personaLore });
+
+    return suggestPersonaReply(this.ollama, model, {
+      characterContext: built.prompt,
+      historyTurns: recentTurns,
+      characterName: built.characterName,
+      personaName: personaName?.trim() || 'You',
+    });
+  }
+
+  /**
+   * Folds the pending turn (if any) into `history` and hands it to extraction, because the
+   * user has moved on to a new message -- whichever variant was selected is what "happened".
+   * Idempotent: a session with nothing pending is a no-op, so callers don't need to check
+   * first.
+   */
+  private finalizePending(session: ChatSession, historyLimit: number): void {
+    const pending = session.pending;
+    if (!pending) return;
+    session.pending = null;
+
+    const message = this.conversations.getMessage(pending.assistantMessageId);
+    const finalContent = message?.content ?? '';
+
+    session.history.push({ role: 'user', content: pending.userMessage });
+    session.history.push({ role: 'assistant', content: finalContent });
+    if (session.history.length > historyLimit) {
+      session.history = session.history.slice(-historyLimit);
+    }
+
+    if (pending.shouldExtract && finalContent) {
+      // Deliberately not awaited, same as the source's inline call would have blocked --
+      // extraction is a second model call, and the turn that triggered finalizing is already
+      // underway generating its own reply.
+      void this.extract(
+        {
+          conversationId: session.conversationId,
+          model: pending.model,
+          userMessage: pending.userMessage,
+          messageId: pending.assistantMessageId,
+        },
+        pending.systemPrompt,
+        finalContent
+      );
     }
   }
 
@@ -337,14 +662,14 @@ export class ChatSessionManager {
    * and by this point the user already has their reply.
    */
   private async extract(
-    request: GenerateRequest,
+    turn: { conversationId: string; model: string; userMessage: string; messageId: string },
     systemPrompt: string,
     aiResponse: string
   ): Promise<ConversationMemory[]> {
     try {
-      const existing = this.conversations.listMemories(request.conversationId);
-      const facts = await extractMemories(this.ollama, request.model, {
-        userMessage: request.userMessage,
+      const existing = this.conversations.listMemories(turn.conversationId);
+      const facts = await extractMemories(this.ollama, turn.model, {
+        userMessage: turn.userMessage,
         aiResponse,
         existingMemories: existing.map((memory) => memory.content),
         systemPrompt,
@@ -352,13 +677,14 @@ export class ChatSessionManager {
 
       const added = facts.map((content) =>
         this.conversations.addMemory({
-          conversationId: request.conversationId,
+          conversationId: turn.conversationId,
           content,
           source: 'auto',
+          messageId: turn.messageId,
         })
       );
 
-      if (added.length > 0) this.onMemoriesExtracted?.(request.conversationId, added);
+      if (added.length > 0) this.onMemoriesExtracted?.(turn.conversationId, added);
       return added;
     } catch {
       return [];

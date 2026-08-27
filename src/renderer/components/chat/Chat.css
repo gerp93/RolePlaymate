@@ -246,6 +246,126 @@
   50% { opacity: 0; }
 }
 
+.chat-typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.chat-typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: chat-typing-bounce 1.2s ease-in-out infinite;
+}
+
+.chat-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-typing-bounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+.chat-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-variant-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-message-delete {
+  margin-left: auto;
+}
+
+/* Model + "view prompt" tooltip, revealed on hover below any assistant bubble that has one --
+   not just the last message, so it works throughout the whole transcript. Height-collapsed
+   rather than display:none so the fade has something to animate. */
+.chat-bubble-hover-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  transition: opacity 120ms ease, max-height 120ms ease;
+}
+
+.chat-bubble:hover .chat-bubble-hover-info {
+  max-height: 24px;
+  opacity: 1;
+  margin-top: 6px;
+}
+
+.chat-bubble-hover-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent-blue);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.chat-variant-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 7px;
+}
+
+.chat-variant-btn:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.chat-variant-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 2px;
+}
+
+
+/* --- suggested reply -------------------------------------------------------------------- */
+
+.chat-suggestion {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--color-surface);
+}
+
+.chat-suggestion-text {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-suggestion-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* --- composer ------------------------------------------------------------------------- */
 
 .chat-composer {

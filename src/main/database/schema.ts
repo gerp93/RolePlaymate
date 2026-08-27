@@ -86,7 +86,17 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   db.exec(CHAT_DDL);
   db.exec(LOREBOOK_DDL);
 
-  ensureDescriptionColumn(db);
+  ensureColumn(db, 'characters', 'description', 'TEXT');
+  ensureColumn(db, 'messages', 'selected_variant_id', 'TEXT REFERENCES message_variants(id) ON DELETE SET NULL');
+  ensureColumn(db, 'messages', 'model', 'TEXT');
+  ensureColumn(db, 'message_variants', 'model', 'TEXT');
+  ensureColumn(db, 'message_variants', 'debug', 'TEXT');
+  ensureColumn(db, 'conversation_memories', 'message_id', 'TEXT REFERENCES messages(id) ON DELETE CASCADE');
+  ensureColumn(db, 'lorebooks', 'owner_persona_id', 'TEXT REFERENCES user_personas(id) ON DELETE CASCADE');
+  ensureColumn(db, 'lorebooks', 'image', 'TEXT');
+  // See the note in lorebookSchema.ts: this index has to wait until the column above is
+  // guaranteed to exist, which for an upgraded database is only true after this line runs.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_lorebooks_owner_persona ON lorebooks(owner_persona_id)`);
   migrateLegacyPortraits(db);
 
   console.log('Database initialized at:', dbPath);
@@ -94,14 +104,14 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   return db;
 }
 
-/** One-time upgrade path: characters created before the description field existed have no
- * `description` column -- add it (as NULL for existing rows) if it isn't already there. */
-function ensureDescriptionColumn(db: DatabaseSync): void {
-  const columns = db.prepare(`PRAGMA table_info(characters)`).all();
-  const hasDescription = columns.some((column) => column.name === 'description');
-
-  if (!hasDescription) {
-    db.exec(`ALTER TABLE characters ADD COLUMN description TEXT`);
+/** One-time upgrade path, generic form: adds `column` to `table` if a database created before
+ * it existed doesn't have it yet. `columnDdl` is everything after the column name (type and
+ * any constraints). */
+function ensureColumn(db: DatabaseSync, table: string, column: string, columnDdl: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  const hasColumn = columns.some((c) => c.name === column);
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnDdl}`);
   }
 }
 

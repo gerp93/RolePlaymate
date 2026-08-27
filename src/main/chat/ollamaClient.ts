@@ -122,6 +122,10 @@ export class OllamaClient {
           model: request.model,
           messages: request.messages,
           stream,
+          // Reasoning models (e.g. gemma4) otherwise spend the whole num_predict budget on a
+          // hidden <thinking> pass, leaving `message.content` empty -- this app has nowhere to
+          // show a thinking trace and no UI concept of it, so it's always off.
+          think: false,
           ...(request.options ? { options: request.options } : {}),
         }),
         signal: request.signal,

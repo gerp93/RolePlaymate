@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllGroupedByCharacter: () => ipcRenderer.invoke('characterImages:getAllGroupedByCharacter'),
     add: (characterId: string) => ipcRenderer.invoke('characterImages:add', characterId),
     remove: (id: string) => ipcRenderer.invoke('characterImages:remove', id),
+    setCover: (id: string) => ipcRenderer.invoke('characterImages:setCover', id),
   },
 
   dbLocation: {
@@ -45,6 +46,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       options?: { personaId?: string; directions?: string; memories?: string[] }
     ) => ipcRenderer.invoke('chat:previewSystemPrompt', characterId, options),
     send: (request: unknown) => ipcRenderer.invoke('chat:send', request),
+    regenerate: (request: unknown) => ipcRenderer.invoke('chat:regenerate', request),
+    getVariants: (messageId: string) => ipcRenderer.invoke('chat:getVariants', messageId),
+    getMessageDebug: (messageId: string) => ipcRenderer.invoke('chat:getMessageDebug', messageId),
+    suggestReply: (request: unknown) => ipcRenderer.invoke('chat:suggestReply', request),
+    selectVariant: (conversationId: string, messageId: string, variantId: string) =>
+      ipcRenderer.invoke('chat:selectVariant', conversationId, messageId, variantId),
+    deleteMessage: (conversationId: string, messageId: string) =>
+      ipcRenderer.invoke('chat:deleteMessage', conversationId, messageId),
     cancel: (conversationId: string) => ipcRenderer.invoke('chat:cancel', conversationId),
     isGenerating: (conversationId: string) => ipcRenderer.invoke('chat:isGenerating', conversationId),
 
@@ -83,12 +92,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (input: unknown) => ipcRenderer.invoke('lorebooks:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('lorebooks:update', id, input),
     delete: (id: string) => ipcRenderer.invoke('lorebooks:delete', id),
+    chooseImage: () => ipcRenderer.invoke('lorebooks:chooseImage'),
+    clone: (id: string) => ipcRenderer.invoke('lorebooks:clone', id),
     getPersonalBook: (characterId: string) =>
       ipcRenderer.invoke('lorebooks:getPersonalBook', characterId),
+    getPersonalBookForPersona: (personaId: string) =>
+      ipcRenderer.invoke('lorebooks:getPersonalBookForPersona', personaId),
     getForCharacter: (characterId: string) =>
       ipcRenderer.invoke('lorebooks:getForCharacter', characterId),
-    getCharacterIds: (lorebookId: string) =>
-      ipcRenderer.invoke('lorebooks:getCharacterIds', lorebookId),
     attach: (characterId: string, lorebookId: string) =>
       ipcRenderer.invoke('lorebooks:attach', characterId, lorebookId),
     detach: (characterId: string, lorebookId: string) =>
@@ -129,6 +140,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (input: unknown) => ipcRenderer.invoke('personas:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('personas:update', id, input),
     delete: (id: string) => ipcRenderer.invoke('personas:delete', id),
+    chooseAvatar: () => ipcRenderer.invoke('personas:chooseAvatar'),
+    clone: (id: string) => ipcRenderer.invoke('personas:clone', id),
   },
 
   app: {

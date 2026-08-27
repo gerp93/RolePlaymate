@@ -10,6 +10,9 @@ export interface ConversationMemory {
   conversationId: string;
   content: string;
   source: MemorySource;
+  /** The assistant turn this was extracted from, if any. Deleting that message deletes this
+   * memory with it. Null for manual memories and for rows written before this existed. */
+  messageId: string | null;
   createdAt: string;
 }
 
@@ -17,6 +20,7 @@ export interface CreateMemoryInput {
   conversationId: string;
   content: string;
   source: MemorySource;
+  messageId?: string | null;
 }
 
 /** One memory scored against the current turn's query during retrieval. */

@@ -2,14 +2,20 @@ import { Character, CreateCharacterInput, UpdateCharacterInput } from '../shared
 import { CharacterField } from '../shared/types/characterField';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
-import { BuiltPrompt, ChatStreamEvent, ChatSendRequest } from '../shared/types/chat';
+import {
+  BuiltPrompt,
+  ChatStreamEvent,
+  ChatSendRequest,
+  ChatRegenerateRequest,
+  ChatDebugInfo,
+} from '../shared/types/chat';
 import {
   UserPersona,
   CreateUserPersonaInput,
   UpdateUserPersonaInput,
 } from '../shared/types/userPersona';
 import { Conversation, CreateConversationInput } from '../shared/types/conversation';
-import { Message } from '../shared/types/message';
+import { Message, MessageVariant } from '../shared/types/message';
 import { ConversationMemory } from '../shared/types/conversationMemory';
 import {
   Lorebook,
@@ -46,8 +52,9 @@ declare global {
       characterImages: {
         getByCharacter: (characterId: string) => Promise<CharacterImage[]>;
         getAllGroupedByCharacter: () => Promise<Record<string, CharacterImage[]>>;
-        add: (characterId: string) => Promise<CharacterImage | null>;
+        add: (characterId: string) => Promise<CharacterImage[]>;
         remove: (id: string) => Promise<{ success: boolean }>;
+        setCover: (id: string) => Promise<{ success: boolean }>;
       };
       dbLocation: {
         get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string }>;
@@ -64,6 +71,21 @@ declare global {
         send: (
           request: ChatSendRequest & { characterId: string; personaId?: string; model: string }
         ) => Promise<{ streamId: string }>;
+        regenerate: (request: ChatRegenerateRequest) => Promise<{ streamId: string }>;
+        getVariants: (messageId: string) => Promise<MessageVariant[]>;
+        getMessageDebug: (messageId: string) => Promise<ChatDebugInfo | null>;
+        suggestReply: (request: {
+          conversationId: string;
+          characterId: string;
+          personaId?: string;
+          model: string;
+        }) => Promise<{ suggestion: string }>;
+        selectVariant: (
+          conversationId: string,
+          messageId: string,
+          variantId: string
+        ) => Promise<Message>;
+        deleteMessage: (conversationId: string, messageId: string) => Promise<{ success: boolean }>;
         cancel: (conversationId: string) => Promise<{ cancelled: boolean }>;
         isGenerating: (conversationId: string) => Promise<boolean>;
         /** Returns an unsubscribe function -- call it on effect teardown. */
@@ -88,12 +110,15 @@ declare global {
         create: (input: CreateLorebookInput) => Promise<Lorebook>;
         update: (id: string, input: UpdateLorebookInput) => Promise<Lorebook>;
         delete: (id: string) => Promise<{ success: true }>;
+        chooseImage: () => Promise<string | null>;
+        clone: (id: string) => Promise<Lorebook>;
         /** Creates the book on first request rather than alongside every character. */
         getPersonalBook: (characterId: string) => Promise<Lorebook>;
+        /** Same, for a persona's own private history. */
+        getPersonalBookForPersona: (personaId: string) => Promise<Lorebook>;
         getForCharacter: (
           characterId: string
         ) => Promise<{ world: Lorebook[]; personal: Lorebook | null }>;
-        getCharacterIds: (lorebookId: string) => Promise<string[]>;
         attach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
         detach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
       };
@@ -127,6 +152,8 @@ declare global {
         create: (input: CreateUserPersonaInput) => Promise<UserPersona>;
         update: (id: string, input: UpdateUserPersonaInput) => Promise<UserPersona>;
         delete: (id: string) => Promise<{ success: true }>;
+        chooseAvatar: () => Promise<string | null>;
+        clone: (id: string) => Promise<UserPersona>;
       };
       app: {
         getVersion: () => Promise<string>;

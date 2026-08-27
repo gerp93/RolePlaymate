@@ -51,11 +51,39 @@ export const CHAT_DDL = `
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     seq INTEGER NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Which variant "content" currently mirrors. Only assistant messages have variants; see
+    -- message_variants below. Nullable because it references a table created after this one.
+    selected_variant_id TEXT REFERENCES message_variants(id) ON DELETE SET NULL,
+    -- Mirrors the selected variant's model, same convention as content -- lets the transcript
+    -- show which model produced a reply without a join for every message in the list.
+    model TEXT
   );
 
   -- Doubles as the ordering index and as the guard against two messages claiming one slot.
   CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages(conversation_id, seq);
+
+  -- Redo/swipe candidates for one assistant message. The first response is variant #1 same
+  -- as any redo -- there is no special case for "the original". messages.content always
+  -- mirrors whichever variant is selected, so every existing read of a message's content
+  -- keeps working unchanged; this table only adds the ability to have more than one and to
+  -- navigate between them.
+  CREATE TABLE IF NOT EXISTS message_variants (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    -- The model that generated this variant. Redoing with a different model selected produces
+    -- a variant with its own model, independent of the message's other variants.
+    model TEXT,
+    -- The full ChatDebugInfo for this variant's turn, JSON-serialized -- what "view prompt"
+    -- reads. Stored per variant, not per message, because each redo is its own turn with its
+    -- own prompt and its own response; there is no single "the" prompt for a message that's
+    -- been redone.
+    debug TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_message_variants_message ON message_variants(message_id);
 
   -- Facts worth remembering across a long conversation. 'auto' rows are model-extracted
   -- after a turn; 'manual' rows are user-written and are always injected regardless of
@@ -69,7 +97,11 @@ export const CHAT_DDL = `
     source TEXT NOT NULL,
     embedding BLOB,
     embedding_model TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Which turn this was extracted from, so deleting that message takes its memories with
+    -- it. Null for manually-added memories (never extracted from any one turn) and for rows
+    -- written before this column existed.
+    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_memories_conv ON conversation_memories(conversation_id);

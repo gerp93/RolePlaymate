@@ -72,6 +72,13 @@ export interface ChatSendRequest {
   samplers?: Partial<SamplerParams>;
 }
 
+export interface ChatRegenerateRequest {
+  conversationId: string;
+  samplers?: Partial<SamplerParams>;
+  /** Falls back to whichever model produced the response being redone when omitted. */
+  model?: string;
+}
+
 /**
  * Streaming events pushed from the main process over a single `chat:stream` channel.
  * One discriminated union rather than four channels: one listener registration, one switch,
@@ -87,6 +94,14 @@ export type ChatStreamEvent =
   | {
       streamId: string;
       type: 'done';
+      message: Message;
+      debug: ChatDebugInfo;
+    }
+  | {
+      streamId: string;
+      /** Terminal event for a redo: same payload shape as 'done', but the renderer replaces
+       * the existing message in place rather than appending a new one. */
+      type: 'variantDone';
       message: Message;
       debug: ChatDebugInfo;
     }

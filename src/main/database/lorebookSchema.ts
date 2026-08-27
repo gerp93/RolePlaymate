@@ -26,11 +26,23 @@ export const LOREBOOK_DDL = `
     scope TEXT NOT NULL DEFAULT 'world',
     -- Set only for personal books; a personal book dies with its character.
     owner_character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+    -- Set only for a persona's personal book -- the persona equivalent of owner_character_id.
+    -- Exactly one of the two owner columns is set when scope = 'personal', enforced in
+    -- application code rather than a CHECK constraint, matching the rest of this schema.
+    owner_persona_id TEXT REFERENCES user_personas(id) ON DELETE CASCADE,
+    -- World books only: an optional cover image, same convention as a persona's avatar --
+    -- one path, not a gallery like characters get.
+    image TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_lorebooks_owner ON lorebooks(owner_character_id);
+  -- idx_lorebooks_owner_persona is NOT created here: on a database from before this column
+  -- existed, this DDL runs against the table as it already is, and CREATE INDEX validates the
+  -- column exists immediately -- unlike CREATE TABLE IF NOT EXISTS, there's no "IF NOT EXISTS
+  -- on the column" escape hatch. It's created in schema.ts, after the migration that adds the
+  -- column has actually run.
 
   -- World books only. A personal book reaches its character through owner_character_id and
   -- is deliberately never listed here, so "attached books" and "my own history" can't blur.

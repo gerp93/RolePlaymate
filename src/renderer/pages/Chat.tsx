@@ -8,6 +8,9 @@ import MessageList from '../components/chat/MessageList';
 import Composer from '../components/chat/Composer';
 import DebugConsole from '../components/chat/DebugConsole';
 import MemoriesDialog from '../components/chat/MemoriesDialog';
+import MessagePromptDialog from '../components/chat/MessagePromptDialog';
+import { ChatDebugInfo } from '../../shared/types/chat';
+import { setLastConversationId } from '../utils/lastConversation';
 import '../components/chat/Chat.css';
 
 type ModelState =
@@ -30,8 +33,22 @@ export default function Chat() {
   const [samplers, setSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
   const [showDebug, setShowDebug] = useState(false);
   const [showMemories, setShowMemories] = useState(false);
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
+  const [promptDialogDebug, setPromptDialogDebug] = useState<ChatDebugInfo | null>(null);
+
+  const handleViewPrompt = useCallback(async (messageId: string) => {
+    setPromptDialogOpen(true);
+    setPromptDialogDebug(null);
+    setPromptDialogDebug(await window.electronAPI.chat.getMessageDebug(messageId));
+  }, []);
 
   const session = useChatSession(conversationId ?? null);
+
+  // Remembers the open conversation so switching tabs and back to Chat returns here instead
+  // of resetting to the picker -- see Layout, which reads this to point the nav link at it.
+  useEffect(() => {
+    if (conversationId) setLastConversationId(conversationId);
+  }, [conversationId]);
 
   const refreshConversations = useCallback(async () => {
     setConversations(await window.electronAPI.conversations.getAll());
@@ -195,7 +212,10 @@ export default function Chat() {
             Model
             <select
               value={model}
-              disabled={selectionLocked || modelState.status !== 'ready'}
+              // Unlike character/persona, the model can change freely mid-conversation -- each
+              // turn already carries its own model, so switching doesn't disturb anything
+              // already said, only what generates next.
+              disabled={modelState.status !== 'ready'}
               onChange={(e) => setModel(e.target.value)}
             >
               {modelOptions.length === 0 && <option value="">—</option>}
@@ -263,6 +283,13 @@ export default function Chat() {
               <MessageList
                 messages={session.messages}
                 streamingText={session.streamingText}
+                isGenerating={session.isGenerating}
+                isRegenerating={session.isRegenerating}
+                variants={session.variants}
+                onRegenerate={() => void session.regenerate(samplers, model)}
+                onSelectVariant={(variantId) => void session.selectVariant(variantId)}
+                onDeleteLast={() => void session.deleteLastMessage()}
+                onViewPrompt={(messageId) => void handleViewPrompt(messageId)}
                 characterName={character?.name ?? 'Assistant'}
                 personaName={persona?.name ?? 'You'}
               />
@@ -282,6 +309,19 @@ export default function Chat() {
               onSamplersChange={setSamplers}
               onSend={(message, directions) => void handleSend(message, directions)}
               onCancel={() => void session.cancel()}
+              onSuggest={
+                canChat && conversationId
+                  ? async () => {
+                      const { suggestion } = await window.electronAPI.chat.suggestReply({
+                        conversationId,
+                        characterId,
+                        model,
+                        personaId: personaId || undefined,
+                      });
+                      return suggestion;
+                    }
+                  : undefined
+              }
             />
           </div>
 
@@ -298,6 +338,10 @@ export default function Chat() {
             onClose={() => setShowMemories(false)}
             onChanged={() => void session.refreshMemoryCount()}
           />
+        )}
+
+        {promptDialogOpen && (
+          <MessagePromptDialog debug={promptDialogDebug} onClose={() => setPromptDialogOpen(false)} />
         )}
 
         {activeConversation && (

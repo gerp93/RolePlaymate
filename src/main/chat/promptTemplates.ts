@@ -22,6 +22,9 @@ export interface PromptTemplates {
   worldLore: string;
   /** The character's own history. Takes {lore} and {char}. */
   personalLore: string;
+  /** The persona's own history -- personaLore's counterpart for {{user}} rather than
+   * {{char}}. Takes {lore} and {persona}. */
+  personaLore: string;
 }
 
 export interface StopPhraseSettings {
@@ -78,6 +81,18 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
     'chooses to tell them. Let them colour how {char} reacts rather than stating them outright.',
     '{lore}',
     '[/{char} - PERSONAL HISTORY]',
+  ].join('\n'),
+
+  // {{user}}'s counterpart to personalLore. Framed the same way -- private to the persona,
+  // not common knowledge -- so a model that reads both sections doesn't treat the persona's
+  // past as something {char} already knows.
+  personaLore: [
+    '[{persona} - PERSONAL HISTORY]',
+    "These are {persona}'s own memories and private history -- things {persona} personally",
+    'knows or lived through, NOT common knowledge to anyone else including {char}. Let them',
+    "colour how {persona} is portrayed rather than being stated outright.",
+    '{lore}',
+    '[/{persona} - PERSONAL HISTORY]',
   ].join('\n'),
 };
 

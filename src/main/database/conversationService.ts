@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Conversation, CreateConversationInput } from '../../shared/types/conversation';
-import { Message, MessageRole } from '../../shared/types/message';
+import { Message, MessageRole, MessageVariant } from '../../shared/types/message';
+import { ChatDebugInfo } from '../../shared/types/chat';
 import {
   ConversationMemory,
   CreateMemoryInput,
@@ -29,7 +30,17 @@ const MESSAGE_COLUMNS = `
   conversation_id as conversationId,
   role,
   content,
+  selected_variant_id as selectedVariantId,
+  model,
   seq,
+  created_at as createdAt
+`;
+
+const VARIANT_COLUMNS = `
+  id,
+  message_id as messageId,
+  content,
+  model,
   created_at as createdAt
 `;
 
@@ -38,6 +49,7 @@ const MEMORY_COLUMNS = `
   conversation_id as conversationId,
   content,
   source,
+  message_id as messageId,
   created_at as createdAt
 `;
 
@@ -68,7 +80,19 @@ function rowToMessage(row: Record<string, unknown>): Message {
     conversationId: row.conversationId as string,
     role: row.role as MessageRole,
     content: row.content as string,
+    selectedVariantId: (row.selectedVariantId as string | null) ?? null,
+    model: (row.model as string | null) ?? null,
     seq: row.seq as number,
+    createdAt: row.createdAt as string,
+  };
+}
+
+function rowToVariant(row: Record<string, unknown>): MessageVariant {
+  return {
+    id: row.id as string,
+    messageId: row.messageId as string,
+    content: row.content as string,
+    model: (row.model as string | null) ?? null,
     createdAt: row.createdAt as string,
   };
 }
@@ -79,6 +103,7 @@ function rowToMemory(row: Record<string, unknown>): ConversationMemory {
     conversationId: row.conversationId as string,
     content: row.content as string,
     source: row.source as MemorySource,
+    messageId: (row.messageId as string | null) ?? null,
     createdAt: row.createdAt as string,
   };
 }
@@ -176,6 +201,13 @@ export class ConversationService {
     return this.getConversation(id)!;
   }
 
+  /** The model can change freely mid-conversation -- each turn already carries its own model
+   * to generate.chat, this just keeps the conversation record (and the sidebar) showing
+   * whichever one was used most recently rather than freezing on the one it started with. */
+  updateConversationModel(id: string, model: string): void {
+    this.db.prepare(`UPDATE conversations SET model = ? WHERE id = ?`).run(model, id);
+  }
+
   /** Cascades to messages and memories via the schema's foreign keys. */
   deleteConversation(id: string): void {
     this.db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
@@ -200,6 +232,23 @@ export class ConversationService {
       )
       .get(conversationId);
     return row ? rowToMessage(row) : null;
+  }
+
+  /**
+   * Deletes one message, LIFO only: it must be the conversation's current last message.
+   * Anything earlier can only go by deleting everything after it first, one at a time -- the
+   * transcript is a stack, not a list you can pick holes in.
+   *
+   * Variants (message_variants) and any memories extracted from this turn
+   * (conversation_memories.message_id) cascade with it via the schema's foreign keys, so a
+   * deleted response can't keep influencing the conversation through a memory it produced.
+   */
+  deleteMessage(conversationId: string, messageId: string): void {
+    const last = this.getLastMessage(conversationId);
+    if (!last || last.id !== messageId) {
+      throw new Error('Only the most recent message can be deleted');
+    }
+    this.db.prepare(`DELETE FROM messages WHERE id = ?`).run(messageId);
   }
 
   /** Allocates `seq` and bumps the conversation's `updated_at` in one transaction, so two
@@ -232,28 +281,86 @@ export class ConversationService {
     });
   }
 
-  /**
-   * Overwrites the newest assistant message in place.
-   *
-   * This is what regenerate uses. The source appended instead, so regenerating after a
-   * response had been committed left the superseded reply in the database -- it vanished
-   * from the visible transcript but stayed in the context sent to the model on later turns.
-   *
-   * Returns null when the conversation's last message isn't an assistant turn, so the caller
-   * can fall back to appending rather than silently rewriting a user message.
-   */
-  replaceLastAssistantMessage(conversationId: string, content: string): Message | null {
+  getMessage(id: string): Message | null {
+    const row = this.db.prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ?`).get(id);
+    return row ? rowToMessage(row) : null;
+  }
+
+  /** Appends an assistant message and immediately gives it its first variant, selected. Every
+   * assistant message has at least one variant this way -- there's no special case downstream
+   * for "a message with no variants yet" vs. "a message that's been redone". */
+  appendAssistantMessage(
+    conversationId: string,
+    content: string,
+    model: string,
+    debug: ChatDebugInfo
+  ): { message: Message; variant: MessageVariant } {
     return transaction(this.db, () => {
-      const last = this.getLastMessage(conversationId);
-      if (!last || last.role !== 'assistant') return null;
+      const message = this.appendMessage({ conversationId, role: 'assistant', content });
+      const variant = this.addVariant(message.id, content, model, debug);
+      const selected = this.selectVariant(message.id, variant.id);
+      return { message: selected, variant };
+    });
+  }
 
-      const now = new Date().toISOString();
-      this.db.prepare(`UPDATE messages SET content = ? WHERE id = ?`).run(content, last.id);
-      this.db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(now, conversationId);
+  // --- Redo / swipe variants -------------------------------------------------------------
 
-      return this.db
-        .prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ?`)
-        .get(last.id) as unknown as Message;
+  getVariants(messageId: string): MessageVariant[] {
+    return this.db
+      .prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE message_id = ? ORDER BY created_at`)
+      .all(messageId)
+      .map(rowToVariant);
+  }
+
+  /**
+   * The logged prompt and prompt pieces for one message -- whatever the currently selected
+   * variant's turn actually sent and got back. Read on demand rather than joined into every
+   * message list: it's a full ChatDebugInfo (system prompt, retrieval, lore, ...), too heavy
+   * to carry along for every row when just listing a transcript.
+   */
+  getVariantDebug(messageId: string): ChatDebugInfo | null {
+    const row = this.db
+      .prepare(
+        `SELECT v.debug FROM messages m
+         JOIN message_variants v ON v.id = m.selected_variant_id
+         WHERE m.id = ?`
+      )
+      .get(messageId) as unknown as { debug: string | null } | undefined;
+    if (!row?.debug) return null;
+    return JSON.parse(row.debug) as ChatDebugInfo;
+  }
+
+  /** Records a new redo candidate without changing which one is currently shown -- the caller
+   * (chatSession.regenerate) selects it separately once generation succeeds, so a failed or
+   * cancelled redo never disturbs what's on screen. */
+  addVariant(messageId: string, content: string, model?: string, debug?: ChatDebugInfo): MessageVariant {
+    const id = uuidv4();
+    this.db
+      .prepare(
+        `INSERT INTO message_variants (id, message_id, content, model, debug, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, messageId, content, model ?? null, debug ? JSON.stringify(debug) : null, new Date().toISOString());
+    const row = this.db.prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ?`).get(id);
+    return rowToVariant(row!);
+  }
+
+  /** Makes a variant the one shown -- updates the message's own `content` and `model` to
+   * match, so every existing reader (the transcript, the model context once this turn is
+   * finalized) sees it without needing to know variants exist. */
+  selectVariant(messageId: string, variantId: string): Message {
+    return transaction(this.db, () => {
+      const row = this.db
+        .prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ? AND message_id = ?`)
+        .get(variantId, messageId);
+      if (!row) throw new Error(`Variant ${variantId} not found on message ${messageId}`);
+      const variant = rowToVariant(row);
+
+      this.db
+        .prepare(`UPDATE messages SET content = ?, model = ?, selected_variant_id = ? WHERE id = ?`)
+        .run(variant.content, variant.model, variantId, messageId);
+
+      return this.getMessage(messageId)!;
     });
   }
 
@@ -279,10 +386,17 @@ export class ConversationService {
     const id = uuidv4();
     this.db
       .prepare(
-        `INSERT INTO conversation_memories (id, conversation_id, content, source, created_at)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO conversation_memories (id, conversation_id, content, source, message_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.conversationId, input.content, input.source, new Date().toISOString());
+      .run(
+        id,
+        input.conversationId,
+        input.content,
+        input.source,
+        input.messageId ?? null,
+        new Date().toISOString()
+      );
     return this.db
       .prepare(`SELECT ${MEMORY_COLUMNS} FROM conversation_memories WHERE id = ?`)
       .get(id) as unknown as ConversationMemory;
@@ -379,6 +493,21 @@ export class ConversationService {
         new Date().toISOString()
       );
     return this.getPersona(id)!;
+  }
+
+  /** Clones a persona's name (suffixed), description and background. `clonedAvatarPath` is
+   * the caller's responsibility (see characters:clone in main.ts for why -- file writes
+   * aren't transactional, so copying the avatar file happens outside any DB transaction). */
+  clonePersona(id: string, clonedAvatarPath: string | null): UserPersona {
+    const source = this.getPersona(id);
+    if (!source) throw new Error(`UserPersona with id ${id} not found`);
+
+    return this.createPersona({
+      name: `${source.name} (Copy)`,
+      description: source.description ?? undefined,
+      background: source.background ?? undefined,
+      avatar: clonedAvatarPath ?? undefined,
+    });
   }
 
   updatePersona(id: string, input: UpdateUserPersonaInput): UserPersona {

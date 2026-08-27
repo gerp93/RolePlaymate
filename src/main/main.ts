@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { initDatabase, closeDatabase, transaction } from './database/schema';
 import {
   getEffectiveDbPath,
@@ -19,13 +20,19 @@ import { LorebookService } from './database/lorebookService';
 import { PromptBuilder } from './chat/promptBuilder';
 import { OllamaClient } from './chat/ollamaClient';
 import { ChatSessionManager } from './chat/chatSession';
-import { chooseCharacterImage, deleteCharacterImage, cloneCharacterImage } from './images';
+import {
+  chooseCharacterImage,
+  chooseCharacterImages,
+  deleteCharacterImage,
+  cloneCharacterImage,
+  getImagesDir,
+} from './images';
 import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
-import { ChatSendRequest, ChatStreamEvent } from '../shared/types/chat';
+import { ChatSendRequest, ChatRegenerateRequest, ChatStreamEvent } from '../shared/types/chat';
 import {
   CreateLorebookInput,
   UpdateLorebookInput,
@@ -40,6 +47,16 @@ import * as fs from 'fs';
 // while `electron .` in dev resolves it from package.json's "name" ("roleplaymate") -- pin it
 // so both modes always read/write the same data folder instead of silently diverging.
 app.setName('roleplaymate');
+
+// Portrait <img> tags load through this instead of a raw `file://` src. Electron refuses to
+// load `file://` subresources from a page whose own origin isn't `file:` -- true of the dev
+// window, which loads Vite's `http://localhost:5173`, so portraits rendered fine in a
+// packaged build (loaded via `file://`) but silently failed under `npm run dev`. A custom
+// scheme carries no such restriction and behaves identically in both. Must be registered
+// before the app is ready.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'rpimage', privileges: { secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+]);
 
 // Without this, a second launch (a second double-click, or Windows re-running the exe after
 // an install) starts a whole second process rather than reusing the first. If the first one
@@ -260,6 +277,19 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
 }
 
 app.whenReady().then(() => {
+  // The path is the whole opaque, percent-encoded remainder after `rpimage://` (see toImageUrl
+  // in the renderer) -- resolved and re-checked against the images directory rather than
+  // trusted outright, since the request still originates from renderer-controlled code.
+  protocol.handle('rpimage', (request) => {
+    const encoded = request.url.slice('rpimage://'.length).replace(/\/+$/, '');
+    const requested = path.resolve(decodeURIComponent(encoded));
+    const imagesDir = getImagesDir();
+    if (requested !== imagesDir && !requested.startsWith(imagesDir + path.sep)) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    return net.fetch(pathToFileURL(requested).toString());
+  });
+
   db = openDatabaseWithRecovery();
   characterService = new CharacterService(db);
   fieldService = new CharacterFieldService(db);
@@ -468,15 +498,21 @@ function registerIPCHandlers() {
     characterImageService.getImagesByCharacter(characterId)
   );
   ipcMain.handle('characterImages:getAllGroupedByCharacter', () => characterImageService.getAllGroupedByCharacter());
+  // The picker allows selecting several files at once -- the one gallery in the app where
+  // more than one image per subject makes sense, so it's the one place worth the extra click
+  // saved by not having to reopen the dialog per portrait.
   ipcMain.handle('characterImages:add', async (_, characterId: string) => {
-    const path = await chooseCharacterImage(mainWindow);
-    if (!path) return null;
-    return characterImageService.addImage(characterId, path);
+    const paths = await chooseCharacterImages(mainWindow);
+    return paths.map((path) => characterImageService.addImage(characterId, path));
   });
   ipcMain.handle('characterImages:remove', (_, id: string) => {
     const existing = characterImageService.getImageById(id);
     characterImageService.removeImage(id);
     if (existing) deleteCharacterImage(existing.path);
+    return { success: true };
+  });
+  ipcMain.handle('characterImages:setCover', (_, id: string) => {
+    characterImageService.setCoverImage(id);
     return { success: true };
   });
 
@@ -558,6 +594,23 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  // Opens the native picker and copies the chosen file into userData/images, same convention
+  // as a character portrait -- just one path per persona rather than a gallery.
+  ipcMain.handle('personas:chooseAvatar', async () => {
+    const path = await chooseCharacterImage(mainWindow);
+    return path;
+  });
+
+  // Clones a persona's name (suffixed), description, background and avatar into a brand-new,
+  // independent persona -- same shape as characters:clone.
+  ipcMain.handle('personas:clone', (_, id: string) => {
+    const source = conversationService.getPersona(id);
+    if (!source) throw new Error(`UserPersona with id ${id} not found`);
+
+    const clonedAvatarPath = source.avatar ? cloneCharacterImage(source.avatar) : null;
+    return conversationService.clonePersona(id, clonedAvatarPath);
+  });
+
   // Conversation handlers
   ipcMain.handle('conversations:getAll', () => conversationService.listConversations());
   ipcMain.handle('conversations:getById', (_, id: string) => conversationService.getConversation(id));
@@ -620,6 +673,21 @@ function registerLorebookHandlers() {
     return { success: true };
   });
 
+  // Same convention as a character portrait and a persona avatar: pick, copy into
+  // userData/images, hand back the path for the caller to save onto the book.
+  ipcMain.handle('lorebooks:chooseImage', async () => {
+    const path = await chooseCharacterImage(mainWindow);
+    return path;
+  });
+
+  ipcMain.handle('lorebooks:clone', (_, id: string) => {
+    const source = lorebookService.getBook(id);
+    if (!source) throw new Error(`Lorebook with id ${id} not found`);
+
+    const clonedImagePath = source.image ? cloneCharacterImage(source.image) : null;
+    return lorebookService.cloneBook(id, clonedImagePath);
+  });
+
   // A character's personal book is created on demand rather than alongside every character,
   // so characters that never need one don't accumulate empty books.
   ipcMain.handle('lorebooks:getPersonalBook', (_, characterId: string) => {
@@ -628,11 +696,15 @@ function registerLorebookHandlers() {
     return lorebookService.getOrCreatePersonalBook(characterId, character.name);
   });
 
+  // Same, for a persona's own private history.
+  ipcMain.handle('lorebooks:getPersonalBookForPersona', (_, personaId: string) => {
+    const persona = conversationService.getPersona(personaId);
+    if (!persona) throw new Error(`UserPersona with id ${personaId} not found`);
+    return lorebookService.getOrCreatePersonalBookForPersona(personaId, persona.name);
+  });
+
   ipcMain.handle('lorebooks:getForCharacter', (_, characterId: string) =>
     lorebookService.getBooksForCharacter(characterId)
-  );
-  ipcMain.handle('lorebooks:getCharacterIds', (_, lorebookId: string) =>
-    lorebookService.getCharacterIdsForBook(lorebookId)
   );
   ipcMain.handle('lorebooks:attach', (_, characterId: string, lorebookId: string) => {
     lorebookService.attachBook(characterId, lorebookId);
@@ -702,6 +774,7 @@ function registerChatHandlers() {
           {
             conversationId: request.conversationId,
             characterId: request.characterId,
+            personaId: request.personaId ?? null,
             personaName: persona?.name ?? null,
             personaBackground: persona?.background ?? null,
             userMessage: request.message,
@@ -724,6 +797,74 @@ function registerChatHandlers() {
 
     return { streamId };
   });
+
+  // Redo: same streaming shape as chat:send, but the terminal event is 'variantDone' so the
+  // renderer replaces the pending message in place instead of appending a new one.
+  ipcMain.handle('chat:regenerate', (event, request: ChatRegenerateRequest) => {
+    const streamId = randomUUID();
+    const sender = event.sender;
+
+    const send = (payload: ChatStreamEvent) => {
+      if (!sender.isDestroyed()) sender.send('chat:stream', payload);
+    };
+
+    void (async () => {
+      try {
+        const { message, debug } = await chatSessions.regenerate(
+          request.conversationId,
+          (text) => send({ streamId, type: 'token', text }),
+          request.samplers,
+          request.model
+        );
+        send({ streamId, type: 'variantDone', message, debug });
+      } catch (error) {
+        if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+          send({ streamId, type: 'cancelled' });
+        } else {
+          send({ streamId, type: 'error', message: (error as Error).message });
+        }
+      }
+    })();
+
+    return { streamId };
+  });
+
+  ipcMain.handle('chat:getVariants', (_, messageId: string) =>
+    conversationService.getVariants(messageId)
+  );
+
+  // "View prompt" on a message's hover tooltip -- the logged prompt and prompt pieces for
+  // whichever variant of that message is currently selected.
+  ipcMain.handle('chat:getMessageDebug', (_, messageId: string) =>
+    conversationService.getVariantDebug(messageId)
+  );
+
+  // A draft for the composer, not a real turn -- never persisted, never touches the model
+  // context. See ChatSessionManager.suggestReply.
+  ipcMain.handle(
+    'chat:suggestReply',
+    async (
+      _,
+      request: { conversationId: string; characterId: string; personaId?: string; model: string }
+    ) => {
+      const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+      const suggestion = await chatSessions.suggestReply(
+        request.conversationId,
+        request.characterId,
+        request.personaId ?? null,
+        persona?.name ?? null,
+        persona?.background ?? null,
+        request.model
+      );
+      return { suggestion };
+    }
+  );
+
+  ipcMain.handle(
+    'chat:selectVariant',
+    (_, conversationId: string, messageId: string, variantId: string) =>
+      chatSessions.chooseVariant(conversationId, messageId, variantId)
+  );
 
   // Extraction outlives the request that triggered it, so its result is pushed rather than
   // returned. Broadcast to every window: two windows can have the same conversation open.
@@ -760,6 +901,11 @@ function registerChatHandlers() {
 
   ipcMain.handle('memories:deleteAll', (_, conversationId: string) => {
     conversationService.deleteAllMemories(conversationId);
+    return { success: true };
+  });
+
+  ipcMain.handle('chat:deleteMessage', (_, conversationId: string, messageId: string) => {
+    chatSessions.deleteMessage(conversationId, messageId);
     return { success: true };
   });
 

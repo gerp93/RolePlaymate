@@ -18,6 +18,8 @@ const BOOK_COLUMNS = `
   description,
   scope,
   owner_character_id as ownerCharacterId,
+  owner_persona_id as ownerPersonaId,
+  image,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -30,6 +32,8 @@ const BOOK_COLUMNS_QUALIFIED = `
   b.description,
   b.scope,
   b.owner_character_id as ownerCharacterId,
+  b.owner_persona_id as ownerPersonaId,
+  b.image,
   b.created_at as createdAt,
   b.updated_at as updatedAt
 `;
@@ -63,6 +67,8 @@ function rowToBook(row: Record<string, unknown>): Lorebook {
     description: (row.description as string | null) ?? null,
     scope: row.scope as LorebookScope,
     ownerCharacterId: (row.ownerCharacterId as string | null) ?? null,
+    ownerPersonaId: (row.ownerPersonaId as string | null) ?? null,
+    image: (row.image as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -121,23 +127,24 @@ export class LorebookService {
 
   createBook(input: CreateLorebookInput): Lorebook {
     const scope = input.scope ?? 'world';
-    if (scope === 'personal' && !input.ownerCharacterId) {
-      throw new Error('A personal lorebook must name the character it belongs to');
+    if (scope === 'personal' && !input.ownerCharacterId && !input.ownerPersonaId) {
+      throw new Error('A personal lorebook must name the character or persona it belongs to');
     }
 
     const id = uuidv4();
     const now = new Date().toISOString();
     this.db
       .prepare(
-        `INSERT INTO lorebooks (id, name, description, scope, owner_character_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO lorebooks (id, name, description, scope, owner_character_id, owner_persona_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         input.name,
         input.description ?? null,
         scope,
-        scope === 'personal' ? input.ownerCharacterId! : null,
+        scope === 'personal' ? (input.ownerCharacterId ?? null) : null,
+        scope === 'personal' ? (input.ownerPersonaId ?? null) : null,
         now,
         now
       );
@@ -149,10 +156,11 @@ export class LorebookService {
     if (!existing) throw new Error(`Lorebook with id ${id} not found`);
 
     this.db
-      .prepare(`UPDATE lorebooks SET name = ?, description = ?, updated_at = ? WHERE id = ?`)
+      .prepare(`UPDATE lorebooks SET name = ?, description = ?, image = ?, updated_at = ? WHERE id = ?`)
       .run(
         input.name ?? existing.name,
         input.description ?? existing.description,
+        input.image !== undefined ? input.image : existing.image,
         new Date().toISOString(),
         id
       );
@@ -165,7 +173,40 @@ export class LorebookService {
   }
 
   /**
-   * The character's own private history book, created on first use.
+   * Clones a world book: its name (suffixed), description, image, and every entry's current
+   * active content as a fresh single-version entry -- not the source entry's full edit
+   * history, which clone doesn't try to preserve. Attachments are not copied: a clone starts
+   * unattached from every character, same as a brand-new book would.
+   */
+  cloneBook(id: string, clonedImagePath: string | null): Lorebook {
+    const source = this.getBook(id);
+    if (!source) throw new Error(`Lorebook with id ${id} not found`);
+    if (source.scope !== 'world') throw new Error('Only world books can be cloned');
+
+    const sourceEntries = this.listEntries(id);
+
+    return transaction(this.db, () => {
+      const cloned = this.createBook({ name: `${source.name} (Copy)`, description: source.description ?? undefined });
+      if (clonedImagePath) this.updateBook(cloned.id, { image: clonedImagePath });
+
+      for (const entry of sourceEntries) {
+        const newEntry = this.createEntry({
+          lorebookId: cloned.id,
+          title: entry.title,
+          keys: entry.keys,
+          content: this.getActiveContent(entry.id),
+          alwaysOn: entry.alwaysOn,
+          priority: entry.priority,
+        });
+        if (!entry.enabled) this.updateEntry(newEntry.id, { enabled: false });
+      }
+
+      return this.getBook(cloned.id)!;
+    });
+  }
+
+  /**
+   * A character's own private history book, created on first use.
    *
    * Lazily rather than alongside the character, so characters that never need one don't
    * accumulate empty books -- and so characters created before lorebooks existed get one
@@ -183,6 +224,22 @@ export class LorebookService {
       name: `${characterName}'s history`,
       scope: 'personal',
       ownerCharacterId: characterId,
+    });
+  }
+
+  /** A persona's own private history book -- the persona equivalent of getOrCreatePersonalBook. */
+  getOrCreatePersonalBookForPersona(personaId: string, personaName: string): Lorebook {
+    const row = this.db
+      .prepare(
+        `SELECT ${BOOK_COLUMNS} FROM lorebooks WHERE scope = 'personal' AND owner_persona_id = ?`
+      )
+      .get(personaId);
+    if (row) return rowToBook(row);
+
+    return this.createBook({
+      name: `${personaName}'s history`,
+      scope: 'personal',
+      ownerPersonaId: personaId,
     });
   }
 
@@ -207,14 +264,6 @@ export class LorebookService {
       .get(characterId);
 
     return { world, personal: personalRow ? rowToBook(personalRow) : null };
-  }
-
-  /** Characters a world book is attached to -- shown on the book so its reach is visible. */
-  getCharacterIdsForBook(lorebookId: string): string[] {
-    return this.db
-      .prepare(`SELECT character_id as characterId FROM character_lorebooks WHERE lorebook_id = ?`)
-      .all(lorebookId)
-      .map((row) => row.characterId as string);
   }
 
   attachBook(characterId: string, lorebookId: string): void {
@@ -468,6 +517,46 @@ export class LorebookService {
         description: row.bookDescription,
         scope: row.bookScope,
         ownerCharacterId: row.bookOwnerCharacterId,
+        createdAt: row.bookCreatedAt,
+        updatedAt: row.bookUpdatedAt,
+      }),
+      content: (row.activeContent as string | null) ?? '',
+    }));
+  }
+
+  /**
+   * Enabled entries from the persona's own personal book, each with the text currently in
+   * effect. Unlike getEntriesForCharacter there is no world-book join -- personas don't
+   * attach to shared world books, only characters do, so a persona's only lore is its own
+   * personal history.
+   */
+  getEntriesForPersona(personaId: string): EntryWithContent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           e.id, e.lorebook_id as lorebookId, e.title, e.keys, e.enabled,
+           e.always_on as alwaysOn, e.priority,
+           e.created_at as createdAt, e.updated_at as updatedAt,
+           v.content as activeContent,
+           b.id as bookId, b.name as bookName, b.description as bookDescription,
+           b.scope as bookScope, b.owner_persona_id as bookOwnerPersonaId,
+           b.created_at as bookCreatedAt, b.updated_at as bookUpdatedAt
+         FROM lorebook_entries e
+         JOIN lorebooks b ON b.id = e.lorebook_id
+         LEFT JOIN lorebook_entry_versions v ON v.entry_id = e.id AND v.is_active = 1
+         WHERE e.enabled = 1 AND b.scope = 'personal' AND b.owner_persona_id = ?
+         ORDER BY e.priority DESC, e.title`
+      )
+      .all(personaId);
+
+    return rows.map((row) => ({
+      entry: rowToEntry(row),
+      book: rowToBook({
+        id: row.bookId,
+        name: row.bookName,
+        description: row.bookDescription,
+        scope: row.bookScope,
+        ownerPersonaId: row.bookOwnerPersonaId,
         createdAt: row.bookCreatedAt,
         updatedAt: row.bookUpdatedAt,
       }),

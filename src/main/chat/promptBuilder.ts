@@ -21,6 +21,8 @@ export interface PromptBuildOptions {
   /** Lore entries that fired this turn, already split by scope (see loreMatcher). */
   worldLore?: MatchedLoreEntry[];
   personalLore?: MatchedLoreEntry[];
+  /** The persona's own personal history, scanned the same way as the character's. */
+  personaLore?: MatchedLoreEntry[];
   templates?: Partial<PromptTemplates>;
   stopPhrases?: Partial<StopPhraseSettings>;
 }
@@ -157,6 +159,19 @@ export class PromptBuilder {
       parts.push(
         fill(templates.personalLore, {
           lore: renderLore(personalLore),
+          char: character.name,
+        }).trim()
+      );
+    }
+
+    // Only meaningful with a persona actually selected -- personaLore entries only ever come
+    // from a persona's own personal book, so this is empty whenever personaName is null anyway.
+    const personaLore = options.personaLore ?? [];
+    if (personaLore.length > 0 && personaName) {
+      parts.push(
+        fill(templates.personaLore, {
+          lore: renderLore(personaLore),
+          persona: personaName,
           char: character.name,
         }).trim()
       );

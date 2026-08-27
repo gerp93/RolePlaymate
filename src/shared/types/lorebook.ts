@@ -10,8 +10,12 @@ export interface Lorebook {
   name: string;
   description: string | null;
   scope: LorebookScope;
-  /** Set for personal books only; null for world books. */
+  /** Set for a character's personal book only; null otherwise. */
   ownerCharacterId: string | null;
+  /** Set for a persona's personal book only; null otherwise. */
+  ownerPersonaId: string | null;
+  /** World books only: an optional cover image, shown on the World books grid. */
+  image: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -20,13 +24,16 @@ export interface CreateLorebookInput {
   name: string;
   description?: string;
   scope?: LorebookScope;
-  /** Required when scope is 'personal'. */
+  /** Required when scope is 'personal' and the owner is a character. */
   ownerCharacterId?: string;
+  /** Required when scope is 'personal' and the owner is a persona. */
+  ownerPersonaId?: string;
 }
 
 export interface UpdateLorebookInput {
   name?: string;
   description?: string;
+  image?: string | null;
 }
 
 /** One piece of lore. Its text is versioned; this row holds the trigger configuration. */
