@@ -57,6 +57,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('chat:stream', handler);
       return () => ipcRenderer.removeListener('chat:stream', handler);
     },
+
+    // Fires when post-turn extraction stored new memories. Same unsubscribe contract.
+    onMemoriesUpdated: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('chat:memories-updated', handler);
+      return () => ipcRenderer.removeListener('chat:memories-updated', handler);
+    },
+  },
+
+  memories: {
+    getAll: (conversationId: string) => ipcRenderer.invoke('memories:getAll', conversationId),
+    count: (conversationId: string) => ipcRenderer.invoke('memories:count', conversationId),
+    add: (conversationId: string, content: string) =>
+      ipcRenderer.invoke('memories:add', conversationId, content),
+    update: (id: string, content: string) => ipcRenderer.invoke('memories:update', id, content),
+    delete: (id: string) => ipcRenderer.invoke('memories:delete', id),
+    deleteAll: (conversationId: string) =>
+      ipcRenderer.invoke('memories:deleteAll', conversationId),
   },
 
   lorebooks: {

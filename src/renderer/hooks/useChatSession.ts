@@ -19,6 +19,10 @@ export interface UseChatSession {
   /** Set on a failed turn. Never persisted -- see the note on error handling in chatSession. */
   error: string | null;
   debug: ChatDebugInfo | null;
+  /** How many memories this conversation has stored. Kept here rather than in the dialog so
+   * the badge is live even while the dialog is closed -- extraction lands between turns. */
+  memoryCount: number;
+  refreshMemoryCount: () => Promise<void>;
   send: (input: SendInput) => Promise<void>;
   cancel: () => Promise<void>;
   dismissError: () => void;
@@ -40,6 +44,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [debug, setDebug] = useState<ChatDebugInfo | null>(null);
+  const [memoryCount, setMemoryCount] = useState(0);
 
   // The stream we're currently listening for. Events for any other stream are ignored, so a
   // stale reply from a conversation the user just switched away from can't bleed in.
@@ -52,6 +57,27 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     }
     setMessages(await window.electronAPI.conversations.getMessages(conversationId));
   }, [conversationId]);
+
+  const refreshMemoryCount = useCallback(async () => {
+    if (!conversationId) {
+      setMemoryCount(0);
+      return;
+    }
+    setMemoryCount(await window.electronAPI.memories.count(conversationId));
+  }, [conversationId]);
+
+  useEffect(() => {
+    void refreshMemoryCount();
+  }, [refreshMemoryCount]);
+
+  // Extraction runs after the reply has already been delivered, so the count arrives on its
+  // own channel rather than in the turn's response.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.chat.onMemoriesUpdated((payload) => {
+      if (payload.conversationId === conversationId) void refreshMemoryCount();
+    });
+    return unsubscribe;
+  }, [conversationId, refreshMemoryCount]);
 
   useEffect(() => {
     void reload();
@@ -145,5 +171,17 @@ export function useChatSession(conversationId: string | null): UseChatSession {
 
   const dismissError = useCallback(() => setError(null), []);
 
-  return { messages, streamingText, isGenerating, error, debug, send, cancel, dismissError, reload };
+  return {
+    messages,
+    streamingText,
+    isGenerating,
+    error,
+    debug,
+    memoryCount,
+    refreshMemoryCount,
+    send,
+    cancel,
+    dismissError,
+    reload,
+  };
 }

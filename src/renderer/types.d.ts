@@ -10,6 +10,7 @@ import {
 } from '../shared/types/userPersona';
 import { Conversation, CreateConversationInput } from '../shared/types/conversation';
 import { Message } from '../shared/types/message';
+import { ConversationMemory } from '../shared/types/conversationMemory';
 import {
   Lorebook,
   LorebookEntry,
@@ -67,6 +68,19 @@ declare global {
         isGenerating: (conversationId: string) => Promise<boolean>;
         /** Returns an unsubscribe function -- call it on effect teardown. */
         onStream: (callback: (payload: ChatStreamEvent) => void) => () => void;
+        /** Post-turn extraction result. Also returns an unsubscribe function. */
+        onMemoriesUpdated: (
+          callback: (payload: { conversationId: string; added: ConversationMemory[] }) => void
+        ) => () => void;
+      };
+      memories: {
+        getAll: (conversationId: string) => Promise<ConversationMemory[]>;
+        count: (conversationId: string) => Promise<number>;
+        /** Added memories are 'manual', i.e. pinned: always injected. */
+        add: (conversationId: string, content: string) => Promise<ConversationMemory>;
+        update: (id: string, content: string) => Promise<ConversationMemory>;
+        delete: (id: string) => Promise<{ success: true }>;
+        deleteAll: (conversationId: string) => Promise<{ success: true }>;
       };
       lorebooks: {
         getWorldBooks: () => Promise<Lorebook[]>;

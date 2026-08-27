@@ -306,6 +306,48 @@ export class ConversationService {
     this.db.prepare(`DELETE FROM conversation_memories WHERE id = ?`).run(id);
   }
 
+  // --- Embedding cache -----------------------------------------------------------------
+
+  /**
+   * Memories plus whatever embedding is cached for each.
+   *
+   * The vector is stored as raw float32 bytes rather than JSON: a 768-dimension embedding is
+   * 3 KB packed and roughly 15 KB as text, and every one of them is read on every turn.
+   * `embedding_model` rides alongside because a vector from a different model lives in a
+   * different space -- comparing across them yields confident nonsense, so the retriever
+   * recomputes those instead of trusting them.
+   */
+  listMemoriesWithEmbeddings(
+    conversationId: string
+  ): { memory: ConversationMemory; embedding: Uint8Array | null; embeddingModel: string | null }[] {
+    return this.db
+      .prepare(
+        `SELECT ${MEMORY_COLUMNS}, embedding, embedding_model as embeddingModel
+           FROM conversation_memories WHERE conversation_id = ? ORDER BY created_at`
+      )
+      .all(conversationId)
+      .map((row) => ({
+        memory: rowToMemory(row),
+        embedding: (row.embedding as Uint8Array | null) ?? null,
+        embeddingModel: (row.embeddingModel as string | null) ?? null,
+      }));
+  }
+
+  /** Write-back after a retrieval pass computed vectors for previously uncached memories. */
+  setMemoryEmbeddings(
+    entries: { memoryId: string; embedding: Uint8Array; embeddingModel: string }[]
+  ): void {
+    if (entries.length === 0) return;
+    transaction(this.db, () => {
+      const stmt = this.db.prepare(
+        `UPDATE conversation_memories SET embedding = ?, embedding_model = ? WHERE id = ?`
+      );
+      for (const entry of entries) {
+        stmt.run(entry.embedding, entry.embeddingModel, entry.memoryId);
+      }
+    });
+  }
+
   deleteAllMemories(conversationId: string): void {
     this.db.prepare(`DELETE FROM conversation_memories WHERE conversation_id = ?`).run(conversationId);
   }

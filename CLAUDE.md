@@ -104,6 +104,32 @@ before generation (so a crash can't lose it), the reply only on success -- the
 source wrote its error text into the transcript, poisoning the context of every
 later turn.
 
+## Memories
+
+Facts extracted from a conversation and carried into later turns, so continuity survives the
+sliding history window without resending the transcript.
+
+Retrieval is **semantic**, not keyword like lore: extracted memories are paraphrases with no
+fixed vocabulary, so "she distrusts the dock authority" has to surface when the user asks
+about "the harbour officials". `chat/memoryRetrieval.ts` embeds via Ollama's `/api/embed`,
+which replaces KVGenius's local sentence-transformer -- and with it the torch dependency and
+the Blackwell/sm_120 SDPA workaround that file had to carry. Vectors are cached as float32
+BLOBs on the memory row (`embedding` / `embedding_model`), so a settled conversation costs
+one embed call per turn rather than one per memory; a vector whose model doesn't match is
+recomputed rather than compared across embedding spaces. When embedding fails -- no Ollama,
+no embedding model pulled -- retrieval degrades to pinned-only rather than failing the turn.
+
+`source = 'manual'` means **pinned**: always injected, bypassing both the score threshold and
+the token budget (which may go negative as a result), and still counting toward `topK`. All
+three are ported deliberately, not accidents.
+
+`chat/memoryExtraction.ts` mines each completed exchange. It runs **after** the reply has
+been delivered and is not awaited -- the source ran it inline, adding a second to every turn
+before the user saw anything. Results arrive on `chat:memories-updated`. Candidates are
+filtered by Jaccard similarity against stored memories, against each other (the source only
+checked the former, so one extraction could insert two phrasings of the same event), by
+overlap with the system prompt, and by a generic-phrase blocklist.
+
 ## Lorebooks
 
 Reference material injected only when the conversation is about it, so a

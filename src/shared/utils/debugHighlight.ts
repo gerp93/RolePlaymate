@@ -123,3 +123,25 @@ export function buildHistoryEntries(
 
   return entries;
 }
+
+/**
+ * Grades a similarity score into a colour band, matching the source's memory highlighter:
+ * strong (≥0.5), moderate (≥0.3), weak below that.
+ *
+ * The absolute numbers are meaningless to read at a glance -- the band is what tells you
+ * whether an injected memory was actually relevant or just the best of a bad pool.
+ */
+export function scoreBand(score: number): 'strong' | 'moderate' | 'weak' {
+  if (score >= 0.5) return 'strong';
+  if (score >= 0.3) return 'moderate';
+  return 'weak';
+}
+
+/** `+0.812` / `-0.104` -- signed and fixed-width so a column of them lines up. */
+export function formatScore(score: number): string {
+  return `${score >= 0 ? '+' : '-'}${Math.abs(score).toFixed(3)}`;
+}
+
+/** How many rejected memories the console lists before eliding the rest, as in the source:
+ * the rejected pool grows without bound in a long conversation. */
+export const REJECTED_DISPLAY_LIMIT = 10;

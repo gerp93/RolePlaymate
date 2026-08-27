@@ -614,6 +614,44 @@ function registerChatHandlers() {
     return { streamId };
   });
 
+  // Extraction outlives the request that triggered it, so its result is pushed rather than
+  // returned. Broadcast to every window: two windows can have the same conversation open.
+  chatSessions.onMemoriesExtracted = (conversationId, added) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('chat:memories-updated', { conversationId, added });
+      }
+    }
+  };
+
+  ipcMain.handle('memories:getAll', (_, conversationId: string) =>
+    conversationService.listMemories(conversationId)
+  );
+
+  ipcMain.handle('memories:count', (_, conversationId: string) =>
+    conversationService.countMemories(conversationId)
+  );
+
+  // Manually added memories are 'manual', which makes them pinned: always injected,
+  // bypassing both the similarity threshold and the token budget.
+  ipcMain.handle('memories:add', (_, conversationId: string, content: string) =>
+    conversationService.addMemory({ conversationId, content, source: 'manual' })
+  );
+
+  ipcMain.handle('memories:update', (_, id: string, content: string) =>
+    conversationService.updateMemory(id, content)
+  );
+
+  ipcMain.handle('memories:delete', (_, id: string) => {
+    conversationService.deleteMemory(id);
+    return { success: true };
+  });
+
+  ipcMain.handle('memories:deleteAll', (_, conversationId: string) => {
+    conversationService.deleteAllMemories(conversationId);
+    return { success: true };
+  });
+
   ipcMain.handle('chat:cancel', (_, conversationId: string) => ({
     cancelled: chatSessions.cancel(conversationId),
   }));

@@ -6,7 +6,11 @@ import {
   highlightRoleBlocks,
   formatStopPhrase,
   buildHistoryEntries,
+  scoreBand,
+  formatScore,
+  REJECTED_DISPLAY_LIMIT,
 } from '../../../shared/utils/debugHighlight';
+import { MemoryRetrievalResult } from '../../../shared/types/conversationMemory';
 
 /**
  * The Prompt Debug Console, ported closely from KVGenius's `_populate_debug_console`.
@@ -99,12 +103,62 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
           entry didn't fire and you expected it to. */}
       <Section title="Lore Scan Window" icon="🔎" body={debug.lore?.scanText ?? ''} />
 
-      <GroupHeading>Memories</GroupHeading>
-      <Section
-        title={`Memories (${debug.memories.length})`}
-        icon="🧠"
-        body={debug.memories.map((m) => `- ${m}`).join('\n')}
-      />
+      <GroupHeading>
+        Memories ({debug.memories.length}
+        {debug.retrieval ? `/${debug.retrieval.totalAvailable}` : ''} injected)
+      </GroupHeading>
+      {debug.retrieval ? (
+        <Panel
+          title={`Memories (${debug.retrieval.selected.length}/${debug.retrieval.totalAvailable} selected)`}
+          icon="🧠"
+          body={renderRetrievalText(debug.retrieval)}
+        >
+          <pre className="debug-body">
+            <span className="seg-tag">{`Query: ${truncate(debug.retrieval.query, 80)}\n`}</span>
+            <span className="seg-tag">{`Pool: ${debug.retrieval.totalAvailable} stored → ${debug.retrieval.selected.length} selected, ${debug.retrieval.rejected.length} rejected\n`}</span>
+            <span className="seg-tag">{`Token budget: ~${debug.retrieval.budgetTokensUsed}/${debug.retrieval.budgetTokensMax}\n\n`}</span>
+            {debug.retrieval.selected.length > 0 && (
+              <span className="seg-tag">{'── SELECTED ──\n'}</span>
+            )}
+            {debug.retrieval.selected.map((entry) => (
+              <div key={entry.memory.id}>
+                <span className={`debug-score debug-score-${scoreBand(entry.score)}`}>
+                  {`  ${formatScore(entry.score)}  `}
+                </span>
+                <span className="seg-text">{entry.memory.content}</span>
+                <span className="seg-tag">{` [${entry.memory.source}]${entry.pinned ? ' 📌' : ''}`}</span>
+              </div>
+            ))}
+            {debug.retrieval.rejected.length > 0 && (
+              <>
+                <span className="seg-tag">{'\n── REJECTED ──\n'}</span>
+                {debug.retrieval.rejected.slice(0, REJECTED_DISPLAY_LIMIT).map((entry) => (
+                  <div key={entry.memory.id}>
+                    <span className={`debug-score debug-score-${scoreBand(entry.score)}`}>
+                      {`  ${formatScore(entry.score)}  `}
+                    </span>
+                    <span className="text-muted">{truncate(entry.memory.content, 120)}</span>
+                  </div>
+                ))}
+                {debug.retrieval.rejected.length > REJECTED_DISPLAY_LIMIT && (
+                  <span className="text-muted">
+                    {`  ... and ${debug.retrieval.rejected.length - REJECTED_DISPLAY_LIMIT} more\n`}
+                  </span>
+                )}
+              </>
+            )}
+          </pre>
+        </Panel>
+      ) : (
+        /* No retrieval pass -- either nothing is stored for this conversation, or the caller
+           supplied the memory list itself (the prompt preview does). Whatever was injected
+           still shows, just without scores. */
+        <Section
+          title={`Memories (${debug.memories.length})`}
+          icon="🧠"
+          body={debug.memories.map((m) => `- ${m}`).join('\n')}
+        />
+      )}
 
       <GroupHeading>Conversation history ({turnCount} turns)</GroupHeading>
       {historyEntries.length > 0 ? (
@@ -130,7 +184,10 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
       <div className="debug-stats">
         <span>📊 History: {debug.historyLength} turns</span>
         <span className="debug-stats-divider">│</span>
-        <span className={debug.memories.length ? '' : 'text-muted'}>🧠 Memories: {debug.memories.length}</span>
+        <span className={debug.memories.length ? '' : 'text-muted'}>
+          🧠 Memories: {debug.memories.length}
+          {debug.retrieval ? `/${debug.retrieval.totalAvailable} (~${debug.retrieval.budgetTokensUsed}t)` : ''}
+        </span>
         <span className="debug-stats-divider">│</span>
         <span className={debug.lore?.selected.length ? '' : 'text-muted'}>
           📖 Lore: {debug.lore?.selected.length ?? 0}
@@ -170,6 +227,37 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
       {debug.error && <Section title="Error" icon="❌" body={debug.error} defaultOpen />}
     </div>
   );
+}
+
+/** Plain-text form of the retrieval panel, for its copy button. */
+function renderRetrievalText(retrieval: MemoryRetrievalResult): string {
+  const lines = [
+    `Query: ${retrieval.query}`,
+    `Pool: ${retrieval.totalAvailable} stored, ${retrieval.selected.length} selected, ${retrieval.rejected.length} rejected`,
+    `Token budget: ~${retrieval.budgetTokensUsed}/${retrieval.budgetTokensMax}`,
+    '',
+    ...retrieval.selected.map(
+      (e) =>
+        `  ${formatScore(e.score)}  ${e.memory.content} [${e.memory.source}]${e.pinned ? ' 📌' : ''}`
+    ),
+  ];
+  if (retrieval.rejected.length > 0) {
+    lines.push(
+      '',
+      '-- rejected --',
+      ...retrieval.rejected
+        .slice(0, REJECTED_DISPLAY_LIMIT)
+        .map((e) => `  ${formatScore(e.score)}  ${e.memory.content}`)
+    );
+    if (retrieval.rejected.length > REJECTED_DISPLAY_LIMIT) {
+      lines.push(`  ... and ${retrieval.rejected.length - REJECTED_DISPLAY_LIMIT} more`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
 function renderLoreText(lore: NonNullable<ChatDebugInfo['lore']>): string {

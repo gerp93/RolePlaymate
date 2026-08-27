@@ -7,8 +7,17 @@ import { PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
 import { scanLore, splitByScope } from './loreMatcher';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
+import {
+  retrieveMemories,
+  blobToVector,
+  vectorToBlob,
+  MemoryRetrievalOptions,
+  MemoryWithEmbedding,
+} from './memoryRetrieval';
+import { extractMemories } from './memoryExtraction';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
+import { ConversationMemory } from '../../shared/types/conversationMemory';
 
 /**
  * Defaults ported from KVGenius's generate_chat_response. topP/topK/repetitionPenalty match
@@ -56,6 +65,10 @@ export interface GenerateRequest {
   memories?: string[];
   samplers?: Partial<SamplerParams>;
   historyLimit?: number;
+  memoryOptions?: MemoryRetrievalOptions;
+  /** Regenerating must not extract: the exchange has already been mined once, and running it
+   * again on a second phrasing of the same reply just inserts near-duplicates. */
+  extractMemories?: boolean;
 }
 
 export interface GenerateResult {
@@ -83,6 +96,17 @@ export function renderMessagesForDebug(messages: OllamaChatMessage[]): string {
 
 export class ChatSessionManager {
   private sessions = new Map<string, ChatSession>();
+
+  /**
+   * Called when post-turn extraction stored new memories.
+   *
+   * Extraction finishes after the reply has already been returned, so there is no response
+   * left to attach the result to -- the main process turns this into a `chat:memories-updated`
+   * event and the renderer refreshes its count. Left unset, extraction still runs and still
+   * stores; only the live UI refresh is lost.
+   */
+  onMemoriesExtracted: ((conversationId: string, added: ConversationMemory[]) => void) | null =
+    null;
 
   constructor(
     private conversations: ConversationService,
@@ -148,6 +172,18 @@ export class ChatSessionManager {
 
     const historyTurns = session.history.slice(-historyLimit);
 
+    // Retrieval runs against the message being sent, not the whole transcript: what matters
+    // is which stored facts bear on what the user just said.
+    const retrieval = await this.retrieve(
+      request.conversationId,
+      request.userMessage,
+      request.memories,
+      request.memoryOptions
+    );
+    const memoryTexts = retrieval
+      ? retrieval.result.selected.map((entry) => entry.memory.content)
+      : (request.memories ?? []);
+
     // Lore is scanned against the recent transcript plus the message being sent, so an entry
     // fires on what the scene is about now rather than on anything ever mentioned.
     const lore = scanLore(
@@ -161,7 +197,7 @@ export class ChatSessionManager {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       directions: request.directions,
-      memories: request.memories,
+      memories: memoryTexts,
       worldLore,
       personalLore,
     });
@@ -222,8 +258,8 @@ export class ChatSessionManager {
         personaName: request.personaName ?? '',
         personaBackground: request.personaBackground ?? '',
         directions: request.directions ?? '',
-        memories: request.memories ?? [],
-        retrieval: null,
+        memories: memoryTexts,
+        retrieval: retrieval?.result ?? null,
         lore,
         systemPrompt: built.prompt,
         userMessage: request.userMessage,
@@ -238,12 +274,94 @@ export class ChatSessionManager {
       };
       session.lastDebug = debug;
 
+      if (request.extractMemories !== false) {
+        // Deliberately not awaited: extraction is a second model call, and the source ran it
+        // inline, adding roughly a second to every turn before the user saw anything. The
+        // reply is already persisted and returned; new memories land when they land.
+        void this.extract(request, built.prompt, content);
+      }
+
       return { message, debug };
     } finally {
       // Always cleared, on success, error, and cancellation alike. The source left its
       // equivalent flag set when generation threw, which stuck the UI in "generating"
       // permanently with no way out but a restart.
       session.abort = null;
+    }
+  }
+
+  /**
+   * Scores this conversation's stored memories against the outgoing message.
+   *
+   * Returns null when the caller passed an explicit `memories` list (the prompt-preview path
+   * supplies its own) or the conversation has none stored, so the debug console can tell
+   * "retrieval didn't run" apart from "retrieval ran and selected nothing".
+   */
+  private async retrieve(
+    conversationId: string,
+    query: string,
+    explicitMemories: string[] | undefined,
+    options?: MemoryRetrievalOptions
+  ) {
+    if (explicitMemories) return null;
+
+    const rows = this.conversations.listMemoriesWithEmbeddings(conversationId);
+    if (rows.length === 0) return null;
+
+    const candidates: MemoryWithEmbedding[] = rows.map((row) => ({
+      memory: row.memory,
+      embedding: row.embedding ? blobToVector(row.embedding) : null,
+      embeddingModel: row.embeddingModel,
+    }));
+
+    const outcome = await retrieveMemories(this.ollama, query, candidates, options);
+
+    // Write freshly computed vectors back so the next turn only embeds the query.
+    if (outcome.computed.length > 0) {
+      this.conversations.setMemoryEmbeddings(
+        outcome.computed.map((entry) => ({
+          memoryId: entry.memoryId,
+          embedding: vectorToBlob(entry.vector),
+          embeddingModel: entry.model,
+        }))
+      );
+    }
+
+    return outcome;
+  }
+
+  /**
+   * Mines the completed exchange for durable facts, after the reply has been delivered.
+   *
+   * Never throws into the turn: a failed extraction should cost the conversation nothing,
+   * and by this point the user already has their reply.
+   */
+  private async extract(
+    request: GenerateRequest,
+    systemPrompt: string,
+    aiResponse: string
+  ): Promise<ConversationMemory[]> {
+    try {
+      const existing = this.conversations.listMemories(request.conversationId);
+      const facts = await extractMemories(this.ollama, request.model, {
+        userMessage: request.userMessage,
+        aiResponse,
+        existingMemories: existing.map((memory) => memory.content),
+        systemPrompt,
+      });
+
+      const added = facts.map((content) =>
+        this.conversations.addMemory({
+          conversationId: request.conversationId,
+          content,
+          source: 'auto',
+        })
+      );
+
+      if (added.length > 0) this.onMemoriesExtracted?.(request.conversationId, added);
+      return added;
+    } catch {
+      return [];
     }
   }
 }

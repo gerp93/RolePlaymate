@@ -7,6 +7,7 @@ import { useChatSession } from '../hooks/useChatSession';
 import MessageList from '../components/chat/MessageList';
 import Composer from '../components/chat/Composer';
 import DebugConsole from '../components/chat/DebugConsole';
+import MemoriesDialog from '../components/chat/MemoriesDialog';
 import '../components/chat/Chat.css';
 
 type ModelState =
@@ -28,6 +29,7 @@ export default function Chat() {
   const [model, setModel] = useState('');
   const [samplers, setSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
   const [showDebug, setShowDebug] = useState(false);
+  const [showMemories, setShowMemories] = useState(false);
 
   const session = useChatSession(conversationId ?? null);
 
@@ -216,6 +218,19 @@ export default function Chat() {
             </button>
           )}
 
+          {conversationId && (
+            <button
+              type="button"
+              className="btn chat-memories-toggle"
+              onClick={() => setShowMemories(true)}
+            >
+              🧠 Memories
+              {session.memoryCount > 0 && (
+                <span className="chat-memory-badge">{session.memoryCount}</span>
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             className={`btn chat-debug-toggle${showDebug ? ' active' : ''}`}
@@ -276,6 +291,14 @@ export default function Chat() {
             </aside>
           )}
         </div>
+
+        {showMemories && conversationId && (
+          <MemoriesDialog
+            conversationId={conversationId}
+            onClose={() => setShowMemories(false)}
+            onChanged={() => void session.refreshMemoryCount()}
+          />
+        )}
 
         {activeConversation && (
           <footer className="chat-footer text-muted">
