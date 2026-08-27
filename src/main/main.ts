@@ -9,6 +9,7 @@ import {
   setDbPath,
   resetToDefaultDbPath,
 } from './dbLocation';
+import { openWithRecovery } from './dbRecovery';
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
@@ -39,6 +40,108 @@ import * as fs from 'fs';
 // while `electron .` in dev resolves it from package.json's "name" ("roleplaymate") -- pin it
 // so both modes always read/write the same data folder instead of silently diverging.
 app.setName('roleplaymate');
+
+// Without this, a second launch (a second double-click, or Windows re-running the exe after
+// an install) starts a whole second process rather than reusing the first. If the first one
+// is stuck -- see the startup error handling below -- every relaunch attempt just adds
+// another silent zombie process instead of surfacing anything, which is exactly what a
+// process list showing several idle copies with no window looks like.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+/**
+ * Writes a line to `userData/main.log` and, before any window exists to show a dialog to,
+ * writes to stderr too. `userData` is created lazily by Electron itself, so this never
+ * assumes the directory is already there.
+ *
+ * Startup failures here previously vanished: `app.whenReady().then(...)` had no `.catch`,
+ * so a thrown error (a locked or corrupted database file, a malformed app-config.json, an
+ * antivirus/sync-folder file lock) rejected into nothing. The process stayed alive as an
+ * Electron process with no window and no visible error -- indistinguishable from "frozen".
+ */
+function logStartupFailure(context: string, error: unknown): void {
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  const line = `[${new Date().toISOString()}] ${context}: ${message}\n`;
+  process.stderr.write(line);
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), line);
+  } catch {
+    // The log write itself failing (e.g. the same locked-folder problem that caused the
+    // original error) must not stop the dialog below from at least trying to show.
+  }
+}
+
+function showStartupFailureDialog(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  dialog.showErrorBox(
+    'RolePlaymate failed to start',
+    `${message}\n\nDetails were written to:\n${path.join(app.getPath('userData'), 'main.log')}`
+  );
+}
+
+/**
+ * Opens the database, recovering when the configured path can't be reached -- most commonly
+ * a custom location (dbLocation.setDbPath) on a drive or network share that isn't currently
+ * connected. Without this, that failure fell through to the generic startup dialog above and
+ * quit: there was no way to go mount the drive and try again short of relaunching the app.
+ *
+ * Retry re-reads the path each attempt, so it also covers "I fixed it, try again" for a
+ * transient permission or lock issue on the default location, not just missing drives.
+ */
+function openDatabaseWithRecovery(): DatabaseSync {
+  return openWithRecovery<DatabaseSync>({
+    getPath: getEffectiveDbPath,
+    open: (dbPath) => initDatabase(dbPath),
+    promptUser: (dbPath, error) => {
+      logStartupFailure('database open', error);
+      const message = error instanceof Error ? error.message : String(error);
+      const choice = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'Database not found',
+        message: "RolePlaymate can't open its database.",
+        detail:
+          `Location: ${dbPath}\n\n${message}\n\n` +
+          'If this is on a drive or network location that isn’t currently connected, ' +
+          'connect it and choose Retry. Otherwise choose a different location.',
+        buttons: ['Retry', 'Choose Database Location…', 'Quit'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      return choice === 0 ? 'retry' : choice === 1 ? 'choose' : 'quit';
+    },
+    pickNewPath: () =>
+      dialog.showSaveDialogSync({
+        title: 'Choose a database location',
+        defaultPath: getDefaultDbPath(),
+        filters: [{ name: 'RolePlaymate database', extensions: ['db'] }],
+      }) ?? null,
+    // setDbPath copies the current file to the new location when one exists there -- but the
+    // path we're recovering from is by definition unreachable, so fs.existsSync on it just
+    // returns false (it doesn't throw) and this adopts the new path outright, same as picking
+    // a location for the first time from Settings.
+    adoptPath: setDbPath,
+    onGiveUp: (error) => {
+      showStartupFailureDialog(error);
+      app.quit();
+    },
+  });
+}
+
+process.on('uncaughtException', (error) => {
+  logStartupFailure('uncaughtException', error);
+  showStartupFailureDialog(error);
+  app.quit();
+});
 
 let mainWindow: BrowserWindow | null = null;
 let db: DatabaseSync | null = null;
@@ -157,7 +260,7 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
 }
 
 app.whenReady().then(() => {
-  db = initDatabase();
+  db = openDatabaseWithRecovery();
   characterService = new CharacterService(db);
   fieldService = new CharacterFieldService(db);
   fieldVersionService = new FieldVersionService(db);
@@ -183,6 +286,14 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+}).catch((error) => {
+  // Anything above -- most plausibly `initDatabase()` hitting a locked, corrupted, or
+  // permission-denied database file -- used to reject this promise with nothing downstream
+  // to catch it. The process survived with no window and no error, which looks exactly like
+  // "the app doesn't open": alive in the task list, using almost no resources, forever.
+  logStartupFailure('startup', error);
+  showStartupFailureDialog(error);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
