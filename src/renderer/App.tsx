@@ -2,6 +2,9 @@ import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import CharacterList from './pages/CharacterList';
 import CharacterDetail from './pages/CharacterDetail';
 import Settings from './pages/Settings';
+import Chat from './pages/Chat';
+import Personas from './pages/Personas';
+import Lorebooks from './pages/Lorebooks';
 import Layout from './components/Layout';
 import { ThemeProvider } from './context/ThemeContext';
 import './themes.css';
@@ -14,6 +17,10 @@ function App() {
           <Routes>
             <Route path="/" element={<CharacterList />} />
             <Route path="/characters/:characterId" element={<CharacterDetail />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/chat/:conversationId" element={<Chat />} />
+            <Route path="/personas" element={<Personas />} />
+            <Route path="/lorebooks" element={<Lorebooks />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Layout>

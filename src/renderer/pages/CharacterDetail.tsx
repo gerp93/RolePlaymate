@@ -4,6 +4,7 @@ import { Character } from '../../shared/types/character';
 import { CharacterField, FIELD_TYPES } from '../../shared/types/characterField';
 import { CharacterImage } from '../../shared/types/characterImage';
 import FieldEditor from '../components/FieldEditor';
+import PersonalHistoryPanel from '../components/lore/PersonalHistoryPanel';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
@@ -138,6 +139,10 @@ export default function CharacterDetail() {
           if (!field) return null;
           return <FieldEditor key={field.id} field={field} placeholder={FIELD_PLACEHOLDERS[fieldType]} />;
         })}
+
+        {/* Private history belongs on the character, not beside the shared world books --
+            it is this character's own past and must never look attachable elsewhere. */}
+        <PersonalHistoryPanel characterId={character.id} />
       </div>
 
       <div className="character-detail-portrait-panel">

@@ -1,19 +1,14 @@
-import { Database } from 'sql.js';
+import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { CharacterField, FieldType } from '../../shared/types/characterField';
-import { saveDatabase } from './schema';
 
-function rowToField(columns: string[], row: any[]): CharacterField {
-  const obj: any = {};
-  columns.forEach((col, idx) => {
-    obj[col] = row[idx];
-  });
+function rowToField(row: Record<string, unknown>): CharacterField {
   return {
-    id: obj.id,
-    characterId: obj.characterId,
-    fieldType: obj.fieldType as FieldType,
-    createdAt: obj.createdAt,
-    updatedAt: obj.updatedAt,
+    id: row.id as string,
+    characterId: row.characterId as string,
+    fieldType: row.fieldType as FieldType,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
   };
 }
 
@@ -26,27 +21,20 @@ const SELECT_COLUMNS = `
 `;
 
 export class CharacterFieldService {
-  constructor(private db: Database) {}
+  constructor(private db: DatabaseSync) {}
 
   getFieldsByCharacter(characterId: string): CharacterField[] {
-    const stmt = this.db.prepare(
-      `SELECT ${SELECT_COLUMNS} FROM character_fields WHERE character_id = ? ORDER BY field_type`
-    );
-    stmt.bind([characterId]);
-    const fields: CharacterField[] = [];
-    while (stmt.step()) {
-      fields.push(rowToField(stmt.getColumnNames(), stmt.get()));
-    }
-    stmt.free();
-    return fields;
+    const rows = this.db
+      .prepare(
+        `SELECT ${SELECT_COLUMNS} FROM character_fields WHERE character_id = ? ORDER BY field_type`
+      )
+      .all(characterId);
+    return rows.map(rowToField);
   }
 
   getFieldById(id: string): CharacterField | null {
-    const stmt = this.db.prepare(`SELECT ${SELECT_COLUMNS} FROM character_fields WHERE id = ?`);
-    stmt.bind([id]);
-    const field = stmt.step() ? rowToField(stmt.getColumnNames(), stmt.get()) : null;
-    stmt.free();
-    return field;
+    const row = this.db.prepare(`SELECT ${SELECT_COLUMNS} FROM character_fields WHERE id = ?`).get(id);
+    return row ? rowToField(row) : null;
   }
 
   /** Blank content record for one field type. Caller (characters:create IPC handler) also
@@ -55,12 +43,11 @@ export class CharacterFieldService {
     const id = uuidv4();
     const now = new Date().toISOString();
 
-    this.db.run(
-      `INSERT INTO character_fields (id, character_id, field_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      [id, characterId, fieldType, now, now]
-    );
-
-    saveDatabase(this.db);
+    this.db
+      .prepare(
+        `INSERT INTO character_fields (id, character_id, field_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(id, characterId, fieldType, now, now);
 
     return this.getFieldById(id)!;
   }

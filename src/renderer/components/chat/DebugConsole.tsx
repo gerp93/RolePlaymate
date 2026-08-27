@@ -1,0 +1,382 @@
+import { ReactNode, useState } from 'react';
+import { ChatDebugInfo } from '../../../shared/types/chat';
+import {
+  Segment,
+  highlightBracketTags,
+  highlightRoleBlocks,
+  formatStopPhrase,
+  buildHistoryEntries,
+  scoreBand,
+  formatScore,
+  REJECTED_DISPLAY_LIMIT,
+} from '../../../shared/utils/debugHighlight';
+import { MemoryRetrievalResult } from '../../../shared/types/conversationMemory';
+
+/**
+ * The Prompt Debug Console, ported closely from KVGenius's `_populate_debug_console`.
+ *
+ * The behaviour that makes it worth having: **every section always renders**. Populated ones
+ * are collapsible panels with their own copy button; empty ones show as a greyed-out
+ * "— (empty)" row. Being able to see at a glance what was *not* sent is most of the value,
+ * so empty sections are never filtered out.
+ */
+export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null }) {
+  if (!debug) {
+    return (
+      <div className="debug-console">
+        <div className="debug-console-header">
+          <span className="debug-console-title">🔍 Prompt Debug Console</span>
+        </div>
+        <p className="debug-console-placeholder">
+          Send a message to see the prompt debug info here.
+        </p>
+      </div>
+    );
+  }
+
+  const personaBody = debug.personaName
+    ? `Name: ${debug.personaName}\nBackground: ${debug.personaBackground || '(none)'}`
+    : '';
+
+  const historyEntries = buildHistoryEntries(debug.historyTurns);
+  const turnCount = historyEntries.filter((e) => e.role === 'user').length;
+
+  return (
+    <div className="debug-console">
+      <div className="debug-console-header">
+        <span className="debug-console-title">🔍 Prompt Debug Console</span>
+        <CopyButton value={debug.fullPrompt} label="Copy full prompt" />
+      </div>
+
+      <ul className="debug-colour-key">
+        <li><span className="key-swatch seg-system" /> System</li>
+        <li><span className="key-swatch seg-user" /> User</li>
+        <li><span className="key-swatch seg-assistant" /> LLM</li>
+        <li><span className="key-swatch seg-tag" /> Tags</li>
+      </ul>
+
+      <GroupHeading>Prompt components</GroupHeading>
+      <Section title="Base System Prompt (Character)" icon="👤" body={debug.baseSystemPrompt} defaultOpen />
+      <Section title="Character Instructions (always sent)" icon="📋" body={debug.characterInstructions} />
+      <Section title="Persona Context" icon="🎭" body={personaBody} />
+
+      <GroupHeading>Scene instructions</GroupHeading>
+      <Section title="Instructions (this turn)" icon="🎬" body={debug.directions} defaultOpen />
+
+      <GroupHeading>Lore ({debug.lore?.selected.length ?? 0} injected)</GroupHeading>
+      {debug.lore && (debug.lore.selected.length > 0 || debug.lore.rejected.length > 0) ? (
+        <Panel
+          title={`Lorebook (${debug.lore.selected.length}/${debug.lore.consideredCount} fired)`}
+          icon="📖"
+          body={renderLoreText(debug.lore)}
+        >
+          <pre className="debug-body">
+            <span className="seg-tag">{`Pool: ${debug.lore.consideredCount} in scope → ${debug.lore.selected.length} injected, ${debug.lore.rejected.length} rejected\n`}</span>
+            <span className="seg-tag">{`Token budget: ~${debug.lore.budgetTokensUsed}/${debug.lore.budgetTokensMax}\n\n`}</span>
+            {debug.lore.selected.length > 0 && (
+              <span className="seg-tag">{'── INJECTED ──\n'}</span>
+            )}
+            {debug.lore.selected.map((entry) => (
+              <span key={entry.entryId} className={entry.scope === 'personal' ? 'seg-assistant' : 'seg-user'}>
+                {`  [${entry.scope}] ${entry.title} — ${
+                  entry.reason === 'always-on' ? 'always on' : `key "${entry.matchedKey}"`
+                } (~${entry.estimatedTokens}t, ${entry.lorebookName})\n`}
+              </span>
+            ))}
+            {debug.lore.rejected.length > 0 && (
+              <>
+                <span className="seg-tag">{'\n── REJECTED (matched but did not fit) ──\n'}</span>
+                {debug.lore.rejected.map((entry) => (
+                  <span key={entry.entryId} className="seg-text">
+                    {`  ${entry.title} (~${entry.estimatedTokens}t)\n`}
+                  </span>
+                ))}
+              </>
+            )}
+          </pre>
+        </Panel>
+      ) : (
+        <EmptySection title="Lorebook" icon="📖" />
+      )}
+
+      {/* The exact text the keys were tested against -- the first thing to check when an
+          entry didn't fire and you expected it to. */}
+      <Section title="Lore Scan Window" icon="🔎" body={debug.lore?.scanText ?? ''} />
+
+      <GroupHeading>
+        Memories ({debug.memories.length}
+        {debug.retrieval ? `/${debug.retrieval.totalAvailable}` : ''} injected)
+      </GroupHeading>
+      {debug.retrieval ? (
+        <Panel
+          title={`Memories (${debug.retrieval.selected.length}/${debug.retrieval.totalAvailable} selected)`}
+          icon="🧠"
+          body={renderRetrievalText(debug.retrieval)}
+        >
+          <pre className="debug-body">
+            <span className="seg-tag">{`Query: ${truncate(debug.retrieval.query, 80)}\n`}</span>
+            <span className="seg-tag">{`Pool: ${debug.retrieval.totalAvailable} stored → ${debug.retrieval.selected.length} selected, ${debug.retrieval.rejected.length} rejected\n`}</span>
+            <span className="seg-tag">{`Token budget: ~${debug.retrieval.budgetTokensUsed}/${debug.retrieval.budgetTokensMax}\n\n`}</span>
+            {debug.retrieval.selected.length > 0 && (
+              <span className="seg-tag">{'── SELECTED ──\n'}</span>
+            )}
+            {debug.retrieval.selected.map((entry) => (
+              <div key={entry.memory.id}>
+                <span className={`debug-score debug-score-${scoreBand(entry.score)}`}>
+                  {`  ${formatScore(entry.score)}  `}
+                </span>
+                <span className="seg-text">{entry.memory.content}</span>
+                <span className="seg-tag">{` [${entry.memory.source}]${entry.pinned ? ' 📌' : ''}`}</span>
+              </div>
+            ))}
+            {debug.retrieval.rejected.length > 0 && (
+              <>
+                <span className="seg-tag">{'\n── REJECTED ──\n'}</span>
+                {debug.retrieval.rejected.slice(0, REJECTED_DISPLAY_LIMIT).map((entry) => (
+                  <div key={entry.memory.id}>
+                    <span className={`debug-score debug-score-${scoreBand(entry.score)}`}>
+                      {`  ${formatScore(entry.score)}  `}
+                    </span>
+                    <span className="text-muted">{truncate(entry.memory.content, 120)}</span>
+                  </div>
+                ))}
+                {debug.retrieval.rejected.length > REJECTED_DISPLAY_LIMIT && (
+                  <span className="text-muted">
+                    {`  ... and ${debug.retrieval.rejected.length - REJECTED_DISPLAY_LIMIT} more\n`}
+                  </span>
+                )}
+              </>
+            )}
+          </pre>
+        </Panel>
+      ) : (
+        /* No retrieval pass -- either nothing is stored for this conversation, or the caller
+           supplied the memory list itself (the prompt preview does). Whatever was injected
+           still shows, just without scores. */
+        <Section
+          title={`Memories (${debug.memories.length})`}
+          icon="🧠"
+          body={debug.memories.map((m) => `- ${m}`).join('\n')}
+        />
+      )}
+
+      <GroupHeading>Conversation history ({turnCount} turns)</GroupHeading>
+      {historyEntries.length > 0 ? (
+        <Panel title={`Prior Chat Messages (${turnCount} turns)`} icon="💬" body={renderHistoryText(historyEntries)}>
+          <pre className="debug-body">
+            {historyEntries.map((entry, index) => (
+              <div key={index}>
+                {entry.role === 'user' && <span className="seg-tag">{`── Turn ${entry.turn} ──\n`}</span>}
+                <span className={entry.role === 'user' ? 'seg-user' : 'seg-assistant'}>
+                  {`  ${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}\n`}
+                </span>
+              </div>
+            ))}
+          </pre>
+        </Panel>
+      ) : (
+        <EmptySection title="Prior Chat Messages (0 turns)" icon="💬" />
+      )}
+
+      <GroupHeading>Assembled &amp; sent</GroupHeading>
+      <Section title="Assembled System Prompt" icon="📋" body={debug.systemPrompt} />
+      <Section title="User Message" icon="💬" body={debug.userMessage} />
+      <div className="debug-stats">
+        <span>📊 History: {debug.historyLength} turns</span>
+        <span className="debug-stats-divider">│</span>
+        <span className={debug.memories.length ? '' : 'text-muted'}>
+          🧠 Memories: {debug.memories.length}
+          {debug.retrieval ? `/${debug.retrieval.totalAvailable} (~${debug.retrieval.budgetTokensUsed}t)` : ''}
+        </span>
+        <span className="debug-stats-divider">│</span>
+        <span className={debug.lore?.selected.length ? '' : 'text-muted'}>
+          📖 Lore: {debug.lore?.selected.length ?? 0}
+          {debug.lore ? ` (~${debug.lore.budgetTokensUsed}t)` : ''}
+        </span>
+        <span className="debug-stats-divider">│</span>
+        <span>
+          🔢 Tokens: {debug.inputTokens ?? '?'} in → {debug.outputTokens ?? '?'} out
+        </span>
+      </div>
+
+      <GroupHeading>Generation pipeline</GroupHeading>
+      {debug.fullPrompt ? (
+        <Panel title="Full Formatted Prompt" icon="📜" body={debug.fullPrompt}>
+          <SegmentedBody segments={highlightRoleBlocks(debug.fullPrompt)} />
+        </Panel>
+      ) : (
+        <EmptySection title="Full Formatted Prompt" icon="📜" />
+      )}
+      <Section title="Raw Response (pre-cleanup)" icon="🟢" body={debug.rawResponse} />
+      {debug.stopPhrases.length > 0 ? (
+        <Panel
+          title="Stop Phrases Applied"
+          icon="🛑"
+          body={debug.stopPhrases.map(formatStopPhrase).join('\n')}
+        >
+          <pre className="debug-body">
+            {debug.stopPhrases.map((phrase, index) => (
+              <div key={index} className="seg-tag">{`  ${formatStopPhrase(phrase)}`}</div>
+            ))}
+          </pre>
+        </Panel>
+      ) : (
+        <EmptySection title="Stop Phrases Applied" icon="🛑" />
+      )}
+      <Section title="Cleaned Response" icon="✅" body={debug.cleanedResponse} defaultOpen />
+      {debug.error && <Section title="Error" icon="❌" body={debug.error} defaultOpen />}
+    </div>
+  );
+}
+
+/** Plain-text form of the retrieval panel, for its copy button. */
+function renderRetrievalText(retrieval: MemoryRetrievalResult): string {
+  const lines = [
+    `Query: ${retrieval.query}`,
+    `Pool: ${retrieval.totalAvailable} stored, ${retrieval.selected.length} selected, ${retrieval.rejected.length} rejected`,
+    `Token budget: ~${retrieval.budgetTokensUsed}/${retrieval.budgetTokensMax}`,
+    '',
+    ...retrieval.selected.map(
+      (e) =>
+        `  ${formatScore(e.score)}  ${e.memory.content} [${e.memory.source}]${e.pinned ? ' 📌' : ''}`
+    ),
+  ];
+  if (retrieval.rejected.length > 0) {
+    lines.push(
+      '',
+      '-- rejected --',
+      ...retrieval.rejected
+        .slice(0, REJECTED_DISPLAY_LIMIT)
+        .map((e) => `  ${formatScore(e.score)}  ${e.memory.content}`)
+    );
+    if (retrieval.rejected.length > REJECTED_DISPLAY_LIMIT) {
+      lines.push(`  ... and ${retrieval.rejected.length - REJECTED_DISPLAY_LIMIT} more`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function renderLoreText(lore: NonNullable<ChatDebugInfo['lore']>): string {
+  const lines = [
+    `Pool: ${lore.consideredCount} in scope, ${lore.selected.length} injected, ${lore.rejected.length} rejected`,
+    `Token budget: ~${lore.budgetTokensUsed}/${lore.budgetTokensMax}`,
+    '',
+    ...lore.selected.map(
+      (e) =>
+        `  [${e.scope}] ${e.title} — ${
+          e.reason === 'always-on' ? 'always on' : `key "${e.matchedKey}"`
+        } (${e.lorebookName})`
+    ),
+  ];
+  if (lore.rejected.length > 0) {
+    lines.push('', '-- rejected --', ...lore.rejected.map((e) => `  ${e.title}`));
+  }
+  return lines.join('\n');
+}
+
+function renderHistoryText(entries: ReturnType<typeof buildHistoryEntries>): string {
+  return entries
+    .map((e) => `${e.role === 'user' ? `── Turn ${e.turn} ──\n` : ''}  ${e.role}: ${e.content}`)
+    .join('\n');
+}
+
+function GroupHeading({ children }: { children: ReactNode }) {
+  // Uppercasing via CSS, not String(children) -- children is a node array when it contains
+  // an interpolation, and Array.toString would splice commas into the heading.
+  return <div className="debug-group-heading">▸ {children}</div>;
+}
+
+/** A populated section, or the greyed placeholder when its input was blank. */
+function Section({
+  title,
+  icon,
+  body,
+  defaultOpen = false,
+}: {
+  title: string;
+  icon: string;
+  body: string;
+  defaultOpen?: boolean;
+}) {
+  if (!body?.trim()) return <EmptySection title={title} icon={icon} />;
+  return (
+    <Panel title={title} icon={icon} body={body} defaultOpen={defaultOpen}>
+      <SegmentedBody segments={highlightBracketTags(body)} />
+    </Panel>
+  );
+}
+
+/** `<details>` rather than hand-rolled collapse state: keyboard-accessible for free. */
+function Panel({
+  title,
+  icon,
+  body,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  icon: string;
+  body: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="debug-section" open={defaultOpen}>
+      <summary>
+        <span className="debug-section-icon">{icon}</span>
+        <span className="debug-section-title">{title}</span>
+        <CopyButton value={body} label={`Copy ${title}`} />
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+function EmptySection({ title, icon }: { title: string; icon: string }) {
+  return (
+    <div className="debug-section debug-section-empty">
+      <span className="debug-section-icon">{icon}</span>
+      <span className="debug-section-title">{title}</span>
+      <span className="debug-section-empty-label">— (empty)</span>
+    </div>
+  );
+}
+
+function SegmentedBody({ segments }: { segments: Segment[] }) {
+  return (
+    <pre className="debug-body">
+      {segments.map((segment, index) => (
+        <span key={index} className={`seg-${segment.kind}`}>
+          {segment.text}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="debug-copy-btn"
+      title={label}
+      aria-label={label}
+      onClick={(event) => {
+        // Inside a <summary>, a click would otherwise toggle the panel.
+        event.preventDefault();
+        event.stopPropagation();
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {copied ? '✓' : '⧉'}
+    </button>
+  );
+}

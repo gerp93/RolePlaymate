@@ -1,0 +1,674 @@
+/* Chat + Prompt Debug Console.
+   Every colour comes from the VisualAssault theme tokens rather than fixed values -- this app
+   ships 14 themes, so the Material palette the source used would look wrong in most of them.
+   Only four accents are guaranteed across all themes, so the debug console distinguishes
+   roles by those plus weight and opacity, keeping the *relative* assignments that carry the
+   meaning (system / user / LLM / tags). */
+
+.chat-page {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* --- conversation sidebar ------------------------------------------------------------- */
+
+.chat-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+  padding-right: 12px;
+}
+
+.chat-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.chat-sidebar-header h2 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.chat-conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-conversation-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius);
+}
+
+.chat-conversation-list li.active {
+  background: var(--color-bg-hover);
+}
+
+.chat-conversation-list li > button:first-child {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 8px;
+  text-align: left;
+  min-width: 0;
+}
+
+.chat-conversation-title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chat-conversation-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.chat-conversation-delete {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+}
+
+.chat-conversation-delete:hover {
+  color: var(--color-accent-red);
+}
+
+/* --- main column ---------------------------------------------------------------------- */
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chat-header label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-header select {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+  min-width: 140px;
+}
+
+.chat-header select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.chat-debug-toggle.active,
+.chat-directions-toggle.active {
+  background: var(--color-bg-hover);
+}
+
+.chat-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 13px;
+}
+
+.chat-banner-error {
+  border-color: var(--color-accent-red);
+}
+
+.chat-banner-error .btn {
+  margin-left: 12px;
+}
+
+.chat-body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  padding-top: 12px;
+}
+
+.chat-conversation {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* --- transcript ----------------------------------------------------------------------- */
+
+.chat-transcript {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 8px;
+}
+
+.chat-transcript-empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-bubble {
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  max-width: 78%;
+}
+
+.chat-bubble-user {
+  align-self: flex-end;
+  background: var(--color-bg-hover);
+}
+
+.chat-bubble-assistant {
+  align-self: flex-start;
+}
+
+.chat-bubble-name {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+}
+
+.chat-bubble-user .chat-bubble-name {
+  color: var(--color-accent-blue);
+}
+
+.chat-bubble-assistant .chat-bubble-name {
+  color: var(--color-accent-green);
+}
+
+.chat-bubble-body {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Blinking caret so a slow first token doesn't read as a hang. */
+.chat-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  background: var(--color-text-muted);
+  animation: chat-caret-blink 1s step-end infinite;
+}
+
+@keyframes chat-caret-blink {
+  50% { opacity: 0; }
+}
+
+/* --- composer ------------------------------------------------------------------------- */
+
+.chat-composer {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chat-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-slider output {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.chat-composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.chat-input,
+.chat-directions {
+  flex: 1;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.chat-directions {
+  width: 100%;
+  font-size: 13px;
+}
+
+.chat-send {
+  min-width: 84px;
+}
+
+.chat-footer {
+  padding-top: 8px;
+  font-size: 12px;
+}
+
+/* --- prompt debug console ------------------------------------------------------------- */
+
+.chat-debug-panel {
+  width: 420px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  min-height: 0;
+  border-left: 1px solid var(--color-border);
+  padding-left: 12px;
+}
+
+.debug-console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.debug-console-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.debug-console-placeholder {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.debug-colour-key {
+  display: flex;
+  gap: 12px;
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.debug-colour-key li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.key-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.debug-group-heading {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 12px 0 4px;
+}
+
+.debug-section {
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  margin-bottom: 3px;
+}
+
+.debug-section summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.debug-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.debug-section summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.debug-section[open] summary::before {
+  content: '▾';
+}
+
+.debug-section-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Empty sections stay visible on purpose: seeing what was NOT sent is half the point. */
+.debug-section-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 22px;
+  font-size: 12px;
+  background: none;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+}
+
+.debug-section-empty-label {
+  font-style: italic;
+  font-size: 10px;
+}
+
+.debug-copy-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+
+.debug-copy-btn:hover {
+  color: var(--color-text);
+}
+
+.debug-body {
+  margin: 0;
+  padding: 4px 12px 12px 22px;
+  font-family: ui-monospace, 'Cascadia Code', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-muted);
+}
+
+.debug-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.debug-stats-divider {
+  opacity: 0.4;
+}
+
+/* Role colours. The relative assignment is what carries meaning, so it matches the source:
+   tags stand out from body text, user and assistant get the two conversational accents. */
+.seg-text { color: var(--color-text-muted); }
+.seg-tag { color: var(--color-text); font-weight: 700; }
+.seg-system { color: var(--color-accent-red); }
+.seg-user { color: var(--color-accent-blue); }
+.seg-assistant { color: var(--color-accent-green); }
+
+/* Score bands. Only four accent tokens are guaranteed across the 14 themes, so the grading
+   uses green / blue / muted rather than the source's green / yellow / orange -- the point is
+   three distinguishable steps, not the specific hues. */
+.debug-score {
+  font-weight: 700;
+}
+
+.debug-score-strong { color: var(--color-accent-green); }
+.debug-score-moderate { color: var(--color-accent-blue); }
+.debug-score-weak { color: var(--color-text-muted); }
+
+/* --- memories ------------------------------------------------------------------------- */
+
+.chat-memories-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-memory-badge {
+  font-size: 10px;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--color-accent-blue);
+  color: var(--color-bg);
+  font-weight: 700;
+}
+
+.memories-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.memories-dialog {
+  width: min(680px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.memories-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.memories-header h2 {
+  font-size: 15px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.memories-header > .text-muted {
+  flex: 1;
+  font-size: 12px;
+}
+
+.memories-note,
+.memories-empty {
+  font-size: 12px;
+  margin: 8px 0 12px;
+}
+
+.memories-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.memories-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.memories-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memory-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font-size: 13px;
+}
+
+.memory-row textarea {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+/* Pinned memories are always injected, so they read as the stronger of the two. */
+.memory-manual .memory-text {
+  font-weight: 600;
+}
+
+.memory-marker {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.memory-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.memory-row .btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.memories-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  font-size: 12px;
+}
+
+/* --- personas ------------------------------------------------------------------------- */
+
+.persona-editor h2 {
+  font-size: 14px;
+  margin: 0 0 12px;
+}
+
+.persona-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.persona-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.persona-list li.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.persona-name {
+  font-weight: 700;
+}
+
+.persona-warning {
+  font-size: 12px;
+  font-style: italic;
+  margin-top: 4px;
+}
+
+.persona-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}

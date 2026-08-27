@@ -1,19 +1,16 @@
-import { Database } from 'sql.js';
+import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Character, CreateCharacterInput, UpdateCharacterInput } from '../../shared/types/character';
-import { saveDatabase } from './schema';
 
-function rowToCharacter(columns: string[], row: any[]): Character {
-  const obj: any = {};
-  columns.forEach((col, idx) => {
-    obj[col] = row[idx];
-  });
+/** Rows come back keyed by the SELECT_COLUMNS aliases, so this only has to fix up what SQL
+ * can't express -- here, NULL vs undefined for the optional description. */
+function rowToCharacter(row: Record<string, unknown>): Character {
   return {
-    id: obj.id,
-    name: obj.name,
-    description: obj.description ?? null,
-    createdAt: obj.createdAt,
-    updatedAt: obj.updatedAt,
+    id: row.id as string,
+    name: row.name as string,
+    description: (row.description as string | null) ?? null,
+    createdAt: row.createdAt as string,
+    updatedAt: row.updatedAt as string,
   };
 }
 
@@ -26,36 +23,29 @@ const SELECT_COLUMNS = `
 `;
 
 export class CharacterService {
-  constructor(private db: Database) {}
+  constructor(private db: DatabaseSync) {}
 
   getAllCharacters(): Character[] {
-    const stmt = this.db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters ORDER BY updated_at DESC`);
-    const characters: Character[] = [];
-    while (stmt.step()) {
-      characters.push(rowToCharacter(stmt.getColumnNames(), stmt.get()));
-    }
-    stmt.free();
-    return characters;
+    const rows = this.db
+      .prepare(`SELECT ${SELECT_COLUMNS} FROM characters ORDER BY updated_at DESC`)
+      .all();
+    return rows.map(rowToCharacter);
   }
 
   getCharacterById(id: string): Character | null {
-    const stmt = this.db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters WHERE id = ?`);
-    stmt.bind([id]);
-    const character = stmt.step() ? rowToCharacter(stmt.getColumnNames(), stmt.get()) : null;
-    stmt.free();
-    return character;
+    const row = this.db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters WHERE id = ?`).get(id);
+    return row ? rowToCharacter(row) : null;
   }
 
   createCharacter(input: CreateCharacterInput): Character {
     const id = uuidv4();
     const now = new Date().toISOString();
 
-    this.db.run(
-      `INSERT INTO characters (id, name, image_url, description, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)`,
-      [id, input.name, input.description ?? null, now, now]
-    );
-
-    saveDatabase(this.db);
+    this.db
+      .prepare(
+        `INSERT INTO characters (id, name, image_url, description, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)`
+      )
+      .run(id, input.name, input.description ?? null, now, now);
 
     return this.getCharacterById(id)!;
   }
@@ -67,36 +57,18 @@ export class CharacterService {
     }
 
     const now = new Date().toISOString();
-    this.db.run(`UPDATE characters SET name = ?, description = ?, updated_at = ? WHERE id = ?`, [
-      input.name ?? existing.name,
-      input.description ?? existing.description,
-      now,
-      id,
-    ]);
-
-    saveDatabase(this.db);
+    this.db
+      .prepare(`UPDATE characters SET name = ?, description = ?, updated_at = ? WHERE id = ?`)
+      .run(input.name ?? existing.name, input.description ?? existing.description, now, id);
 
     return this.getCharacterById(id)!;
   }
 
-  /** Cascades to character_fields, character_field_versions, and character_images (enforced
-   * in service code -- see schema.ts's note on sql.js not actually honoring ON DELETE CASCADE). */
+  /** Cascades to character_fields, character_field_versions, and character_images via the
+   * schema's ON DELETE CASCADE constraints, which are enforced now that foreign keys are on.
+   * Note this removes the image *rows* but not the files on disk -- callers that care fetch
+   * the paths before deleting and unlink them (see the characters:delete IPC handler). */
   deleteCharacter(id: string): void {
-    const fieldStmt = this.db.prepare(`SELECT id FROM character_fields WHERE character_id = ?`);
-    fieldStmt.bind([id]);
-    const fieldIds: string[] = [];
-    while (fieldStmt.step()) {
-      fieldIds.push(fieldStmt.get()[0] as string);
-    }
-    fieldStmt.free();
-
-    for (const fieldId of fieldIds) {
-      this.db.run(`DELETE FROM character_field_versions WHERE field_id = ?`, [fieldId]);
-    }
-    this.db.run(`DELETE FROM character_fields WHERE character_id = ?`, [id]);
-    this.db.run(`DELETE FROM character_images WHERE character_id = ?`, [id]);
-    this.db.run(`DELETE FROM characters WHERE id = ?`, [id]);
-
-    saveDatabase(this.db);
+    this.db.prepare(`DELETE FROM characters WHERE id = ?`).run(id);
   }
 }

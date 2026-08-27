@@ -42,6 +42,11 @@ export function isUsingDefaultLocation(): boolean {
  * Point the app at a different SQLite file. If nothing exists yet at the new
  * location, the current database is copied there first so no data is lost.
  * If a file already exists there, it's left alone and simply adopted as-is.
+ *
+ * PRECONDITION: the database must already be closed (see closeDatabase). The app runs in
+ * WAL mode, so recently committed data can live in the `-wal` sidecar rather than the main
+ * file -- copying while open would silently drop it. A clean close() checkpoints the WAL
+ * into the main file and deletes the sidecars, which is what makes the plain copy below safe.
  */
 export function setDbPath(newPath: string): void {
   const currentPath = getEffectiveDbPath();
@@ -49,6 +54,11 @@ export function setDbPath(newPath: string): void {
   if (!fs.existsSync(newPath) && fs.existsSync(currentPath)) {
     fs.mkdirSync(path.dirname(newPath), { recursive: true });
     fs.copyFileSync(currentPath, newPath);
+    // Defensive: a stale sidecar left beside the destination by some earlier crash would be
+    // replayed against our freshly copied file and corrupt it. The copy is already complete
+    // on its own, so anything sitting there is garbage.
+    fs.rmSync(`${newPath}-wal`, { force: true });
+    fs.rmSync(`${newPath}-shm`, { force: true });
   }
 
   writeConfig({ ...readConfig(), dbPath: newPath });
