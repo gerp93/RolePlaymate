@@ -9,6 +9,7 @@ import {
   setDbPath,
   resetToDefaultDbPath,
 } from './dbLocation';
+import { openWithRecovery } from './dbRecovery';
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
@@ -86,6 +87,54 @@ function showStartupFailureDialog(error: unknown): void {
     'RolePlaymate failed to start',
     `${message}\n\nDetails were written to:\n${path.join(app.getPath('userData'), 'main.log')}`
   );
+}
+
+/**
+ * Opens the database, recovering when the configured path can't be reached -- most commonly
+ * a custom location (dbLocation.setDbPath) on a drive or network share that isn't currently
+ * connected. Without this, that failure fell through to the generic startup dialog above and
+ * quit: there was no way to go mount the drive and try again short of relaunching the app.
+ *
+ * Retry re-reads the path each attempt, so it also covers "I fixed it, try again" for a
+ * transient permission or lock issue on the default location, not just missing drives.
+ */
+function openDatabaseWithRecovery(): DatabaseSync {
+  return openWithRecovery<DatabaseSync>({
+    getPath: getEffectiveDbPath,
+    open: (dbPath) => initDatabase(dbPath),
+    promptUser: (dbPath, error) => {
+      logStartupFailure('database open', error);
+      const message = error instanceof Error ? error.message : String(error);
+      const choice = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'Database not found',
+        message: "RolePlaymate can't open its database.",
+        detail:
+          `Location: ${dbPath}\n\n${message}\n\n` +
+          'If this is on a drive or network location that isn’t currently connected, ' +
+          'connect it and choose Retry. Otherwise choose a different location.',
+        buttons: ['Retry', 'Choose Database Location…', 'Quit'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      return choice === 0 ? 'retry' : choice === 1 ? 'choose' : 'quit';
+    },
+    pickNewPath: () =>
+      dialog.showSaveDialogSync({
+        title: 'Choose a database location',
+        defaultPath: getDefaultDbPath(),
+        filters: [{ name: 'RolePlaymate database', extensions: ['db'] }],
+      }) ?? null,
+    // setDbPath copies the current file to the new location when one exists there -- but the
+    // path we're recovering from is by definition unreachable, so fs.existsSync on it just
+    // returns false (it doesn't throw) and this adopts the new path outright, same as picking
+    // a location for the first time from Settings.
+    adoptPath: setDbPath,
+    onGiveUp: (error) => {
+      showStartupFailureDialog(error);
+      app.quit();
+    },
+  });
 }
 
 process.on('uncaughtException', (error) => {
@@ -211,7 +260,7 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
 }
 
 app.whenReady().then(() => {
-  db = initDatabase();
+  db = openDatabaseWithRecovery();
   characterService = new CharacterService(db);
   fieldService = new CharacterFieldService(db);
   fieldVersionService = new FieldVersionService(db);
