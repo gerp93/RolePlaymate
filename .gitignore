@@ -2,4 +2,18 @@ node_modules/
 dist/
 release/
 *.db
+*.db-wal
+*.db-shm
+*.log
+*.tsbuildinfo
+
+# editor / OS
+.vscode/
+.idea/
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# local env overrides
+.env
+.env.local
