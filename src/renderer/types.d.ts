@@ -110,6 +110,7 @@ declare global {
         browseNew: () => Promise<string | null>;
         set: (newPath: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
+        showInFolder: () => Promise<{ success: boolean }>;
       };
       ollamaHost: {
         get: () => Promise<{ host: string; isDefault: boolean; defaultHost: string }>;

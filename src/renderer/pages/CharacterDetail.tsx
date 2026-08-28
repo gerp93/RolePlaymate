@@ -43,7 +43,7 @@ export default function CharacterDetail() {
       window.electronAPI.characterImages.getByCharacter(id),
     ]);
     if (!c) {
-      navigate('/');
+      navigate('/characters');
       return;
     }
     setCharacter(c);

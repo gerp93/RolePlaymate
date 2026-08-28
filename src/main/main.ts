@@ -9,6 +9,7 @@ import {
   isUsingDefaultLocation,
   setDbPath,
   resetToDefaultDbPath,
+  revealDbInFileManager,
   getEffectiveOllamaHost,
   isUsingDefaultOllamaHost,
   setOllamaHost,
@@ -759,6 +760,11 @@ function registerIPCHandlers() {
     resetToDefaultDbPath();
     app.relaunch();
     app.exit();
+    return { success: true };
+  });
+
+  ipcMain.handle('dbLocation:showInFolder', async () => {
+    await revealDbInFileManager();
     return { success: true };
   });
 

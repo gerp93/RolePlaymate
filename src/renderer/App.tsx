@@ -1,4 +1,4 @@
-import { HashRouter as Router, Routes, Route } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import CharacterList from './pages/CharacterList';
 import CharacterDetail from './pages/CharacterDetail';
 import Settings from './pages/Settings';
@@ -21,7 +21,8 @@ function App() {
         <Router>
           <Layout>
             <Routes>
-              <Route path="/" element={<CharacterList />} />
+              <Route path="/" element={<Navigate to="/chat" replace />} />
+              <Route path="/characters" element={<CharacterList />} />
               <Route path="/characters/:characterId" element={<CharacterDetail />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/chat/:conversationId" element={<Chat />} />

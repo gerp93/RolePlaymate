@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import { DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
 
 // Despite the filename (kept for the db-path exports below, the original reason this file
@@ -76,9 +76,29 @@ export function resetToDefaultDbPath(): void {
   writeConfig(config);
 }
 
-/** The Ollama server URL the app will actually call: a user-configured one, or the
- * localhost:11434 default. Read fresh on every call (via OllamaClient's hostProvider) rather
- * than cached, so a change here takes effect on the next request with no restart needed. */
+/** Normalize a configured db path for the current OS (Windows Explorer is picky about `/`). */
+function platformDbPath(filePath: string): string {
+  const resolved = path.resolve(filePath.trim());
+  return process.platform === 'win32' ? path.win32.normalize(resolved) : path.normalize(resolved);
+}
+
+/** Open the system file manager at the database file, or its parent folder if missing. */
+export async function revealDbInFileManager(): Promise<void> {
+  const dbPath = platformDbPath(getEffectiveDbPath());
+
+  if (fs.existsSync(dbPath)) {
+    shell.showItemInFolder(dbPath);
+    return;
+  }
+
+  const dir = platformDbPath(path.dirname(dbPath));
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Database folder not found: ${dir}`);
+  }
+  const err = await shell.openPath(dir);
+  if (err) throw new Error(err);
+}
+
 export function getEffectiveOllamaHost(): string {
   const configured = readConfig().ollamaHost;
   return configured && configured.trim() !== '' ? configured.trim() : DEFAULT_OLLAMA_HOST;

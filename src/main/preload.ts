@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     browseNew: () => ipcRenderer.invoke('dbLocation:browseNew'),
     set: (newPath: string) => ipcRenderer.invoke('dbLocation:set', newPath),
     resetToDefault: () => ipcRenderer.invoke('dbLocation:resetToDefault'),
+    showInFolder: () => ipcRenderer.invoke('dbLocation:showInFolder'),
   },
 
   ollamaHost: {

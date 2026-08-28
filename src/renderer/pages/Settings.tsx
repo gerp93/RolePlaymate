@@ -13,13 +13,14 @@ export default function Settings() {
     null
   );
   const [dbBusy, setDbBusy] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const [ollamaHost, setOllamaHostState] = useState<{ host: string; isDefault: boolean; defaultHost: string } | null>(
     null
   );
   const [ollamaHostDraft, setOllamaHostDraft] = useState('');
   const [ollamaBusy, setOllamaBusy] = useState(false);
-  const [ollamaMessage, setOllamaMessage] = useState<string | null>(null);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
 
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -54,6 +55,15 @@ export default function Settings() {
     }
   }
 
+  async function handleShowDbInFolder() {
+    setDbError(null);
+    try {
+      await window.electronAPI.dbLocation.showInFolder();
+    } catch (err) {
+      setDbError(err instanceof Error ? err.message : 'Could not open the database folder.');
+    }
+  }
+
   async function handleUseExistingFile() {
     const picked = await window.electronAPI.dbLocation.browseExisting();
     if (!picked) return;
@@ -74,15 +84,19 @@ export default function Settings() {
     await window.electronAPI.dbLocation.resetToDefault();
   }
 
-  async function handleSaveOllamaHost() {
+  async function persistOllamaHostIfChanged() {
+    const trimmed = ollamaHostDraft.trim();
+    if (!ollamaHost || !trimmed || trimmed === ollamaHost.host) return;
     setOllamaBusy(true);
-    setOllamaMessage(null);
+    setOllamaError(null);
     try {
-      await window.electronAPI.ollamaHost.set(ollamaHostDraft);
+      await window.electronAPI.ollamaHost.set(trimmed);
       const result = await window.electronAPI.ollamaHost.get();
       setOllamaHostState(result);
       setOllamaHostDraft(result.host);
-      setOllamaMessage('Saved.');
+    } catch (err) {
+      setOllamaError(err instanceof Error ? err.message : 'Invalid server URL.');
+      setOllamaHostDraft(ollamaHost.host);
     } finally {
       setOllamaBusy(false);
     }
@@ -90,13 +104,12 @@ export default function Settings() {
 
   async function handleResetOllamaHost() {
     setOllamaBusy(true);
-    setOllamaMessage(null);
+    setOllamaError(null);
     try {
       await window.electronAPI.ollamaHost.resetToDefault();
       const result = await window.electronAPI.ollamaHost.get();
       setOllamaHostState(result);
       setOllamaHostDraft(result.host);
-      setOllamaMessage('Reset to default.');
     } finally {
       setOllamaBusy(false);
     }
@@ -299,6 +312,9 @@ export default function Settings() {
               <button className="btn" disabled={dbBusy} onClick={handleCreateNewLocation}>
                 Create New File Here…
               </button>
+              <button className="btn" disabled={dbBusy} onClick={() => void handleShowDbInFolder()}>
+                Show in Explorer
+              </button>
               {!dbLocation.isDefault && (
                 <button className="btn" disabled={dbBusy} onClick={handleResetToDefault}>
                   Reset to Default
@@ -308,6 +324,11 @@ export default function Settings() {
             {dbBusy && (
               <p className="text-muted" style={{ fontSize: 13, marginTop: 8 }}>
                 Restarting RolePlaymate to load the new location…
+              </p>
+            )}
+            {dbError && (
+              <p style={{ color: 'var(--color-accent-red)', fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                {dbError}
               </p>
             )}
           </>
@@ -327,31 +348,31 @@ export default function Settings() {
               <LimitedInput
                 value={ollamaHostDraft}
                 limit={FIELD_LIMITS.url}
-                onChange={(e) => setOllamaHostDraft(e.target.value)}
+                onChange={(e) => {
+                  setOllamaHostDraft(e.target.value);
+                  setOllamaError(null);
+                }}
+                onBlur={() => void persistOllamaHostIfChanged()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
                 placeholder={ollamaHost.defaultHost}
                 style={{ maxWidth: 300, fontFamily: 'monospace', fontSize: 12 }}
               />
               <p className="text-muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 0 }}>
-                *default is {ollamaHost.defaultHost}
+                *Ollama&apos;s default is {ollamaHost.defaultHost}
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                className="btn"
-                disabled={ollamaBusy || !ollamaHostDraft.trim() || ollamaHostDraft === ollamaHost.host}
-                onClick={() => void handleSaveOllamaHost()}
-              >
-                Save
-              </button>
-              {!ollamaHost.isDefault && (
+            {!ollamaHost.isDefault && (
+              <div style={{ marginTop: 8 }}>
                 <button className="btn" disabled={ollamaBusy} onClick={() => void handleResetOllamaHost()}>
                   Reset to Default
                 </button>
-              )}
-            </div>
-            {ollamaMessage && (
-              <p className="text-muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
-                {ollamaMessage}
+              </div>
+            )}
+            {ollamaError && (
+              <p style={{ color: 'var(--color-accent-red)', fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                {ollamaError}
               </p>
             )}
           </>

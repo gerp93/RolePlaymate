@@ -6,7 +6,7 @@ import './Layout.css';
 
 const NAV_ITEMS = [
   { to: '/chat', label: 'Chat', end: false },
-  { to: '/', label: 'Characters', end: true },
+  { to: '/characters', label: 'Characters', end: true },
   { to: '/personas', label: 'Personas', end: false },
   { to: '/world-books', label: 'World Books', end: false },
   { to: '/prompt-tuning', label: 'Prompt Tuning', end: false },
