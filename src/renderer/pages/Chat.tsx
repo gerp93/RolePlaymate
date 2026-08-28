@@ -70,6 +70,9 @@ export default function Chat() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => getStoredBoolean(SIDEBAR_COLLAPSED_KEY));
   const [model, setModel] = useState('');
   const [samplers, setSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
+  // This model's tuned defaults (Model Tuning settings page), kept separately from `samplers`
+  // so a manual tweak doesn't overwrite what "reset" should go back to.
+  const [defaultSamplers, setDefaultSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
   const [showDebug, setShowDebug] = useState(false);
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [showMemories, setShowMemories] = useState(false);
@@ -85,7 +88,11 @@ export default function Chat() {
     if (!model) return;
     let cancelled = false;
     void window.electronAPI.modelTuning.getEffective(model).then((effective) => {
-      if (!cancelled) setSamplers({ temperature: effective.temperature, maxTokens: effective.maxTokens });
+      if (!cancelled) {
+        const next = { temperature: effective.temperature, maxTokens: effective.maxTokens };
+        setSamplers(next);
+        setDefaultSamplers(next);
+      }
     });
     return () => {
       cancelled = true;
@@ -489,6 +496,14 @@ export default function Chat() {
                     Pick a character{visiblePersonas.length > 0 ? ', a persona' : ''} and a model, then start a
                     chat.
                   </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary chat-start-btn"
+                    disabled={!characterId || !model}
+                    onClick={() => void startConversation()}
+                  >
+                    Start Chat
+                  </button>
                 </div>
               )}
 
@@ -530,17 +545,6 @@ export default function Chat() {
                     </option>
                   ))}
                 </select>
-
-                {!conversationId && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={!characterId || !model}
-                    onClick={() => void startConversation()}
-                  >
-                    Start chat
-                  </button>
-                )}
 
                 {conversationId && (
                   <button
@@ -609,6 +613,15 @@ export default function Chat() {
                       value={samplers.temperature}
                       onChange={(e) => setSamplers({ ...samplers, temperature: Number(e.target.value) })}
                     />
+                    <button
+                      type="button"
+                      className="chat-slider-reset"
+                      title={`Reset to default (${defaultSamplers.temperature.toFixed(2)})`}
+                      disabled={samplers.temperature === defaultSamplers.temperature}
+                      onClick={() => setSamplers((s) => ({ ...s, temperature: defaultSamplers.temperature }))}
+                    >
+                      ↺
+                    </button>
                   </label>
 
                   <label className="chat-slider">
@@ -621,6 +634,15 @@ export default function Chat() {
                       value={samplers.maxTokens}
                       onChange={(e) => setSamplers({ ...samplers, maxTokens: Number(e.target.value) })}
                     />
+                    <button
+                      type="button"
+                      className="chat-slider-reset"
+                      title={`Reset to default (${defaultSamplers.maxTokens})`}
+                      disabled={samplers.maxTokens === defaultSamplers.maxTokens}
+                      onClick={() => setSamplers((s) => ({ ...s, maxTokens: defaultSamplers.maxTokens }))}
+                    >
+                      ↺
+                    </button>
                   </label>
                 </div>
               )}

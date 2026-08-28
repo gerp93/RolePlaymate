@@ -427,6 +427,13 @@
   justify-content: center;
 }
 
+.chat-start-btn {
+  font-size: 18px;
+  font-weight: 700;
+  padding: 14px 32px;
+  border-radius: var(--radius);
+}
+
 /* --- bubble: a fixed-size avatar tile fused into the bubble's corner ----------------------
    Not stretched to the bubble's height (that fought the text layout and clipped it) -- a
    constant-size rounded-square tile, sized independently of however tall the message turns
@@ -696,12 +703,45 @@ img.chat-bubble-avatar-panel {
   flex-wrap: wrap;
 }
 
-.chat-slider {
+/* Two classes of higher specificity than the generic ".chat-column label" column-stacking
+   rule (which would otherwise win on specificity and force this onto multiple lines) --
+   label text, value, slider, and reset button all stay in one row. */
+.chat-column .chat-slider {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: var(--color-text-muted);
+  flex: 1 1 200px;
+}
+
+.chat-slider input[type='range'] {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-slider-reset {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+.chat-slider-reset:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.chat-slider-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .chat-slider output {
