@@ -87,10 +87,10 @@ import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 
-// Packaged builds resolve app.getPath('userData') from build.productName ("RolePlaymate"),
-// while `electron .` in dev resolves it from package.json's "name" ("roleplaymate") -- pin it
-// so both modes always read/write the same data folder instead of silently diverging.
-app.setName('roleplaymate');
+// Packaged builds normally derive userData from productName ("RolePlaymate") while `electron .`
+// uses package.json "name" -- pin packaged to roleplaymate for a stable folder name. Dev uses
+// roleplaymate-dev with its own app-config.json and default db; nothing is copied from release.
+app.setName(app.isPackaged ? 'roleplaymate' : 'roleplaymate-dev');
 
 // Portrait <img> tags load through this instead of a raw `file://` src. Electron refuses to
 // load `file://` subresources from a page whose own origin isn't `file:` -- true of the dev
