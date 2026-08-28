@@ -1,6 +1,7 @@
 import { ConversationService } from '../database/conversationService';
 import { PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
+import { ScenarioService } from '../database/scenarioService';
 import { scanLore, splitByScope } from './loreMatcher';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
 import {
@@ -102,6 +103,11 @@ export interface GenerateRequest {
 export interface GenerateResult {
   message: Message;
   debug: ChatDebugInfo;
+  /** The real, persisted user turn this reply answers -- set by `generate` (a fresh insert)
+   * and `editPriorUserMessage` (an in-place rewrite) so the renderer can reconcile its
+   * optimistic copy with what's actually in the database. Absent for `continueAsCharacter`
+   * (no user message involved) and `regenerate` (doesn't touch one). */
+  userMessage?: Message;
 }
 
 /** Same shape as GenerateRequest minus `userMessage` -- see ChatSessionManager.continueAsCharacter. */
@@ -144,8 +150,19 @@ export class ChatSessionManager {
     private prompts: PromptBuilder,
     private ollama: OllamaClient,
     private lorebooks: LorebookService,
-    private modelSamplers: ModelSamplerService
+    private modelSamplers: ModelSamplerService,
+    private scenarios: ScenarioService
   ) {}
+
+  /** Resolves a conversation's selected scenario (if any) into the text `buildSystemPrompt`
+   * needs -- the one place this lookup happens, so every generation path (generate,
+   * editPriorUserMessage, continueAsCharacter, reconstructPending, suggestReply) stays
+   * internally consistent without threading scenarioId through each request type. */
+  private getScenarioContent(conversationId: string): string | null {
+    const conversation = this.conversations.getConversation(conversationId);
+    if (!conversation?.scenarioId) return null;
+    return this.scenarios.getActiveContent(conversation.scenarioId);
+  }
 
   /**
    * Loads history from the database on first use, so reopening a conversation resumes it.
@@ -204,9 +221,13 @@ export class ChatSessionManager {
       const persona = conversation.userPersonaId
         ? this.conversations.getPersona(conversation.userPersonaId)
         : null;
+      const scenarioContent = conversation.scenarioId
+        ? this.scenarios.getActiveContent(conversation.scenarioId)
+        : null;
       const built = this.prompts.buildSystemPrompt(conversation.characterId, {
         personaName: persona?.name,
         personaBackground: persona?.background,
+        scenarioContent,
       });
       return {
         userMessage,
@@ -335,6 +356,7 @@ export class ChatSessionManager {
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
+      scenarioContent: this.getScenarioContent(request.conversationId),
       directions: request.directions,
       memories: memoryTexts,
       worldLore,
@@ -348,7 +370,7 @@ export class ChatSessionManager {
     ];
     const options = toOllamaOptions(samplers, built.stopPhrases);
 
-    this.conversations.appendMessage({
+    const userMessage = this.conversations.appendMessage({
       conversationId: request.conversationId,
       role: 'user',
       content: request.userMessage,
@@ -414,7 +436,7 @@ export class ChatSessionManager {
         shouldExtract: request.extractMemories !== false,
       };
 
-      return { message, debug };
+      return { message, debug, userMessage };
     } finally {
       // Always cleared, on success, error, and cancellation alike. The source left its
       // equivalent flag set when generation threw, which stuck the UI in "generating"
@@ -537,6 +559,167 @@ export class ChatSessionManager {
   }
 
   /**
+   * Rewrites the user message that led to the *pending* assistant reply, then regenerates
+   * that reply from scratch against the edited text -- for fixing a typo, or more usefully,
+   * changing what was said and letting the character react to the new version instead.
+   *
+   * Deliberately restricted to the pending turn's own user message, the same boundary
+   * `editMessage`/`chooseVariant` already enforce: anything earlier already has a reply after
+   * it, and silently rewriting it would need to redo everything downstream to stay consistent.
+   * Unlike `regenerate` (a resample of the same question), this rebuilds retrieval, lore, and
+   * the system prompt fresh against the new text -- what's relevant to the new version of the
+   * message may not be what was relevant to the old one. The reply still lands as a new variant
+   * on the same assistant message, so the previous answer stays reachable through the variant
+   * switcher.
+   */
+  async editPriorUserMessage(
+    request: GenerateRequest & { messageId: string },
+    onToken: (text: string) => void
+  ): Promise<GenerateResult> {
+    const session = this.getSession(request.conversationId);
+    if (session.abort) {
+      throw new Error('A response is already being generated for this conversation');
+    }
+    const pending = session.pending;
+    if (!pending || pending.userMessage === null) {
+      throw new Error('Only the message that led to the current pending reply can be edited this way');
+    }
+
+    const transcript = this.conversations.getMessages(request.conversationId);
+    const priorUserMessage = transcript.at(-2);
+    if (
+      !priorUserMessage ||
+      priorUserMessage.id !== request.messageId ||
+      priorUserMessage.role !== 'user' ||
+      transcript.at(-1)?.id !== pending.assistantMessageId
+    ) {
+      throw new Error('Only the message that led to the current pending reply can be edited this way');
+    }
+
+    const trimmed = request.userMessage.trim();
+    if (!trimmed) {
+      throw new Error('Message cannot be empty');
+    }
+
+    const samplers = {
+      ...this.modelSamplers.getEffective(request.model, DEFAULT_SAMPLERS),
+      ...request.samplers,
+    };
+    const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+    // Not finalizePending -- this turn isn't being moved past, it's being redone in place.
+    const historyTurns = session.history.slice(-historyLimit);
+
+    const retrieval = await this.retrieve(
+      request.conversationId,
+      trimmed,
+      request.memories,
+      request.memoryOptions
+    );
+    const memoryTexts = retrieval
+      ? retrieval.result.selected.map((entry) => entry.memory.content)
+      : (request.memories ?? []);
+
+    const characterLore = scanLore(this.lorebooks.getEntriesForCharacter(request.characterId), historyTurns, trimmed);
+    const personaLoreResult = request.personaId
+      ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, trimmed)
+      : null;
+
+    const { world: worldLore, personal: personalLore } = splitByScope(characterLore.selected);
+    const personaLore = personaLoreResult?.selected ?? [];
+
+    const lore = personaLoreResult
+      ? {
+          selected: [...characterLore.selected, ...personaLoreResult.selected],
+          rejected: [...characterLore.rejected, ...personaLoreResult.rejected],
+          consideredCount: characterLore.consideredCount + personaLoreResult.consideredCount,
+          budgetTokensUsed: characterLore.budgetTokensUsed + personaLoreResult.budgetTokensUsed,
+          budgetTokensMax: characterLore.budgetTokensMax + personaLoreResult.budgetTokensMax,
+          scanText: characterLore.scanText,
+        }
+      : characterLore;
+
+    const built = this.prompts.buildSystemPrompt(request.characterId, {
+      personaName: request.personaName,
+      personaBackground: request.personaBackground,
+      scenarioContent: this.getScenarioContent(request.conversationId),
+      directions: request.directions,
+      memories: memoryTexts,
+      worldLore,
+      personalLore,
+      personaLore,
+    });
+    const messages: OllamaChatMessage[] = [
+      ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
+      ...historyTurns,
+      { role: 'user' as const, content: trimmed },
+    ];
+    const options = toOllamaOptions(samplers, built.stopPhrases);
+
+    const userMessage = this.conversations.updateMessageContent(priorUserMessage.id, trimmed);
+
+    const controller = new AbortController();
+    session.abort = controller;
+
+    try {
+      const result = await this.ollama.chat({
+        model: request.model,
+        messages,
+        options,
+        signal: controller.signal,
+        onToken,
+      });
+      const content = result.content.trim();
+
+      const debug: ChatDebugInfo = {
+        baseSystemPrompt: built.baseSystemPrompt,
+        characterInstructions: built.characterInstructions,
+        personaName: request.personaName ?? '',
+        personaBackground: request.personaBackground ?? '',
+        directions: request.directions ?? '',
+        memories: memoryTexts,
+        retrieval: retrieval?.result ?? null,
+        lore,
+        systemPrompt: built.prompt,
+        userMessage: trimmed,
+        historyTurns,
+        historyLength: historyTurns.length,
+        fullPrompt: renderMessagesForDebug(messages),
+        stopPhrases: built.stopPhrases,
+        rawResponse: result.content,
+        cleanedResponse: content,
+        inputTokens: result.promptEvalCount,
+        outputTokens: result.evalCount,
+      };
+      session.lastDebug = debug;
+
+      // Same backfill as regenerate/editMessage: a message from before redo support has no
+      // variant of its own yet, so the reply this is about to replace would otherwise be lost.
+      if (this.conversations.getVariants(pending.assistantMessageId).length === 0) {
+        const current = this.conversations.getMessage(pending.assistantMessageId);
+        if (current) this.conversations.addVariant(pending.assistantMessageId, current.content);
+      }
+
+      const variant = this.conversations.addVariant(pending.assistantMessageId, content, request.model, debug);
+      const message = this.conversations.selectVariant(pending.assistantMessageId, variant.id);
+
+      this.conversations.updateConversationModel(request.conversationId, request.model);
+
+      session.pending = {
+        userMessage: trimmed,
+        assistantMessageId: pending.assistantMessageId,
+        model: request.model,
+        systemPrompt: built.prompt,
+        stopPhrases: built.stopPhrases,
+        shouldExtract: request.extractMemories !== false,
+      };
+
+      return { message, debug, userMessage };
+    } finally {
+      session.abort = null;
+    }
+  }
+
+  /**
    * Appends another assistant message with no new user message in between -- lets the
    * character take a second (or third...) turn on its own, for when the user wants the scene
    * to keep moving without having to type something first. Structurally this is `generate()`
@@ -609,6 +792,7 @@ export class ChatSessionManager {
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
+      scenarioContent: this.getScenarioContent(request.conversationId),
       directions,
       memories: memoryTexts,
       worldLore,
@@ -757,13 +941,20 @@ export class ChatSessionManager {
       .slice(-historyLimit);
     const recentTurns = transcript.map((m) => ({ role: m.role, content: m.content }));
 
-    // The persona's own memories should colour what they'd say next, same as a character's
-    // personal history colours its replies -- scanned the same way generate() does.
-    const personaLore = personaId
-      ? scanLore(this.lorebooks.getEntriesForPersona(personaId), recentTurns, '').selected
+    // Unlike generate(), also pulls in world books attached to the persona itself -- this is
+    // the one place that's meant to surface. See getEntriesForPersonaWithWorldBooks.
+    const personaEntries = personaId
+      ? scanLore(this.lorebooks.getEntriesForPersonaWithWorldBooks(personaId), recentTurns, '').selected
       : [];
+    const { world: personaWorldLore, personal: personaLore } = splitByScope(personaEntries);
 
-    const built = this.prompts.buildSystemPrompt(characterId, { personaName, personaBackground, personaLore });
+    const built = this.prompts.buildSystemPrompt(characterId, {
+      personaName,
+      personaBackground,
+      scenarioContent: this.getScenarioContent(conversationId),
+      personaLore,
+      worldLore: personaWorldLore,
+    });
 
     return suggestPersonaReply(this.ollama, model, {
       characterContext: built.prompt,

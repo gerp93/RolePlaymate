@@ -45,6 +45,10 @@ export interface UseChatSession {
    * Records the edit as a new variant rather than overwriting, so the original stays reachable
    * through the same variant switcher a redo would leave behind. */
   editLastMessage: (content: string) => Promise<void>;
+  /** Rewrites the user message behind the pending reply and regenerates that reply against the
+   * new text -- see chatSession.editPriorUserMessage. Only valid for that one message; anything
+   * earlier already has a reply after it. */
+  editPriorMessage: (messageId: string, content: string, input: ContinueInput) => Promise<void>;
   /** Deletes the conversation's last message (LIFO -- see conversationService.deleteMessage).
    * Any memories extracted from it go with it. */
   deleteLastMessage: () => Promise<void>;
@@ -140,16 +144,30 @@ export function useChatSession(conversationId: string | null): UseChatSession {
           setStreamingText((current) => current + event.text);
           break;
         case 'done':
-          setMessages((current) => [...current, event.message]);
+          setMessages((current) => {
+            // Swap the optimistic (fake-id) user row for the real, DB-backed one before
+            // appending the reply -- otherwise that fake id lingers in state until the next
+            // full reload, which breaks anything that needs to address this message by id
+            // (e.g. editing it later).
+            const withRealUser = event.userMessage
+              ? current.map((m) => (m.id.startsWith('pending-') ? event.userMessage! : m))
+              : current;
+            return [...withRealUser, event.message];
+          });
           setDebug(event.debug);
           setStreamingText('');
           setIsGenerating(false);
           activeStreamId.current = null;
           break;
         case 'variantDone':
-          setMessages((current) =>
-            current.map((m) => (m.id === event.message.id ? event.message : m))
-          );
+          setMessages((current) => {
+            const withRealUser = event.userMessage
+              ? current.map((m) =>
+                  m.id === event.userMessage!.id || m.id.startsWith('pending-') ? event.userMessage! : m
+                )
+              : current;
+            return withRealUser.map((m) => (m.id === event.message.id ? event.message : m));
+          });
           setDebug(event.debug);
           setStreamingText('');
           setIsGenerating(false);
@@ -299,6 +317,42 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     [conversationId, messages]
   );
 
+  const editPriorMessage = useCallback(
+    async (messageId: string, content: string, input: ContinueInput) => {
+      if (!conversationId || isGenerating || !content.trim()) return;
+
+      setError(null);
+      setStreamingText('');
+      setIsGenerating(true);
+      setIsRegenerating(true);
+
+      // Show the new wording immediately, same optimistic-update convention `send` uses --
+      // the 'variantDone' handler reconciles this with the trimmed, persisted version once it
+      // lands.
+      setMessages((current) => current.map((m) => (m.id === messageId ? { ...m, content } : m)));
+
+      try {
+        const { streamId } = await window.electronAPI.chat.editPriorMessage({
+          conversationId,
+          messageId,
+          message: content,
+          characterId: input.characterId,
+          model: input.model,
+          personaId: input.personaId,
+          directions: input.directions,
+          samplers: input.samplers,
+        });
+        activeStreamId.current = streamId;
+      } catch (editError) {
+        setError((editError as Error).message);
+        setIsGenerating(false);
+        setIsRegenerating(false);
+        activeStreamId.current = null;
+      }
+    },
+    [conversationId, isGenerating]
+  );
+
   const deleteLastMessage = useCallback(async () => {
     if (!conversationId || isGenerating) return;
     const last = messages[messages.length - 1];
@@ -334,6 +388,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     regenerate,
     selectVariant,
     editLastMessage,
+    editPriorMessage,
     deleteLastMessage,
     cancel,
     dismissError,

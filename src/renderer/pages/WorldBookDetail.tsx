@@ -5,6 +5,8 @@ import LoreEntryEditor from '../components/lore/LoreEntryEditor';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import '../components/lore/Lore.css';
 
 export default function WorldBookDetail() {
@@ -90,8 +92,9 @@ export default function WorldBookDetail() {
         </Link>
 
         <div className="page-header">
-          <input
+          <LimitedInput
             value={nameDraft}
+            limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
             onBlur={handleNameBlur}
             style={{
@@ -100,11 +103,11 @@ export default function WorldBookDetail() {
               border: 'none',
               background: 'transparent',
               padding: '4px 0',
-              width: '100%',
             }}
           />
-          <input
+          <LimitedInput
             value={descriptionDraft}
+            limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}
             onBlur={handleDescriptionBlur}
             placeholder="Short description..."
@@ -114,7 +117,6 @@ export default function WorldBookDetail() {
               border: 'none',
               background: 'transparent',
               padding: '2px 0 4px',
-              width: '100%',
             }}
           />
         </div>
@@ -122,8 +124,10 @@ export default function WorldBookDetail() {
         <div className="lore-entries-header">
           <h2>Entries</h2>
           <div className="lore-new-entry">
-            <input
+            <LimitedInput
               value={newEntryTitle}
+              limit={FIELD_LIMITS.name}
+              compactCount
               placeholder="New entry title…"
               onChange={(e) => setNewEntryTitle(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void addEntry()}

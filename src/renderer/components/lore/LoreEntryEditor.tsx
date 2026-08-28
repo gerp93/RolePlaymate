@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LorebookEntry, LorebookEntryVersion } from '../../../shared/types/lorebook';
+import LimitedInput from '../LimitedInput';
+import LimitedTextarea from '../LimitedTextarea';
+import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 
 interface Props {
   entry: LorebookEntry;
@@ -111,8 +114,9 @@ export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) 
         <div className="lore-entry-body">
           <div className="field">
             <label htmlFor={`title-${entry.id}`}>Title</label>
-            <input
+            <LimitedInput
               id={`title-${entry.id}`}
+              limit={FIELD_LIMITS.name}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onBlur={() => void saveSettings()}
@@ -123,8 +127,9 @@ export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) 
             <label htmlFor={`keys-${entry.id}`}>
               Trigger keys <span className="text-muted">— comma separated, whole-word match</span>
             </label>
-            <input
+            <LimitedInput
               id={`keys-${entry.id}`}
+              limit={FIELD_LIMITS.loreKeys}
               value={keys}
               disabled={alwaysOn}
               placeholder="Kestrel, the ship, cargo hauler"
@@ -182,8 +187,9 @@ export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) 
                 </span>
               )}
             </label>
-            <textarea
+            <LimitedTextarea
               id={`content-${entry.id}`}
+              limit={FIELD_LIMITS.loreText}
               rows={4}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

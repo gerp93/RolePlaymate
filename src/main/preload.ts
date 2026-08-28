@@ -41,6 +41,41 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setCover: (id: string) => ipcRenderer.invoke('personaImages:setCover', id),
   },
 
+  scenarios: {
+    getByCharacter: (characterId: string) => ipcRenderer.invoke('scenarios:getByCharacter', characterId),
+    getById: (id: string) => ipcRenderer.invoke('scenarios:getById', id),
+    create: (input: { characterId: string; name: string; description?: string }) => ipcRenderer.invoke('scenarios:create', input),
+    update: (id: string, input: { name?: string; description?: string }) => ipcRenderer.invoke('scenarios:update', id, input),
+    setHidden: (id: string, hidden: boolean) => ipcRenderer.invoke('scenarios:setHidden', id, hidden),
+    delete: (id: string) => ipcRenderer.invoke('scenarios:delete', id),
+  },
+
+  scenarioVersions: {
+    getByScenario: (scenarioId: string) => ipcRenderer.invoke('scenarioVersions:getByScenario', scenarioId),
+    create: (scenarioId: string, content: string) =>
+      ipcRenderer.invoke('scenarioVersions:create', scenarioId, content),
+    updateContent: (id: string, content: string) =>
+      ipcRenderer.invoke('scenarioVersions:updateContent', id, content),
+    delete: (id: string) => ipcRenderer.invoke('scenarioVersions:delete', id),
+  },
+
+  scenarioGreetingVersions: {
+    getByScenario: (scenarioId: string) =>
+      ipcRenderer.invoke('scenarioGreetingVersions:getByScenario', scenarioId),
+    create: (scenarioId: string, content: string) =>
+      ipcRenderer.invoke('scenarioGreetingVersions:create', scenarioId, content),
+    updateContent: (id: string, content: string) =>
+      ipcRenderer.invoke('scenarioGreetingVersions:updateContent', id, content),
+    delete: (id: string) => ipcRenderer.invoke('scenarioGreetingVersions:delete', id),
+  },
+
+  scenarioImages: {
+    getByScenario: (scenarioId: string) => ipcRenderer.invoke('scenarioImages:getByScenario', scenarioId),
+    add: (scenarioId: string) => ipcRenderer.invoke('scenarioImages:add', scenarioId),
+    remove: (id: string) => ipcRenderer.invoke('scenarioImages:remove', id),
+    setCover: (id: string) => ipcRenderer.invoke('scenarioImages:setCover', id),
+  },
+
   dbLocation: {
     get: () => ipcRenderer.invoke('dbLocation:get'),
     browseExisting: () => ipcRenderer.invoke('dbLocation:browseExisting'),
@@ -49,13 +84,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('dbLocation:resetToDefault'),
   },
 
+  ollamaHost: {
+    get: () => ipcRenderer.invoke('ollamaHost:get'),
+    set: (host: string) => ipcRenderer.invoke('ollamaHost:set', host),
+    resetToDefault: () => ipcRenderer.invoke('ollamaHost:resetToDefault'),
+  },
+
   chat: {
     previewSystemPrompt: (
       characterId: string,
-      options?: { personaId?: string; directions?: string; memories?: string[] }
+      options?: { personaId?: string; scenarioId?: string; directions?: string; memories?: string[] }
     ) => ipcRenderer.invoke('chat:previewSystemPrompt', characterId, options),
     send: (request: unknown) => ipcRenderer.invoke('chat:send', request),
     regenerate: (request: unknown) => ipcRenderer.invoke('chat:regenerate', request),
+    editPriorMessage: (request: unknown) => ipcRenderer.invoke('chat:editPriorMessage', request),
     continue: (request: unknown) => ipcRenderer.invoke('chat:continue', request),
     getVariants: (messageId: string) => ipcRenderer.invoke('chat:getVariants', messageId),
     getMessageDebug: (messageId: string) => ipcRenderer.invoke('chat:getMessageDebug', messageId),
@@ -107,6 +149,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('lorebooks:delete', id),
     chooseImage: () => ipcRenderer.invoke('lorebooks:chooseImage'),
     importFromHtml: () => ipcRenderer.invoke('lorebooks:importFromHtml'),
+    importFromJson: () => ipcRenderer.invoke('lorebooks:importFromJson'),
     clone: (id: string) => ipcRenderer.invoke('lorebooks:clone', id),
     getPersonalBook: (characterId: string) =>
       ipcRenderer.invoke('lorebooks:getPersonalBook', characterId),
@@ -118,6 +161,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('lorebooks:attach', characterId, lorebookId),
     detach: (characterId: string, lorebookId: string) =>
       ipcRenderer.invoke('lorebooks:detach', characterId, lorebookId),
+    getForPersona: (personaId: string) => ipcRenderer.invoke('lorebooks:getForPersona', personaId),
+    attachToPersona: (personaId: string, lorebookId: string) =>
+      ipcRenderer.invoke('lorebooks:attachToPersona', personaId, lorebookId),
+    detachFromPersona: (personaId: string, lorebookId: string) =>
+      ipcRenderer.invoke('lorebooks:detachFromPersona', personaId, lorebookId),
   },
 
   loreEntries: {
@@ -125,6 +173,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (input: unknown) => ipcRenderer.invoke('loreEntries:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('loreEntries:update', id, input),
     delete: (id: string) => ipcRenderer.invoke('loreEntries:delete', id),
+    importFromJson: (lorebookId: string) => ipcRenderer.invoke('loreEntries:importFromJson', lorebookId),
   },
 
   loreVersions: {
@@ -142,8 +191,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getMessages: (id: string) => ipcRenderer.invoke('conversations:getMessages', id),
     create: (input: unknown) => ipcRenderer.invoke('conversations:create', input),
     rename: (id: string, title: string) => ipcRenderer.invoke('conversations:rename', id, title),
+    setPersona: (id: string, userPersonaId: string | null) =>
+      ipcRenderer.invoke('conversations:setPersona', id, userPersonaId),
+    setScenario: (id: string, scenarioId: string | null) =>
+      ipcRenderer.invoke('conversations:setScenario', id, scenarioId),
     setImageMode: (id: string, input: unknown) => ipcRenderer.invoke('conversations:setImageMode', id, input),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
+    deleteDraft: (id: string) => ipcRenderer.invoke('conversations:deleteDraft', id),
+    purgeDrafts: (exceptId?: string) => ipcRenderer.invoke('conversations:purgeDrafts', exceptId),
   },
 
   ollama: {
@@ -159,6 +214,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (model: string, partial: unknown) => ipcRenderer.invoke('modelTuning:update', model, partial),
     resetField: (model: string, field: string) => ipcRenderer.invoke('modelTuning:resetField', model, field),
     resetAll: (model: string) => ipcRenderer.invoke('modelTuning:resetAll', model),
+    setEnabled: (model: string, enabled: boolean) => ipcRenderer.invoke('modelTuning:setEnabled', model, enabled),
   },
 
   personas: {

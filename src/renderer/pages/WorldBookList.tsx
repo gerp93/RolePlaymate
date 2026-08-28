@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Lorebook } from '../../shared/types/lorebook';
+import { WORLD_BOOK_IMPORT_SAMPLE } from '../../shared/lorebookImportSample';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
+import LorebookJsonImport from '../components/lore/LorebookJsonImport';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import '../components/lore/Lore.css';
 
 // Same sizing rule as the character grid, so the three library pages read as one family.
 function tileMinWidthFor(count: number): number {
@@ -68,6 +73,22 @@ export default function WorldBookList() {
     }
   }
 
+  async function handleImportJson() {
+    setImporting(true);
+    try {
+      const result = await window.electronAPI.lorebooks.importFromJson();
+      if (!result) return;
+      await load();
+      if (result.warnings.length > 0) {
+        alert(`Imported "${result.lorebook.name}" with some gaps:\n\n${result.warnings.join('\n')}`);
+      }
+    } catch (err) {
+      alert(`Import failed: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.preventDefault();
     e.stopPropagation();
@@ -97,23 +118,32 @@ export default function WorldBookList() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
+        <div className="lore-new-book lore-new-book-stacked">
+          <LimitedInput
             value={newName}
+            limit={FIELD_LIMITS.name}
             onChange={(e) => {
               setNewName(e.target.value);
               if (nameError) setNameError(false);
             }}
             onKeyDown={(e) => e.key === 'Enter' && void handleCreate()}
             placeholder="New world book name"
-            style={{ flex: 1 }}
           />
-          <button className="btn btn-primary" onClick={() => void handleCreate()}>
-            Create World Book
-          </button>
-          <button className="btn" disabled={importing} onClick={() => void handleImport()}>
-            {importing ? 'Importing…' : 'Import from HTML…'}
-          </button>
+          <LorebookJsonImport
+            importing={importing}
+            onImport={() => void handleImportJson()}
+            sample={WORLD_BOOK_IMPORT_SAMPLE}
+            prepend={
+              <>
+                <button className="btn btn-primary" onClick={() => void handleCreate()}>
+                  Create World Book
+                </button>
+                <button className="btn" disabled={importing} onClick={() => void handleImport()}>
+                  {importing ? 'Importing…' : 'Import from HTML…'}
+                </button>
+              </>
+            }
+          />
         </div>
         {nameError && <p className="field-error">Enter a name before creating a world book.</p>}
       </div>
@@ -142,14 +172,14 @@ export default function WorldBookList() {
                   {book.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
                   {book.description && <p className="character-card-snippet">{book.description}</p>}
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      className="btn"
-                      disabled={!book.isHidden && !hiddenUnlocked}
-                      title={!book.isHidden && !hiddenUnlocked ? 'Unlock from the topbar to hide items' : undefined}
-                      onClick={(e) => void handleToggleHidden(e, book.id, book.isHidden)}
-                    >
-                      {book.isHidden ? 'Unhide' : 'Hide'}
-                    </button>
+                    {hiddenUnlocked && (
+                      <button
+                        className="btn"
+                        onClick={(e) => void handleToggleHidden(e, book.id, book.isHidden)}
+                      >
+                        {book.isHidden ? 'Unhide' : 'Hide'}
+                      </button>
+                    )}
                     <button className="btn" onClick={(e) => void handleClone(e, book.id)}>
                       Clone
                     </button>

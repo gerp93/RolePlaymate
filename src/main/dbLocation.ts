@@ -1,9 +1,15 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
+import { DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
 
+// Despite the filename (kept for the db-path exports below, the original reason this file
+// exists), this is also the app's one general-purpose accessor for app-config.json -- the
+// Ollama host override lives in the same file for the same reason the db path does: a small,
+// user-editable setting that isn't worth its own config file or a database row.
 interface AppConfig {
   dbPath?: string;
+  ollamaHost?: string;
 }
 
 function getConfigPath(): string {
@@ -67,5 +73,31 @@ export function setDbPath(newPath: string): void {
 export function resetToDefaultDbPath(): void {
   const config = readConfig();
   delete config.dbPath;
+  writeConfig(config);
+}
+
+/** The Ollama server URL the app will actually call: a user-configured one, or the
+ * localhost:11434 default. Read fresh on every call (via OllamaClient's hostProvider) rather
+ * than cached, so a change here takes effect on the next request with no restart needed. */
+export function getEffectiveOllamaHost(): string {
+  const configured = readConfig().ollamaHost;
+  return configured && configured.trim() !== '' ? configured.trim() : DEFAULT_OLLAMA_HOST;
+}
+
+export function isUsingDefaultOllamaHost(): boolean {
+  return !readConfig().ollamaHost;
+}
+
+/** Points the app at a different Ollama server -- a different port on the same machine, or a
+ * server running on another machine entirely (a remote GPU box, WSL, ...). No validation that
+ * anything is actually listening there; the usual "Ollama isn't reachable" banner covers that
+ * the same way it already does for the default host. */
+export function setOllamaHost(host: string): void {
+  writeConfig({ ...readConfig(), ollamaHost: host.trim() });
+}
+
+export function resetOllamaHost(): void {
+  const config = readConfig();
+  delete config.ollamaHost;
   writeConfig(config);
 }

@@ -16,6 +16,16 @@ import {
 export interface PromptBuildOptions {
   personaName?: string | null;
   personaBackground?: string | null;
+  /** The conversation's selected Scenario's active version text, already resolved by the
+   * caller (ChatSessionManager) from conversation.scenarioId -- see shared/types/scenario.ts.
+   * Scenario used to be a fixed CharacterField; this replaces that direct field lookup. */
+  scenarioContent?: string | null;
+  /** The conversation's selected Scenario's active greeting text, already resolved the same
+   * way as scenarioContent. Only meaningful when starting a conversation -- greeting seeds the
+   * first assistant message rather than appearing in the system prompt itself (see `greeting`
+   * on BuiltPrompt). No scenario selected means no greeting; greeting used to be a fixed
+   * CharacterField, replaced the same way scenario's own text was. */
+  scenarioGreeting?: string | null;
   /** Already-retrieved memory texts, rendered as a bulleted list into the memory template. */
   memories?: string[];
   /** Per-turn scene instructions. Transient -- never stored on the conversation. */
@@ -141,7 +151,7 @@ export class PromptBuilder {
     const baseParts = [section('CHARACTER', identityLines.join('\n'))];
     const personality = resolve(fieldContent.personality ?? '');
     if (personality) baseParts.push(section('PERSONALITY', personality));
-    const scenario = resolve(fieldContent.scenario ?? '');
+    const scenario = resolve(options.scenarioContent ?? '');
     if (scenario) baseParts.push(section('SCENARIO', scenario));
     const dialogue = resolve(fieldContent.dialogue ?? '');
     // Labelled as examples, not as transcript, so the model treats it as style guidance
@@ -211,7 +221,7 @@ export class PromptBuilder {
       baseSystemPrompt,
       characterInstructions,
       stopPhrases: buildStopPhrases(character.name, personaName, stopSettings),
-      greeting: resolve(fieldContent.greeting ?? ''),
+      greeting: resolve(options.scenarioGreeting ?? ''),
     };
   }
 }

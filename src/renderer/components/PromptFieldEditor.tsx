@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { PromptFieldVersion, PromptTemplates } from '../../shared/types/promptTemplates';
 import VersionSwitcher from './VersionSwitcher';
+import LimitedTextarea from './LimitedTextarea';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 interface Props {
   fieldKey: keyof PromptTemplates;
@@ -171,12 +173,13 @@ export default function PromptFieldEditor({ fieldKey, label, when, tag }: Props)
       <div className="text-muted" style={{ fontFamily: 'monospace', fontSize: 13, padding: '2px 0' }} title="Fixed -- not editable">
         [{tag}]
       </div>
-      <textarea
+      <LimitedTextarea
         rows={rowsFor(draftContent)}
+        limit={FIELD_LIMITS.proseContent}
         value={draftContent}
         onChange={(e) => isEditable && handleContentChange(e.target.value)}
         readOnly={!isEditable}
-        style={{ fontFamily: 'monospace', fontSize: 13, width: '100%', resize: 'vertical', display: 'block' }}
+        style={{ fontFamily: 'monospace', fontSize: 13, resize: 'vertical', display: 'block' }}
       />
       <div className="text-muted" style={{ fontFamily: 'monospace', fontSize: 13, padding: '2px 0' }} title="Fixed -- not editable">
         [/{tag}]

@@ -14,3 +14,7 @@ export function getLastConversationId(): string | null {
 export function setLastConversationId(conversationId: string): void {
   localStorage.setItem(KEY, conversationId);
 }
+
+export function clearLastConversationId(): void {
+  localStorage.removeItem(KEY);
+}

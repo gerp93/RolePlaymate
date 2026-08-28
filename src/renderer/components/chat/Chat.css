@@ -14,7 +14,15 @@
 }
 
 .chat-page.sidebar-collapsed {
-  grid-template-columns: 40px 1fr;
+  grid-template-columns: 1fr;
+}
+
+.chat-page.right-sidebar-open {
+  grid-template-columns: 240px minmax(0, 1fr) min(420px, 34vw);
+}
+
+.chat-page.sidebar-collapsed.right-sidebar-open {
+  grid-template-columns: minmax(0, 1fr) min(420px, 34vw);
 }
 
 /* --- conversation sidebar ------------------------------------------------------------- */
@@ -27,11 +35,6 @@
   padding-right: 12px;
 }
 
-.chat-sidebar-collapsed {
-  padding-right: 0;
-  align-items: center;
-}
-
 .chat-sidebar-header {
   display: flex;
   align-items: center;
@@ -40,24 +43,38 @@
   margin-bottom: 8px;
 }
 
+.chat-sidebar-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .chat-sidebar-header h2 {
   font-size: 14px;
   margin: 0;
 }
 
 .chat-sidebar-collapse-btn {
-  background: none;
-  border: 1px solid var(--color-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius);
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 13px;
-  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
   flex-shrink: 0;
 }
 
 .chat-sidebar-collapse-btn:hover {
   background: var(--color-bg-hover);
+  border-color: var(--color-border);
   color: var(--color-text);
 }
 
@@ -106,6 +123,11 @@
 .chat-conversation-meta {
   font-size: 11px;
   color: var(--color-text-muted);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .chat-conversation-delete {
@@ -129,29 +151,113 @@
   min-height: 0;
   min-width: 0;
   /* The portrait-margins breakpoint below needs to react to how much width *this column*
-     actually has, not the window's -- the sidebar (240px expanded, 40px collapsed) eats a
-     different chunk out of the window depending on its own state, so a viewport-width media
-     query was going stale (toggle still visible, checked, with margins already squeezed out)
-     whenever the sidebar was expanded. A container query measures .chat-main itself. */
+     actually has, not the window's -- the sidebar (240px when expanded, gone when collapsed)
+     eats a different chunk out of the window depending on its own state, so a viewport-width
+     media query was going stale (toggle still visible, checked, with margins already squeezed
+     out) whenever the sidebar was expanded. A container query measures .chat-main itself. */
   container-type: inline-size;
   container-name: chat-main;
 }
 
+/* Fixed (not absolute) so it can sit flush against the actual window edge without dragging
+   .chat-main's own padding/margins along with it -- .chat-main keeps the page's normal left
+   margin and grows naturally; this button alone escapes that via the viewport-relative
+   positioning fixed gives it (no transformed ancestor between here and <body> to hijack that). */
+.chat-sidebar-reveal-btn {
+  position: fixed;
+  left: 0;
+  top: 74px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  box-shadow: 2px 0 10px color-mix(in srgb, var(--color-bg) 40%, transparent);
+  opacity: 0.9;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.chat-sidebar-reveal-btn:hover {
+  opacity: 1;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Mirror of .chat-sidebar-reveal-btn on the right edge -- opens memories + debug sidebar. */
+.chat-right-sidebar-reveal-btn {
+  position: fixed;
+  right: 0;
+  top: 74px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  box-shadow: -2px 0 10px color-mix(in srgb, var(--color-bg) 40%, transparent);
+  opacity: 0.9;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.chat-right-sidebar-reveal-btn:hover {
+  opacity: 1;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
 /* Three literal vertical columns, left to right: each one's own controls (name/select,
    image picker) and its own large portrait live in the SAME column div, not in two parallel
-   rows kept in visual sync via matching flex numbers. .chat-column-side and
-   .chat-column-center carry two states each -- grown (portraits showing, so the side columns
-   claim a 220px floor and the center caps at 900px) and default (portraits off or no
-   conversation yet, so the sides shrink to their content and the center just fills whatever's
-   left) -- chosen in Chat.tsx via the portraitsActive flag, same threshold the old
-   chat-conversation-capped class used. */
+   rows kept in visual sync via matching flex numbers. .chat-column-side-grown and
+   .chat-column-center-capped apply only while Show portraits is on; the container query
+   below collapses them when there isn't room. */
 .chat-columns {
   display: flex;
   align-items: stretch;
   gap: 16px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   padding-top: 12px;
+  --chat-margin-width: 220px;
+  --chat-center-min-width: 520px;
+  --chat-center-max-width: 960px;
+}
+
+/* Portrait rails flanking the transcript: center column gets a guaranteed floor and ceiling;
+   only once it hits the max do the two side tracks (minmax … 1fr) absorb extra width. Flex
+   couldn't express that without the center getting crushed whenever the sides had a larger
+   flex-basis. */
+.chat-columns:not(.chat-columns-no-margins) {
+  display: grid;
+  grid-template-columns:
+    minmax(var(--chat-margin-width), 1fr)
+    minmax(var(--chat-center-min-width), var(--chat-center-max-width))
+    minmax(var(--chat-margin-width), 1fr);
 }
 
 .chat-column {
@@ -164,21 +270,42 @@
 
 .chat-column-side {
   flex: 0 0 auto;
+  align-items: stretch;
 }
 
 .chat-column-side-grown {
-  flex: 1 1 220px;
-  min-width: 220px;
-}
-
-.chat-column-center {
-  flex: 1 1 400px;
   min-width: 0;
 }
 
+.chat-column-side-grown .chat-column-header,
+.chat-column-side-grown .image-picker,
+.chat-column-side-grown .chat-header-static {
+  width: 100%;
+}
+
+.chat-column-side-grown .image-picker-trigger,
+.chat-column-side-grown .chat-column-header select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-column-center {
+  flex: 1 1 0;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: chat-center;
+}
+
+/* Grid track above owns the min/max width while portraits are on. */
 .chat-column-center-capped {
-  flex: 999 1 400px;
-  max-width: 900px;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+}
+
+.chat-columns-no-margins .chat-column-center {
+  flex: 1 1 0;
+  max-width: none;
 }
 
 .chat-column-header {
@@ -194,15 +321,37 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-top: 4px;
   padding-top: 12px;
   border-top: 1px solid var(--color-border);
 }
 
-.chat-model-select {
-  flex: 1;
-  min-width: 160px;
+/* Model + Memories + Debug + More share the row evenly; message count stays fixed at the end. */
+.chat-settings-row > .start-screen-picker-toolbar,
+.chat-settings-row > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.chat-settings-row > .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.chat-settings-row .start-screen-picker-toolbar {
+  max-width: none;
+}
+
+.chat-settings-row .start-screen-picker-toolbar .start-picker-anchor,
+.chat-settings-row .start-screen-picker-toolbar .start-picker-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
 }
 
 .chat-more-toggle.active {
@@ -211,9 +360,147 @@
 
 .chat-settings-more {
   display: flex;
-  align-items: center;
-  gap: 16px;
   flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-settings-more-pickers {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Label over control, same footprint as every other dropdown in this row. */
+.chat-settings-more-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.chat-settings-more-col-persona {
+  flex: 1 1 0;
+  min-width: 140px;
+  max-width: 220px;
+}
+
+.chat-settings-more-label {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.chat-settings-more-col select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.chat-settings-more .start-screen-picker-more {
+  max-width: none;
+  width: 100%;
+}
+
+.chat-settings-more .start-screen-picker-more .start-picker-anchor,
+.chat-settings-more .start-screen-picker-more .start-picker-trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Beside the pickers on wide layouts: two equal rows matching their label+control height.
+   Below ~1050px chat-main width the block drops to its own line and stacks at natural height. */
+.chat-settings-more-sliders {
+  flex: 1 1 260px;
+  min-width: 240px;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 4px;
+}
+
+@container chat-center (max-width: 820px) {
+  .chat-settings-more-pickers {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .chat-settings-more-col {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .chat-settings-more-col-persona {
+    max-width: none;
+    min-width: 0;
+  }
+
+  .chat-settings-more-sliders {
+    flex-basis: 100%;
+    width: 100%;
+    min-width: 0;
+    grid-template-rows: auto auto;
+  }
+}
+
+/* Two pickers side-by-side still crush below ~400px; stack them full-width instead. */
+@container chat-center (max-width: 420px) {
+  .chat-settings-more-pickers {
+    flex-direction: column;
+  }
+
+  .chat-settings-more-col {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}
+
+.chat-settings-more .chat-settings-more-slider {
+  width: 100%;
+  margin: 0;
+  flex: none;
+  min-height: 0;
+  align-items: center;
+}
+
+.chat-settings-picker-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-settings-persona-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* A more modest footprint than the full-size start-screen version for use inline in a
+   toolbar/settings row -- still the same rich portrait+tier trigger and dropdown options
+   underneath, just without the hint block repeating the selection's subtext/detail below the
+   trigger (the options list already shows it; permanently duplicating it under a compact inline
+   control just eats vertical space in a settings row). */
+.start-screen-picker-compact {
+  max-width: 220px;
+}
+
+.start-screen-picker-compact .start-picker-selected-hint {
+  display: none;
 }
 
 .chat-column label {
@@ -240,6 +527,16 @@
   padding: 4px 0;
 }
 
+.chat-scenario-header {
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--color-text);
+  padding: 8px 12px 12px;
+}
+
 .chat-column select {
   background: var(--color-surface);
   color: var(--color-text);
@@ -255,17 +552,8 @@
   cursor: not-allowed;
 }
 
-.chat-debug-toggle.active,
 .chat-directions-toggle.active {
   background: var(--color-bg-hover);
-}
-
-.chat-portraits-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-text-muted);
 }
 
 /* --- image picker (character/persona avatar mode) -------------------------------------- */
@@ -325,6 +613,90 @@
   z-index: 40;
 }
 
+/* --- overlay variant: sits in a portrait's own corner instead of below it, see
+   .chat-portrait-margin -- lets the portrait fill the rest of the column's height instead of
+   losing a strip to a labeled dropdown underneath it. Spans the whole portrait (inset: 0)
+   rather than shrinking to the trigger button's own size, so the panel below can be pinned to
+   this wrapper's edges and never grow wider than the portrait itself -- pointer-events is
+   disabled here and re-enabled on the trigger/panel so the transparent span doesn't block
+   clicks on the portrait around them. */
+.image-picker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.image-picker-overlay-trigger {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+  cursor: pointer;
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--color-bg) 50%, transparent);
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+  pointer-events: auto;
+}
+
+/* Persona column (right portrait): trigger in the lower-left corner instead of lower-right. */
+.chat-portrait-margin-persona .image-picker-overlay-trigger {
+  left: 8px;
+  right: auto;
+}
+
+.image-picker-overlay-trigger:hover {
+  opacity: 1;
+}
+
+.image-picker-overlay-trigger .image-picker-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.image-picker-overlay-trigger .image-picker-thumb-random {
+  font-size: 14px;
+  border-radius: 50%;
+}
+
+/* Opens upward, pinned to both left and right edges of the portrait (its positioned parent,
+   .image-picker-overlay, spans inset: 0) -- the trigger sits at the bottom of the portrait with
+   nothing but screen edge below it, unlike the labeled trigger's panel which opens down into
+   normal document flow. Matching the portrait's own width (instead of the old max-content grid
+   anchored off the tiny trigger button) is what stops the grid from running past the portrait
+   into whatever sits beside it. Fewer, larger grid columns than the base .image-picker-panel
+   since this now flexes to a narrower column width.
+   `bottom` is a fixed offset (trigger's own 8px inset + 32px height + 4px gap), NOT `100%` --
+   100% would measure from the *wrapper's* bottom, but the wrapper now spans the whole portrait
+   (inset: 0), so that used to shove the panel above the entire portrait instead of just above
+   the trigger button sitting in its corner. */
+.image-picker-panel-overlay {
+  top: auto;
+  bottom: 44px;
+  left: 8px;
+  right: 8px;
+  margin-top: 0;
+  width: auto;
+  max-width: none;
+  grid-template-columns: repeat(3, 1fr);
+  pointer-events: auto;
+}
+
+.image-picker-panel-overlay .image-picker-option .image-picker-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
 .image-picker-option {
   display: flex;
   flex-direction: column;
@@ -370,14 +742,21 @@
    checkbox) -------------------------------------------------------------------------------- */
 
 .chat-portrait-margin {
-  /* Sits below this column's header block and fills whatever's left of the column's height.
-     Width comes from the column itself (.chat-column-side-grown's 220px floor), not from this
-     element -- unlike the old two-row layout, this is nested in a column flex container now,
-     so its own flex-basis governs height, not width. */
+  /* Sits below this column's header block and fills whatever's left of the column's height --
+     now the rest of it, since the image picker lives inside as an overlay (see
+     .image-picker-overlay) rather than as a labeled control underneath eating its own strip.
+     Width comes from the side column (.chat-column-side-grown's --chat-margin-width), not
+     from this element -- this is nested in a column flex container, so its own flex-basis
+     governs height, not width. position: relative anchors the overlay picker to this box's
+     own corner rather than the column's.
+     No overflow: hidden -- the rounded corners come from the <img> having its own
+     border-radius below instead of this box clipping a square image, specifically so the
+     overlay picker's popup (a child of this box) isn't clipped when it opens wider than this
+     narrow ~220px column, which it does (the grid of thumbnails needs more room than that). */
+  position: relative;
   flex: 1;
-  min-height: 220px;
+  min-height: var(--chat-margin-width);
   width: 100%;
-  overflow: hidden;
   border-radius: var(--radius);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -387,18 +766,34 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 
-/* Below this width there's no longer room for two 220px-minimum margins plus a usable
-   transcript (220 + 220 + the transcript's own 400px floor + two 16px gaps = 872px), so the
-   feature goes away rather than rendering squished -- both the toggle (nothing to offer) and
-   any already-open margins (nothing sensible to show). Keyed to .chat-main's own width (see
-   its container-type above), not the window's, so it tracks correctly whether the sidebar is
-   expanded or collapsed instead of going stale relative to whatever it measured on load. */
-@container chat-main (max-width: 880px) {
-  .chat-portraits-toggle,
-  .chat-portrait-margin {
+/* Below this width there's no longer room for two margin columns at --chat-margin-width plus
+   the center track's --chat-center-min-width and two column gaps (220*2 + 520 + 16*2 = 992px),
+   so the feature goes away rather than rendering squished. The whole side column goes, not just
+   the portrait inside it: its header and image picker exist to label and re-pick that portrait,
+   so leaving them behind strands controls that act on something no longer visible. Keyed to
+   .chat-main's own width (see its container-type above), not the window's, so it tracks
+   correctly whether the sidebar is expanded or collapsed instead of going stale relative to
+   whatever it measured on load. */
+@container chat-main (max-width: 1000px) {
+  .chat-settings-more-col-portraits,
+  .chat-column-side {
     display: none;
+  }
+
+  /* Side columns are gone but the 3-track grid still reserves 520px for the empty center
+     track, crushing the real center column into the first ~220px track. Collapse to flex. */
+  .chat-columns:not(.chat-columns-no-margins) {
+    display: flex;
+  }
+
+  .chat-column-center-capped {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
   }
 }
 
@@ -492,11 +887,38 @@ img.chat-bubble-avatar-panel {
   min-width: 0;
 }
 
+.chat-bubble-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .chat-bubble-name {
   font-size: calc(var(--chat-bubble-font-size, 18px) * 0.75);
   font-weight: 700;
   margin-bottom: 4px;
   color: var(--color-text-muted);
+}
+
+.chat-bubble-copy {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.5;
+}
+
+.chat-bubble:hover .chat-bubble-copy {
+  opacity: 1;
+}
+
+.chat-bubble-copy:hover {
+  color: var(--color-text);
 }
 
 .chat-bubble-user .chat-bubble-name {
@@ -756,9 +1178,25 @@ img.chat-bubble-avatar-panel {
   align-items: stretch;
 }
 
+.chat-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-directions-field {
+  width: 100%;
+}
+
+.chat-directions-field .chat-directions {
+  width: 100%;
+}
+
+.chat-composer-input .chat-input {
+  width: 100%;
+}
+
 .chat-input,
 .chat-directions {
-  flex: 1;
   background: var(--color-surface);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -799,20 +1237,80 @@ img.chat-bubble-avatar-panel {
   flex: 1;
 }
 
-.chat-footer {
-  padding-top: 8px;
-  font-size: 12px;
+/* Deliberately tiny/muted and tucked at the end of the settings row rather than its own
+   footer line -- a message count doesn't need the visual weight a dedicated banner gives it. */
+.chat-message-count {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 11px;
+  white-space: nowrap;
+  padding-left: 4px;
 }
 
-/* --- prompt debug console ------------------------------------------------------------- */
+/* --- right sidebar (memories + debug tabs) -------------------------------------------- */
 
-.chat-debug-panel {
-  width: 420px;
-  flex-shrink: 0;
-  overflow-y: auto;
+.chat-right-sidebar {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
   border-left: 1px solid var(--color-border);
   padding-left: 12px;
+}
+
+.chat-right-sidebar-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.chat-right-sidebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-right-sidebar-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-right-sidebar-tab:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.chat-right-sidebar-tab.active {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.chat-right-sidebar-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0 12px;
+}
+
+.chat-right-sidebar-panel-debug .debug-console-title {
+  display: none;
 }
 
 .debug-console-header {
@@ -981,12 +1479,6 @@ img.chat-bubble-avatar-panel {
 
 /* --- memories ------------------------------------------------------------------------- */
 
-.chat-memories-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .chat-memory-badge {
   font-size: 10px;
   min-width: 16px;
@@ -995,6 +1487,11 @@ img.chat-bubble-avatar-panel {
   background: var(--color-accent-blue);
   color: var(--color-bg);
   font-weight: 700;
+}
+
+.memories-summary {
+  font-size: 12px;
+  margin: 0 0 8px;
 }
 
 .memories-backdrop {
@@ -1164,4 +1661,627 @@ img.chat-bubble-avatar-panel {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* --- new-chat title screen -------------------------------------------------------------- */
+
+.chat-main-start {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.chat-start-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 24px 16px 32px;
+  gap: 20px;
+  overflow-y: auto;
+}
+
+.chat-start-header {
+  text-align: center;
+  max-width: 520px;
+}
+
+.chat-start-eyebrow {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent-blue);
+}
+
+.chat-start-title {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 4vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.chat-start-subtitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.chat-start-constellation {
+  position: relative;
+  width: min(560px, 100%);
+  height: min(580px, 78vh);
+  flex-shrink: 0;
+  overflow: visible;
+  /* Model panel sits below the bubble center; reserve that space in layout flow. */
+  margin-bottom: calc(var(--bubble-portrait) / 2 + var(--panel-gap) + 56px);
+
+  /* Bubble centers — keep in sync with SVG viewBox coords (0–100). */
+  --bubble-portrait: 148px;
+  --bubble-portrait-scenario: calc(var(--bubble-portrait) * 0.75);
+  --panel-gap: 14px;
+  --ax-char: 18%;
+  --ay-char: 16%;
+  --ax-persona: 82%;
+  --ay-persona: 16%;
+  --ax-scenario: 5%;
+  --ay-scenario: 58%;
+  --ax-model: 50%;
+  --ay-model: 80%;
+}
+
+.chat-start-constellation-has-scenario {
+  height: min(640px, 82vh);
+  width: min(600px, 100%);
+}
+
+.chat-start-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.chat-start-bubble {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+}
+
+.chat-start-bubble-character {
+  left: var(--ax-char);
+  top: var(--ay-char);
+}
+
+.chat-start-bubble-persona {
+  left: var(--ax-persona);
+  top: var(--ay-persona);
+}
+
+.chat-start-bubble-scenario {
+  left: var(--ax-scenario);
+  top: var(--ay-scenario);
+}
+
+.chat-start-bubble-scenario .chat-start-portrait {
+  width: var(--bubble-portrait-scenario);
+  height: var(--bubble-portrait-scenario);
+}
+
+.chat-start-bubble-scenario .chat-start-portrait-glyph {
+  font-size: 40px;
+}
+
+.chat-start-bubble-model {
+  left: var(--ax-model);
+  top: var(--ay-model);
+}
+
+.chat-start-panel {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  width: min(200px, 38vw);
+  text-align: center;
+}
+
+.chat-start-panel-character {
+  left: var(--ax-char);
+  top: calc(var(--ay-char) + var(--bubble-portrait) / 2 + var(--panel-gap));
+}
+
+.chat-start-panel-persona {
+  left: var(--ax-persona);
+  top: calc(var(--ay-char) + var(--bubble-portrait) / 2 + var(--panel-gap));
+}
+
+.chat-start-panel-scenario {
+  left: var(--ax-scenario);
+  top: calc(var(--ay-scenario) + var(--bubble-portrait-scenario) / 2 + var(--panel-gap));
+}
+
+.chat-start-panel-model {
+  left: var(--ax-model);
+  top: calc(var(--ay-model) + var(--bubble-portrait) / 2 + var(--panel-gap));
+  width: min(360px, 94vw);
+}
+
+.chat-start-line {
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition:
+    opacity 0.35s ease,
+    stroke-width 0.35s ease,
+    stroke 0.35s ease,
+    filter 0.35s ease;
+}
+
+.chat-start-line-in,
+.chat-start-line-bridge,
+.chat-start-line-trunk,
+.chat-start-line-branch {
+  stroke: color-mix(in srgb, var(--color-accent-blue) 28%, transparent);
+  stroke-width: 1.25;
+  opacity: 0.5;
+}
+
+.chat-start-line-out {
+  stroke: color-mix(in srgb, var(--color-accent-blue) 22%, transparent);
+  stroke-width: 1.5;
+  opacity: 0.45;
+}
+
+.chat-start-line-in.chat-start-line-active,
+.chat-start-line-bridge.chat-start-line-active,
+.chat-start-line-trunk.chat-start-line-active,
+.chat-start-line-branch.chat-start-line-active {
+  stroke: var(--color-accent-blue);
+  stroke-width: 2.75;
+  opacity: 1;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-accent-blue) 70%, transparent));
+}
+
+.chat-start-line-out.chat-start-line-active,
+.chat-start-line-trunk.chat-start-line-out.chat-start-line-active {
+  stroke: var(--color-accent-green);
+  stroke-width: 3;
+  opacity: 1;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--color-accent-green) 65%, transparent));
+}
+
+.chat-start-hub-ring {
+  fill: none;
+  stroke: var(--color-accent-blue);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.3;
+  transition: opacity 0.35s ease, stroke-width 0.35s ease;
+}
+
+.chat-start-hub-ring-active {
+  opacity: 1;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-accent-blue) 65%, transparent));
+}
+
+.chat-start-merge-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--color-accent-blue);
+  opacity: 0.35;
+  z-index: 1;
+}
+
+.chat-start-screen-ready .chat-start-merge-dot {
+  opacity: 0.7;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-accent-blue) 50%, transparent);
+}
+
+.chat-start-portrait {
+  width: var(--bubble-portrait);
+  height: var(--bubble-portrait);
+  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-accent-blue) 30%, transparent),
+    0 12px 32px color-mix(in srgb, var(--color-bg) 65%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+}
+
+.chat-start-screen-ready .chat-start-bubble-character .chat-start-portrait,
+.chat-start-screen-ready .chat-start-bubble-persona .chat-start-portrait,
+.chat-start-screen-ready .chat-start-bubble-model .chat-start-portrait,
+.chat-start-screen-ready .chat-start-bubble-scenario:not(.chat-start-bubble-unselected) .chat-start-portrait {
+  border-color: var(--color-accent-blue);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent-blue) 35%, transparent),
+    0 0 32px color-mix(in srgb, var(--color-accent-blue) 28%, transparent),
+    0 14px 36px color-mix(in srgb, var(--color-bg) 70%, transparent);
+}
+
+.chat-start-portrait-unselected {
+  opacity: 0.42;
+  filter: grayscale(0.85);
+  border-color: var(--color-border) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-border) 80%, transparent),
+    0 8px 20px color-mix(in srgb, var(--color-bg) 75%, transparent) !important;
+}
+
+.chat-start-portrait-unselected .chat-start-portrait-glyph {
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+.chat-start-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-start-portrait-fallback,
+.chat-start-portrait-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-weight: 800;
+  color: var(--color-text-muted);
+}
+
+.chat-start-portrait-fallback {
+  font-size: 48px;
+}
+
+.chat-start-portrait-glyph {
+  font-size: 52px;
+  line-height: 1;
+  color: var(--color-accent-blue);
+}
+
+.chat-start-node-role {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* --- start screen rich pickers ------------------------------------------------------- */
+
+.start-screen-picker {
+  position: relative;
+  width: 100%;
+  max-width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.start-picker-anchor {
+  position: relative;
+  width: 100%;
+}
+
+.start-screen-picker-scenario {
+  max-width: 168px;
+}
+
+.start-screen-picker-model {
+  max-width: none;
+  width: 100%;
+}
+
+.start-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.start-picker-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.start-picker-trigger-label {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-picker-selected-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  text-align: center;
+}
+
+.start-picker-selected-hint .start-picker-detail {
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.start-picker-selected-subtext {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  display: block;
+}
+
+.start-picker-placeholder {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+}
+
+.start-picker-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+.start-picker-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+}
+
+.start-picker-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-hover);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.start-picker-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.start-picker-label-row .start-picker-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.start-picker-tier {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.start-picker-label {
+  display: block;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-picker-detail {
+  display: block;
+  font-family: monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-picker-subtext {
+  display: block;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-picker-panel {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  /* Pinned to the anchor's own left/right edges (not centered+widened past it) so the panel
+     never spills into whatever sits beside a narrow container -- the side columns and the
+     compact toolbar pickers are well under the old 260px floor this used to force. */
+  left: 0;
+  right: 0;
+  width: auto;
+  max-width: 92vw;
+  max-height: min(280px, 42vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--color-bg) 55%, transparent);
+  z-index: 50;
+}
+
+.start-picker-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.start-picker-option:hover {
+  background: var(--color-bg-hover);
+}
+
+.start-picker-option.active {
+  background: color-mix(in srgb, var(--color-primary-action) 14%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--color-primary-action) 35%, transparent);
+}
+
+.start-picker-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.start-picker-option .start-picker-subtext {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.start-picker-badges {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.chat-start-select {
+  width: 100%;
+  max-width: 168px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.chat-start-select-model {
+  max-width: 180px;
+}
+
+.chat-start-select-scenario {
+  max-width: 130px;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.chat-start-node-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  max-width: 160px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chat-start-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+
+.chat-start-btn {
+  font-size: 18px;
+  font-weight: 700;
+  padding: 14px 40px;
+  border-radius: var(--radius);
+  letter-spacing: 0.02em;
+}
+
+.chat-start-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 520px) {
+  .chat-start-constellation {
+    --bubble-portrait: 120px;
+    height: min(500px, 74vh);
+  }
+
+  .chat-start-constellation-has-scenario {
+    height: min(580px, 80vh);
+  }
+
+  .chat-start-portrait-fallback {
+    font-size: 40px;
+  }
+
+  .chat-start-portrait-glyph {
+    font-size: 44px;
+  }
 }

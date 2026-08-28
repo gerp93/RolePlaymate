@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { PersonaBackgroundVersion } from '../../shared/types/userPersona';
 import VersionSwitcher from './VersionSwitcher';
 import FormattedContent from './FormattedContent';
+import LimitedTextarea from './LimitedTextarea';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 interface Props {
   personaId: string;
@@ -159,9 +161,10 @@ export default function PersonaBackgroundEditor({ personaId }: Props) {
       </div>
 
       {mode === 'edit' ? (
-        <textarea
+        <LimitedTextarea
           ref={textareaRef}
           className="content-textarea"
+          limit={FIELD_LIMITS.proseContent}
           value={draftContent}
           onChange={(e) => isEditable && handleContentChange(e.target.value)}
           onBlur={exitEditMode}

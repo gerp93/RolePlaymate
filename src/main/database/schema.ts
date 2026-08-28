@@ -85,6 +85,76 @@ export function initDatabase(dbPath?: string): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_character_images_character ON character_images(character_id);
 
+    -- A character's own list of settings/situations, each independently versioned and
+    -- hideable -- see scenarioService.ts. Split out from character_fields (where "scenario"
+    -- used to be a fixed single slot) so a character's permanent traits (personality/dialogue)
+    -- don't have to be duplicated onto a whole new character just to reuse them somewhere else.
+    CREATE TABLE IF NOT EXISTS scenarios (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_hidden INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scenarios_character ON scenarios(character_id);
+
+    -- Mirrors character_field_versions exactly (self-healing "active always tracks latest").
+    CREATE TABLE IF NOT EXISTS scenario_versions (
+      id TEXT PRIMARY KEY,
+      scenario_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE,
+      UNIQUE (scenario_id, version_number)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_per_scenario
+      ON scenario_versions(scenario_id) WHERE is_active = 1;
+    CREATE INDEX IF NOT EXISTS idx_scenario_versions_scenario ON scenario_versions(scenario_id);
+
+    -- A scenario's own opening greeting -- same shape and versioning rules as
+    -- scenario_versions, just a second independent text per scenario rather than reusing that
+    -- table with a discriminator column. Greeting used to be a fixed CharacterField like
+    -- scenario was; it's scenario-specific for the same reason scenario itself is (what a
+    -- character opens with legitimately differs by situation). No scenario selected means no
+    -- greeting, same as no scenario means no [SCENARIO] section.
+    CREATE TABLE IF NOT EXISTS scenario_greeting_versions (
+      id TEXT PRIMARY KEY,
+      scenario_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE,
+      UNIQUE (scenario_id, version_number)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_per_scenario_greeting
+      ON scenario_greeting_versions(scenario_id) WHERE is_active = 1;
+    CREATE INDEX IF NOT EXISTS idx_scenario_greeting_versions_scenario
+      ON scenario_greeting_versions(scenario_id);
+
+    -- Mirrors character_images exactly -- a scenario's own gallery, joined into that chat's
+    -- image picker only while the scenario is selected (see Chat.tsx).
+    CREATE TABLE IF NOT EXISTS scenario_images (
+      id TEXT PRIMARY KEY,
+      scenario_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scenario_images_scenario ON scenario_images(scenario_id);
+
     -- One row (id = 1): the salted hash of the "reveal hidden items" PIN, plus key_salt, used
     -- to derive the AES-256 key that actually encrypts hidden characters/personas/lorebooks at
     -- rest -- see securityService.ts. The PIN itself is never stored, and the verification
@@ -147,6 +217,12 @@ export function initDatabase(dbPath?: string): DatabaseSync {
       top_p REAL,
       top_k INTEGER,
       repetition_penalty REAL,
+      -- Whether this model is offered in Chat's model dropdown. Ollama lists everything
+      -- installed regardless of why (other apps, testing, a size that's not actually wanted
+      -- here) -- this lets the Model Tuning page exclude the irrelevant ones without touching
+      -- what's actually installed. Defaults on: a model with no row at all is enabled, same
+      -- convention every other field on this table already uses.
+      enabled INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL
     );
   `);
@@ -162,6 +238,7 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'messages', 'model', 'TEXT');
   ensureColumn(db, 'message_variants', 'model', 'TEXT');
   ensureColumn(db, 'message_variants', 'debug', 'TEXT');
+  ensureColumn(db, 'model_sampler_defaults', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'conversation_memories', 'message_id', 'TEXT REFERENCES messages(id) ON DELETE CASCADE');
   ensureColumn(db, 'lorebooks', 'owner_persona_id', 'TEXT REFERENCES user_personas(id) ON DELETE CASCADE');
   ensureColumn(db, 'lorebooks', 'image', 'TEXT');
@@ -170,6 +247,9 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'conversations', 'character_image_id', 'TEXT REFERENCES character_images(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'persona_image_mode', `TEXT NOT NULL DEFAULT 'carousel'`);
   ensureColumn(db, 'conversations', 'persona_image_id', 'TEXT REFERENCES persona_images(id) ON DELETE SET NULL');
+  ensureColumn(db, 'conversations', 'scenario_id', 'TEXT REFERENCES scenarios(id) ON DELETE SET NULL');
+  ensureColumn(db, 'conversations', 'scenario_image_id', 'TEXT REFERENCES scenario_images(id) ON DELETE SET NULL');
+  ensureColumn(db, 'scenarios', 'description', 'TEXT');
   // The non-static mode was originally called 'random' (reroll per message); it's since become
   // 'carousel' (auto-cycle every 10s in the margin portraits). ensureColumn only sets the
   // DEFAULT for brand-new databases, so existing rows written under the old default need a
@@ -182,6 +262,8 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   migrateLegacyPortraits(db);
   migrateLegacyPersonaAvatars(db);
   migratePersonaBackgroundToVersions(db);
+  migrateCharacterScenarioFieldToScenarios(db);
+  migrateCharacterGreetingFieldToScenarios(db);
   seedDefaultPin(db);
   backfillKeySalt(db);
   seedPromptFields(db);
@@ -263,6 +345,89 @@ function migratePersonaBackgroundToVersions(db: DatabaseSync): void {
   );
   for (const row of rows) {
     insert.run(uuidv4(), row.id, row.background ?? '', row.createdAt, row.createdAt);
+  }
+}
+
+/** One-time upgrade path: characters created before Scenario became its own 1-to-N entity had
+ * their scenario text in a fixed, single-slot `character_fields` row (field_type = 'scenario').
+ * Adopt that text as each such character's first Scenario, named "Default" (skipping any
+ * character that already has a scenarios row, so this is safe to run on every startup), and
+ * carry over the character's *current* is_hidden as the scenario's starting hidden state so
+ * nothing becomes more or less visible than it already was. The old character_fields/
+ * character_field_versions rows are left in place, unused -- same convention as the legacy
+ * `characters.image_url` column above; scenario is no longer in FIELD_TYPES so nothing reads
+ * them going forward, and there's no need to risk a destructive delete during migration. */
+function migrateCharacterScenarioFieldToScenarios(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT c.id as characterId, c.is_hidden as isHidden, v.content as content, c.created_at as createdAt
+       FROM characters c
+       JOIN character_fields f ON f.character_id = c.id AND f.field_type = 'scenario'
+       JOIN character_field_versions v ON v.field_id = f.id AND v.is_active = 1
+       WHERE v.content IS NOT NULL AND trim(v.content) != ''
+         AND c.id NOT IN (SELECT DISTINCT character_id FROM scenarios)`
+    )
+    .all() as unknown as { characterId: string; isHidden: number; content: string; createdAt: string }[];
+
+  const insertScenario = db.prepare(
+    `INSERT INTO scenarios (id, character_id, name, is_hidden, created_at, updated_at)
+     VALUES (?, ?, 'Default', ?, ?, ?)`
+  );
+  const insertVersion = db.prepare(
+    `INSERT INTO scenario_versions (id, scenario_id, version_number, content, is_active, created_at, updated_at)
+     VALUES (?, ?, 1, ?, 1, ?, ?)`
+  );
+
+  for (const row of rows) {
+    const scenarioId = uuidv4();
+    insertScenario.run(scenarioId, row.characterId, row.isHidden, row.createdAt, row.createdAt);
+    insertVersion.run(uuidv4(), scenarioId, row.content, row.createdAt, row.createdAt);
+  }
+}
+
+/** One-time upgrade path: greeting used to be a fixed CharacterField too; it's now
+ * scenario-specific, the same as scenario text (see scenario_greeting_versions). Must run
+ * after migrateCharacterScenarioFieldToScenarios: a character with both old scenario and
+ * greeting text gets both folded into the *same* migrated "Default" scenario rather than two
+ * separate ones -- this reuses that character's first existing scenario if it has one, only
+ * creating a fresh "Default" when it doesn't (a character with greeting but no scenario text).
+ * Gated on "no scenario of this character has a greeting version yet" rather than "character
+ * has zero scenarios" (unlike the migration above), so it stays idempotent even though it may
+ * be attaching to an already-existing scenario rather than one it creates itself. */
+function migrateCharacterGreetingFieldToScenarios(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT c.id as characterId, c.is_hidden as isHidden, v.content as content, c.created_at as createdAt
+       FROM characters c
+       JOIN character_fields f ON f.character_id = c.id AND f.field_type = 'greeting'
+       JOIN character_field_versions v ON v.field_id = f.id AND v.is_active = 1
+       WHERE v.content IS NOT NULL AND trim(v.content) != ''
+         AND c.id NOT IN (
+           SELECT s.character_id FROM scenarios s
+           JOIN scenario_greeting_versions gv ON gv.scenario_id = s.id
+         )`
+    )
+    .all() as unknown as { characterId: string; isHidden: number; content: string; createdAt: string }[];
+
+  const insertScenario = db.prepare(
+    `INSERT INTO scenarios (id, character_id, name, is_hidden, created_at, updated_at)
+     VALUES (?, ?, 'Default', ?, ?, ?)`
+  );
+  const insertGreeting = db.prepare(
+    `INSERT INTO scenario_greeting_versions (id, scenario_id, version_number, content, is_active, created_at, updated_at)
+     VALUES (?, ?, 1, ?, 1, ?, ?)`
+  );
+  const findExistingScenario = db.prepare(
+    `SELECT id FROM scenarios WHERE character_id = ? ORDER BY created_at LIMIT 1`
+  );
+
+  for (const row of rows) {
+    const existing = findExistingScenario.get(row.characterId) as { id: string } | undefined;
+    const scenarioId = existing?.id ?? uuidv4();
+    if (!existing) {
+      insertScenario.run(scenarioId, row.characterId, row.isHidden, row.createdAt, row.createdAt);
+    }
+    insertGreeting.run(uuidv4(), scenarioId, row.content, row.createdAt, row.createdAt);
   }
 }
 

@@ -7,6 +7,8 @@ import PersonaBackgroundEditor from '../components/PersonaBackgroundEditor';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 export default function PersonaDetail() {
   const { personaId } = useParams<{ personaId: string }>();
@@ -110,8 +112,9 @@ export default function PersonaDetail() {
     <div className="character-detail-page">
       <div className="character-detail-fields">
         <div className="page-header">
-          <input
+          <LimitedInput
             value={nameDraft}
+            limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
             onBlur={handleNameBlur}
             style={{
@@ -120,11 +123,11 @@ export default function PersonaDetail() {
               border: 'none',
               background: 'transparent',
               padding: '4px 0',
-              width: '100%',
             }}
           />
-          <input
+          <LimitedInput
             value={descriptionDraft}
+            limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}
             onBlur={handleDescriptionBlur}
             placeholder="A short note for your own reference..."
@@ -134,7 +137,6 @@ export default function PersonaDetail() {
               border: 'none',
               background: 'transparent',
               padding: '2px 0 4px',
-              width: '100%',
             }}
           />
         </div>

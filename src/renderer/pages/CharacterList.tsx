@@ -4,6 +4,8 @@ import { Character } from '../../shared/types/character';
 import { CharacterImage } from '../../shared/types/characterImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
 // instead of shrinking further.
@@ -103,16 +105,18 @@ export default function CharacterList() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <LimitedInput
             value={newName}
+            limit={FIELD_LIMITS.name}
+            compactCount
+            fieldClassName="limited-field-grow"
             onChange={(e) => {
               setNewName(e.target.value);
               if (nameError) setNameError(false);
             }}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             placeholder="New character name"
-            style={{ flex: 1 }}
           />
           <button className="btn btn-primary" onClick={handleCreate}>
             Create Character
@@ -146,14 +150,14 @@ export default function CharacterList() {
                     <p className="character-card-name">{character.name}</p>
                     {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        className="btn"
-                        disabled={!character.isHidden && !hiddenUnlocked}
-                        title={!character.isHidden && !hiddenUnlocked ? 'Unlock from the topbar to hide items' : undefined}
-                        onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
-                      >
-                        {character.isHidden ? 'Unhide' : 'Hide'}
-                      </button>
+                      {hiddenUnlocked && (
+                        <button
+                          className="btn"
+                          onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
+                        >
+                          {character.isHidden ? 'Unhide' : 'Hide'}
+                        </button>
+                      )}
                       <button className="btn" onClick={(e) => handleClone(e, character.id)}>
                         Clone
                       </button>

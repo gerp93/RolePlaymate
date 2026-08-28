@@ -76,7 +76,8 @@ skipped when blank: character (name/description/personality/scenario/example
 dialogue) -> character instructions -> persona (only when the persona has BOTH
 a name and a background) -> retrieved memories -> per-turn directions. The
 greeting is deliberately *not* in the system prompt; it seeds the conversation
-as its first assistant message.
+as its first assistant message. The scenario section's text is no longer a
+character field -- see "Scenarios" below.
 
 `{{char}}`/`{{user}}` macros in field content are substituted before the text
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
@@ -103,6 +104,48 @@ Errors are never persisted as assistant turns. The user's message is written
 before generation (so a crash can't lose it), the reply only on success -- the
 source wrote its error text into the transcript, poisoning the context of every
 later turn.
+
+## Scenarios
+
+A character's settings/situations -- owned 1-to-N by that character (not
+shared many-to-many like world lorebooks), each independently versioned and
+independently hideable via the same PIN-lock as characters/personas/
+lorebooks. Split out from what used to be two fixed, single-slot
+`CharacterField`s (`scenario` and `greeting`) so a character's permanent
+traits (personality/dialogue) never have to be duplicated onto a new
+character just to give it a different setting. `FieldType` no longer
+includes either; an existing character's old scenario/greeting text is
+migrated on first startup after upgrade into a "Default" Scenario
+(`migrateCharacterScenarioFieldToScenarios`/
+`migrateCharacterGreetingFieldToScenarios` in `schema.ts`, the latter
+reusing the former's scenario when one was already created for that
+character) -- the old `character_fields` rows are left in place, unused.
+
+A scenario carries **two** independently versioned texts -- its descriptive
+content (`scenario_versions`) and its own opening greeting
+(`scenario_greeting_versions`), same self-healing "active tracks latest"
+model as character fields, just two tables instead of one shared by a
+`field_type` column (see `ScenarioService`, which runs both through one
+generic version-CRUD engine parameterized on table name). A conversation
+picks at most one Scenario (`conversations.scenario_id`, nullable -- no
+scenario behaves exactly like a character with none, including no opening
+greeting: greeting only ever comes from a selected scenario now). Both
+texts are resolved by `ChatSessionManager`/`conversations:create`
+internally from the conversation row or the create request wherever needed,
+and fed into `buildSystemPrompt` as `scenarioContent`/`scenarioGreeting`
+rather than pulled from a character field. The scenario itself is swappable
+mid-conversation, same as persona; greeting only ever applies at conversation
+start (it seeds the first message, not the system prompt), so switching
+scenarios later never retroactively injects a new greeting.
+
+Each scenario has its own 0-to-many image gallery (`scenario_images`, mirrors
+`character_images`). While a scenario is selected, its images join --
+never replace -- the character's own in that conversation's image picker; if
+the scenario has a cover image, it becomes that conversation's default
+portrait (`conversationService.setConversationScenario` seeds
+`character_image_mode`/`scenario_image_id` from it). `character_image_id` and
+`scenario_image_id` pin the same portrait slot and are mutually exclusive --
+picking one clears the other.
 
 ## Memories
 
@@ -138,13 +181,20 @@ every turn. Not ported from KVGenius -- it never built one.
 
 Two scopes share `lorebook_entries` but mean different things in the prompt.
 **World** books are shared setting material, many-to-many with characters via
-`character_lorebooks`, injected as common knowledge. **Personal** books hold
-one character's private history, owned outright by that character, injected as
-things *that character* remembers and explicitly not common knowledge -- a model
-told "the mutiny happened" as world fact lets anyone reference it, whereas
-"you remember the mutiny" keeps it in the character's head. Personal books
-refuse to be attached elsewhere, and are edited on the character page rather
-than beside the shared books, so private history never looks attachable.
+`character_lorebooks` *and*, separately, with personas via `persona_lorebooks`,
+injected as common knowledge. **Personal** books hold one character's (or
+persona's) private history, owned outright by that character/persona, injected
+as things *that character* remembers and explicitly not common knowledge -- a
+model told "the mutiny happened" as world fact lets anyone reference it,
+whereas "you remember the mutiny" keeps it in the character's head. Personal
+books refuse to be attached elsewhere, and are edited on the character/persona
+page rather than beside the shared books, so private history never looks
+attachable.
+
+Character and persona world-book attachments are independent lists. A book
+attached only to the persona reaches "Suggest reply" (`getEntriesForPersonaWithWorldBooks`)
+but not the character's normal reply (`getEntriesForCharacter`) -- attach it to
+both to give the character access too.
 
 Entry text is versioned exactly like character fields, including the rule that
 **active always tracks the latest version** -- there is no "activate an older

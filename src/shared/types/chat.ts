@@ -26,6 +26,9 @@ export interface ModelSamplerDefaults {
   topP: number | null;
   topK: number | null;
   repetitionPenalty: number | null;
+  /** Whether this model is offered in Chat's model dropdown -- true for a model with no row at
+   * all, same "no row means untouched" convention every other field here uses. */
+  enabled: boolean;
   updatedAt: string;
 }
 
@@ -87,6 +90,16 @@ export interface ChatSendRequest {
   samplers?: Partial<SamplerParams>;
 }
 
+export interface ChatEditPriorMessageRequest {
+  conversationId: string;
+  /** The user message being rewritten -- must be the one that led to the current pending
+   * (redoable) assistant reply, or the request is rejected. */
+  messageId: string;
+  message: string;
+  directions?: string;
+  samplers?: Partial<SamplerParams>;
+}
+
 export interface ChatRegenerateRequest {
   conversationId: string;
   samplers?: Partial<SamplerParams>;
@@ -111,6 +124,11 @@ export type ChatStreamEvent =
       type: 'done';
       message: Message;
       debug: ChatDebugInfo;
+      /** The real, DB-backed user turn this reply answers, when this event followed one --
+       * absent for a continuation (no new user message). Lets the renderer replace its
+       * optimistic `pending-*`-id row with the authoritative one instead of that fake id
+       * lingering in state until the next full reload. */
+      userMessage?: Message;
     }
   | {
       streamId: string;
@@ -119,6 +137,10 @@ export type ChatStreamEvent =
       type: 'variantDone';
       message: Message;
       debug: ChatDebugInfo;
+      /** Set only when this redo also rewrote the user message behind it (see
+       * chat:editPriorMessage) -- the message as actually persisted, for the same reason
+       * 'done' carries one. */
+      userMessage?: Message;
     }
   | { streamId: string; type: 'error'; message: string }
   | { streamId: string; type: 'cancelled' };

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { PromptTemplates, StopPhraseSettings, TEMPLATE_TAGS, TEMPLATE_FIELD_KEYS } from '../../shared/types/promptTemplates';
 import PromptFieldEditor from '../components/PromptFieldEditor';
+import LimitedTextarea from '../components/LimitedTextarea';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 type TemplateField = keyof PromptTemplates;
 
@@ -187,11 +189,12 @@ export default function PromptSettings() {
               leading blank line is significant (e.g. an empty first line before "User:" stops it
               from firing mid-sentence).
             </p>
-            <textarea
+            <LimitedTextarea
               rows={rowsFor(stopPhrasesDraft)}
+              limit={FIELD_LIMITS.stopPhrases}
               value={stopPhrasesDraft}
               onChange={(e) => setStopPhrasesDraft(e.target.value)}
-              style={{ fontFamily: 'monospace', fontSize: 13, width: '100%', resize: 'vertical' }}
+              style={{ fontFamily: 'monospace', fontSize: 13, resize: 'vertical' }}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 12 }}>
               <button

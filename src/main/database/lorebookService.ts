@@ -469,6 +469,50 @@ export class LorebookService {
       .run(characterId, lorebookId);
   }
 
+  /** World books attached to a persona, plus its personal book when one exists -- the persona
+   * equivalent of getBooksForCharacter. */
+  getBooksForPersona(personaId: string): { world: Lorebook[]; personal: Lorebook | null } {
+    const world = this.db
+      .prepare(
+        `SELECT ${BOOK_COLUMNS_QUALIFIED} FROM lorebooks b
+         JOIN persona_lorebooks pl ON pl.lorebook_id = b.id
+         WHERE pl.persona_id = ? AND b.scope = 'world'
+         ORDER BY b.name`
+      )
+      .all(personaId)
+      .map((r) => this.rowToBook(r));
+
+    const personalRow = this.db
+      .prepare(
+        `SELECT ${BOOK_COLUMNS} FROM lorebooks WHERE scope = 'personal' AND owner_persona_id = ?`
+      )
+      .get(personaId);
+
+    return { world, personal: personalRow ? this.rowToBook(personalRow) : null };
+  }
+
+  /** The persona equivalent of attachBook -- only reaches "Suggest reply", not a character's
+   * normal reply (see persona_lorebooks' schema comment). */
+  attachBookForPersona(personaId: string, lorebookId: string): void {
+    const book = this.getBook(lorebookId);
+    if (!book) throw new Error(`Lorebook with id ${lorebookId} not found`);
+    if (book.scope === 'personal') {
+      throw new Error('Personal lorebooks belong to their persona and cannot be attached');
+    }
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO persona_lorebooks (persona_id, lorebook_id, created_at)
+         VALUES (?, ?, ?)`
+      )
+      .run(personaId, lorebookId, new Date().toISOString());
+  }
+
+  detachBookForPersona(personaId: string, lorebookId: string): void {
+    this.db
+      .prepare(`DELETE FROM persona_lorebooks WHERE persona_id = ? AND lorebook_id = ?`)
+      .run(personaId, lorebookId);
+  }
+
   // --- Entries -------------------------------------------------------------------------
 
   listEntries(lorebookId: string): LorebookEntry[] {
@@ -732,10 +776,9 @@ export class LorebookService {
   }
 
   /**
-   * Enabled entries from the persona's own personal book, each with the text currently in
-   * effect. Unlike getEntriesForCharacter there is no world-book join -- personas don't
-   * attach to shared world books, only characters do, so a persona's only lore is its own
-   * personal history.
+   * Enabled entries from the persona's own personal book only -- excludes persona_lorebooks.
+   * Feeds a character's normal reply. Use getEntriesForPersonaWithWorldBooks for "Suggest
+   * reply", the one place persona-attached world lore should surface.
    */
   getEntriesForPersona(personaId: string): EntryWithContent[] {
     const rows = this.db
@@ -756,6 +799,55 @@ export class LorebookService {
          ORDER BY e.priority DESC, e.title`
       )
       .all(personaId);
+
+    return rows.map((row) => {
+      const isHidden = !!row.bookIsHidden;
+      const entry = rowToEntry(row);
+      return {
+        entry: { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) },
+        book: this.rowToBook({
+          id: row.bookId,
+          name: row.bookName,
+          description: row.bookDescription,
+          scope: row.bookScope,
+          ownerPersonaId: row.bookOwnerPersonaId,
+          isHidden: row.bookIsHidden,
+          createdAt: row.bookCreatedAt,
+          updatedAt: row.bookUpdatedAt,
+        }),
+        content: this.security.decryptIfHidden((row.activeContent as string | null) ?? '', isHidden),
+      };
+    });
+  }
+
+  /**
+   * Enabled entries from the persona's attached world books plus its personal book -- the
+   * persona equivalent of getEntriesForCharacter. Used only by "Suggest reply", not a
+   * character's normal reply.
+   */
+  getEntriesForPersonaWithWorldBooks(personaId: string): EntryWithContent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           e.id, e.lorebook_id as lorebookId, e.title, e.keys, e.enabled,
+           e.always_on as alwaysOn, e.priority,
+           e.created_at as createdAt, e.updated_at as updatedAt,
+           v.content as activeContent,
+           b.id as bookId, b.name as bookName, b.description as bookDescription,
+           b.scope as bookScope, b.owner_persona_id as bookOwnerPersonaId,
+           b.is_hidden as bookIsHidden,
+           b.created_at as bookCreatedAt, b.updated_at as bookUpdatedAt
+         FROM lorebook_entries e
+         JOIN lorebooks b ON b.id = e.lorebook_id
+         LEFT JOIN lorebook_entry_versions v ON v.entry_id = e.id AND v.is_active = 1
+         WHERE e.enabled = 1
+           AND (
+             b.id IN (SELECT lorebook_id FROM persona_lorebooks WHERE persona_id = ?)
+             OR (b.scope = 'personal' AND b.owner_persona_id = ?)
+           )
+         ORDER BY e.priority DESC, e.title`
+      )
+      .all(personaId, personaId);
 
     return rows.map((row) => {
       const isHidden = !!row.bookIsHidden;

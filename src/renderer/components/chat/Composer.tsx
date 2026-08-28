@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import LimitedTextarea from '../LimitedTextarea';
+import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 
 interface Props {
   disabled: boolean;
@@ -11,11 +13,17 @@ interface Props {
   /** Undefined when there's nothing to suggest from yet (no character/model picked) -- the
    * button is hidden rather than disabled in that case. */
   onSuggest?: () => Promise<string>;
+  /** Controlled from Chat.tsx (rather than owned locally) so a persona swap can prepopulate a
+   * stock scene note here without reaching into the composer's internals. */
+  directions: string;
+  onDirectionsChange: (value: string) => void;
+  directionsOpen: boolean;
+  onDirectionsOpenChange: (open: boolean) => void;
 }
 
 /**
- * Message input, per-turn directions, and the reply-suggestion drafts. Temperature/max tokens
- * live in Chat.tsx's header settings now, not here -- see chat-settings-more.
+ * Message input and the reply-suggestion drafts. Temperature/max tokens live in Chat.tsx's
+ * header settings now, not here -- see chat-settings-more.
  *
  * Directions are transient by design: they are injected into this turn's system prompt and
  * then cleared, never stored on the conversation.
@@ -27,10 +35,12 @@ export default function Composer({
   onContinue,
   onCancel,
   onSuggest,
+  directions,
+  onDirectionsChange,
+  directionsOpen,
+  onDirectionsOpenChange,
 }: Props) {
   const [message, setMessage] = useState('');
-  const [directions, setDirections] = useState('');
-  const [directionsOpen, setDirectionsOpen] = useState(false);
 
   // Drafts for "what might my persona say next" -- purely local to the composer. Nothing
   // here is sent or persisted until Use fills the real message box and Send is pressed like
@@ -43,14 +53,14 @@ export default function Composer({
     if (!message.trim() || disabled || isGenerating) return;
     onSend(message, directions);
     setMessage('');
-    setDirections('');
+    onDirectionsChange('');
     setSuggestions([]);
   };
 
   const submitContinue = () => {
     if (disabled || isGenerating) return;
     onContinue(directions);
-    setDirections('');
+    onDirectionsChange('');
     setSuggestions([]);
   };
 
@@ -86,7 +96,7 @@ export default function Composer({
         <button
           type="button"
           className={`btn chat-directions-toggle${directionsOpen ? ' active' : ''}`}
-          onClick={() => setDirectionsOpen((open) => !open)}
+          onClick={() => onDirectionsOpenChange(!directionsOpen)}
         >
           🎬 Directions{directions.trim() ? ' •' : ''}
         </button>
@@ -105,11 +115,14 @@ export default function Composer({
       </div>
 
       {directionsOpen && (
-        <textarea
+        <LimitedTextarea
           className="chat-directions"
+          limit={FIELD_LIMITS.directions}
+          compactCount
+          fieldClassName="chat-directions-field"
           placeholder="Scene instructions for this turn only — not saved to the conversation."
           value={directions}
-          onChange={(e) => setDirections(e.target.value)}
+          onChange={(e) => onDirectionsChange(e.target.value)}
           rows={2}
         />
       )}
@@ -145,8 +158,11 @@ export default function Composer({
       )}
 
       <div className="chat-composer-row">
-        <textarea
+        <LimitedTextarea
           className="chat-input"
+          limit={FIELD_LIMITS.chatMessage}
+          compactCount
+          fieldClassName="chat-composer-input"
           placeholder={disabled ? 'Pick a character and model to start.' : 'Write your message…'}
           value={message}
           disabled={disabled}

@@ -3,6 +3,8 @@ import { CharacterField, FIELD_LABELS } from '../../shared/types/characterField'
 import { CharacterFieldVersion } from '../../shared/types/fieldVersion';
 import VersionSwitcher from './VersionSwitcher';
 import FormattedContent from './FormattedContent';
+import LimitedTextarea from './LimitedTextarea';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 interface Props {
   field: CharacterField;
@@ -152,9 +154,10 @@ export default function FieldEditor({ field, placeholder }: Props) {
       </div>
 
       {mode === 'edit' ? (
-        <textarea
+        <LimitedTextarea
           ref={textareaRef}
           className="content-textarea"
+          limit={FIELD_LIMITS.proseContent}
           value={draftContent}
           onChange={(e) => isEditable && handleContentChange(e.target.value)}
           onBlur={exitEditMode}

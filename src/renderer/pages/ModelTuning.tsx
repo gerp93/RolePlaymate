@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 import { detectModelFamily } from '../../shared/utils/modelFamily';
-import { familyDisplayName, modelNotes } from '../utils/modelPresentation';
+import { displayModelName, assignModelTiers, modelCompositeScore, MODEL_TIER_COLORS, ModelTier } from '../utils/modelPresentation';
 
 interface FieldSpec {
   key: keyof SamplerParams;
@@ -86,13 +86,14 @@ const CAPABILITY_ICONS: Record<string, string> = {
 const CAPABILITY_LABELS: Record<string, string> = {
   tools: 'Tool/function calling',
   vision: 'Image input',
-  thinking: 'Hidden reasoning ("thinking") pass',
+  thinking: 'Thinking',
 };
 
 export default function ModelTuning() {
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
   const [ollamaMessage, setOllamaMessage] = useState('');
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
+  const [tiers, setTiers] = useState<Record<string, ModelTier>>({});
   const [customRows, setCustomRows] = useState<Record<string, ModelSamplerDefaults>>({});
   const [recommended, setRecommended] = useState<Record<string, SamplerParams>>({});
   const [drafts, setDrafts] = useState<Record<string, Partial<Record<keyof SamplerParams, string>>>>({});
@@ -119,7 +120,18 @@ export default function ModelTuning() {
       .filter((r) => !installedNames.has(r.model))
       .map((r) => ({ name: r.model, sizeBytes: 0, family: '', parameterSize: '', quantization: '', contextLength: null, capabilities: [] }));
 
-    const allModels = [...modelsResult.models, ...orphaned].sort((a, b) => a.name.localeCompare(b.name));
+    // Ranked best-to-worst for this app's purposes (see compositeScore/assignTiers) rather
+    // than alphabetically -- the list had no inherent order otherwise. Disabled models group
+    // together below every enabled one, ranked among themselves the same way, so turning a
+    // model off moves it out of the way without losing where it'd otherwise rank.
+    const tiersByModel = assignModelTiers(modelsResult.models);
+    setTiers(tiersByModel);
+    const enabled = (m: OllamaModelInfo) => rowsByModel[m.name]?.enabled ?? true;
+    const allModels = [...modelsResult.models, ...orphaned].sort((a, b) => {
+      const enabledDiff = Number(enabled(b)) - Number(enabled(a));
+      if (enabledDiff !== 0) return enabledDiff;
+      return modelCompositeScore(b) - modelCompositeScore(a) || a.name.localeCompare(b.name);
+    });
     setModels(allModels);
 
     // What each field falls back to before any actually-saved override -- the family preset
@@ -158,8 +170,8 @@ export default function ModelTuning() {
   }
 
   /** Explains where an unset field's placeholder value actually comes from -- a family-specific
-   * recommendation (RolePlaymate's own preset, same origin as the Notes column) vs just the
-   * flat global default, since those look identical in the input otherwise. */
+   * recommendation (RolePlaymate's own sampler preset) vs just the flat global default, since
+   * those look identical in the input otherwise. */
   function fieldTitle(model: string, field: FieldSpec): string | undefined {
     if (isCustomized(model, field)) return 'Customized for this model';
     const family = detectModelFamily(model);
@@ -239,6 +251,22 @@ export default function ModelTuning() {
     }
   }
 
+  // No row at all means enabled -- same "absence is the default" convention every sampler
+  // field on this table already uses.
+  function isEnabled(model: string): boolean {
+    return customRows[model]?.enabled ?? true;
+  }
+
+  async function toggleEnabled(model: string, enabled: boolean) {
+    setBusyModel(model);
+    try {
+      await window.electronAPI.modelTuning.setEnabled(model, enabled);
+      await load();
+    } finally {
+      setBusyModel(null);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -246,22 +274,13 @@ export default function ModelTuning() {
       </div>
 
       <p className="text-muted">
-        Sampler defaults per Ollama model -- some models drift toward their own style (a fixed
-        temperature, a habit of over-using certain punctuation, ...) and respond better to
-        slightly different settings than others. A blank field shows a placeholder and uses that
-        value for real generation. Type a value to override it for that model specifically --
-        that becomes what&apos;s actually used (and shown as the real value, not a placeholder)
-        every time that model is picked, until reset. The chat composer&apos;s Temperature/Max
-        Tokens sliders can still override this for one turn on top of whatever&apos;s set here.
+        App default sampler values per Ollama model can be tuned here.
       </p>
 
       <p className="text-muted" style={{ fontSize: 12 }}>
-        Params/Quant/Context/Size/Capabilities are reported directly by Ollama. The Notes* column
-        and the placeholder values are not -- both are RolePlaymate&apos;s own general
-        characterization of how each model line tends to behave in roleplay (same reasoning
-        behind each), not something verified against your specific install. Hover a blank field
-        to see whether its placeholder is a model-specific recommendation or just the flat
-        global default.
+        Params/Quant/Context/Size/Capabilities are reported directly by Ollama. Tier is computed
+        from those values, so it&apos;s a general indicator of how capable a model is -- it may
+        not correlate with suitability or tuning for roleplay specifically.
       </p>
 
       {ollamaAvailable === false && (
@@ -279,21 +298,21 @@ export default function ModelTuning() {
 
       {models.length > 0 && (
         <div className="card" style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: '6px 10px 6px 0' }}>Model</th>
+                <th
+                  style={{ textAlign: 'left', padding: '6px 10px' }}
+                  title="RolePlaymate's ranking -- computed automatically from parameter count, quantization, and context window (all reported by Ollama), not a curated per-model judgment. Sets the row order above."
+                >
+                  Tier
+                </th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Params</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Quant</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Context</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Size</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Capabilities</th>
-                <th
-                  style={{ textAlign: 'left', padding: '6px 10px' }}
-                  title="Not reported by Ollama -- these are RolePlaymate's own general notes on how this model line tends to behave in a roleplay chat, not a verified fact about your specific install"
-                >
-                  Notes*
-                </th>
                 {FIELDS.map((f) => (
                   <th key={f.key} style={{ textAlign: 'left', padding: '6px 10px' }} title={f.description}>
                     <div>{f.label}</div>
@@ -303,18 +322,42 @@ export default function ModelTuning() {
                   </th>
                 ))}
                 <th />
+                <th
+                  style={{ textAlign: 'left', padding: '6px 10px' }}
+                  title="Whether this model is offered in Chat's model dropdown -- doesn't affect what's installed in Ollama"
+                >
+                  Enabled
+                </th>
               </tr>
             </thead>
             <tbody>
-              {models.map((info) => (
-                <tr key={info.name} style={{ borderTop: '1px solid var(--color-border)' }}>
+              {models.map((info, i) => {
+                const enabled = isEnabled(info.name);
+                // Enabled rows sort before disabled ones (see load()) -- a heavier, accented
+                // divider right at that boundary makes the split obvious at a glance instead of
+                // just reading as a gradually-fading list.
+                const isFirstDisabled = !enabled && i > 0 && isEnabled(models[i - 1].name);
+                const rowStyle: React.CSSProperties = {
+                  borderTop: isFirstDisabled ? '2px solid var(--color-primary-action)' : '1px solid var(--color-border)',
+                  opacity: enabled ? 1 : 0.45,
+                };
+                const tier = tiers[info.name];
+                return (
+                <tr key={info.name} style={rowStyle}>
                   <td style={{ padding: '8px 10px 8px 0', whiteSpace: 'nowrap' }}>
                     {info.family && (
-                      <div style={{ fontWeight: 600 }}>{familyDisplayName(info.family)}</div>
+                      <div style={{ fontWeight: 600 }}>{displayModelName(info)}</div>
                     )}
                     <div className={info.family ? 'text-muted' : undefined} style={{ fontFamily: 'monospace', fontSize: 12 }}>
                       {info.name}
                     </div>
+                  </td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                    {tier ? (
+                      <span style={{ fontWeight: 600, color: MODEL_TIER_COLORS[tier] }}>{tier}</span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }} title={info.parameterSize ? undefined : 'Not reported by Ollama'}>
                     {info.parameterSize || '—'}
@@ -349,23 +392,6 @@ export default function ModelTuning() {
                       );
                     })()}
                   </td>
-                  <td style={{ padding: '8px 10px', maxWidth: 220 }}>
-                    {(() => {
-                      const notes = modelNotes(info.name);
-                      if (!notes) {
-                        return (
-                          <span className="text-muted" style={{ fontStyle: 'italic' }}>
-                            No notes yet
-                          </span>
-                        );
-                      }
-                      return (
-                        <span style={{ fontStyle: 'italic' }} title={notes.detail}>
-                          {notes.summary}
-                        </span>
-                      );
-                    })()}
-                  </td>
                   {FIELDS.map((field) => (
                     <td key={field.key} style={{ padding: '8px 10px' }}>
                       <input
@@ -380,7 +406,7 @@ export default function ModelTuning() {
                           width: 90,
                           borderColor: isCustomized(info.name, field) ? 'var(--color-primary-action)' : undefined,
                         }}
-                        disabled={busyModel === info.name}
+                        disabled={busyModel === info.name || !enabled}
                         onChange={(e) => setDraft(info.name, field, e.target.value)}
                         onBlur={() => void commitField(info.name, field)}
                       />
@@ -389,14 +415,24 @@ export default function ModelTuning() {
                   <td style={{ padding: '8px 0' }}>
                     <button
                       className="btn"
-                      disabled={!modelHasAnyCustomization(info.name) || busyModel === info.name}
+                      disabled={!modelHasAnyCustomization(info.name) || busyModel === info.name || !enabled}
                       onClick={() => void resetModel(info.name)}
                     >
                       Reset
                     </button>
                   </td>
+                  <td style={{ padding: '8px 10px' }}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={busyModel === info.name}
+                      title={enabled ? 'Shown in Chat’s model dropdown' : 'Hidden from Chat’s model dropdown'}
+                      onChange={(e) => void toggleEnabled(info.name, e.target.checked)}
+                    />
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -409,7 +445,7 @@ export default function ModelTuning() {
             What each column actually changes, and the range this page accepts (typing outside
             it is rejected, not silently clamped).
           </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
               {FIELDS.map((f) => (
                 <tr key={f.key}>
@@ -431,16 +467,198 @@ export default function ModelTuning() {
 
       {models.length > 0 && (
         <div className="card" style={{ marginTop: 20 }}>
+          <h2 style={{ fontSize: 15, marginTop: 0 }}>Model Terminology</h2>
+          <p className="text-muted" style={{ marginTop: -8, fontSize: 12 }}>
+            What Params/Quant/Context/Size mean and why they matter for picking a model.
+          </p>
+          <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <tbody>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Params
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  How many weights the model has -- roughly its "brain size." More generally means
+                  better reasoning, richer writing, and fewer dumb mistakes, at the cost of needing
+                  more RAM/VRAM and running slower. Example: a 7B model is small and fast; a 32B
+                  model is noticeably smarter but needs a lot more hardware to run comfortably.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Quant
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  How much each weight has been compressed from the model's original precision to
+                  shrink the file and speed it up. Lower quants (Q2/Q3/Q4) are smaller and faster
+                  but can lose some coherence and nuance; higher ones (Q6/Q8, or F16 for
+                  uncompressed) are closer to the model's true output but larger and slower.
+                  Example: Q4_K_M is a common "good enough" middle ground; Q8_0 is near-lossless
+                  but roughly double the size of a Q4.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Context
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  How many tokens (roughly 3/4 of a word each) the model can hold in mind at once
+                  -- the system prompt, memories, and conversation history all share this budget.
+                  Once a conversation grows past it, the oldest turns fall out of what the model
+                  can see. Matters most for a long-running roleplay you want to keep coherent for
+                  hundreds of messages; matters less for short one-off chats. Example: 8K is tight
+                  for a long scene, 32K–128K is comfortable, 1M is effectively "won't run out."
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Size
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  How much disk space the model file takes up at rest -- driven by both Params and
+                  Quant together (more params or a higher quant both mean a bigger file). It's not
+                  a hard VRAM requirement: Ollama splits a model across GPU and system RAM when it
+                  doesn't fully fit in VRAM, running the GPU-resident part fast and the rest
+                  slower on CPU, rather than refusing to load. A model that's mostly or fully in
+                  VRAM feels snappy; one leaning heavily on CPU offload still works, just visibly
+                  slower generating each reply. On top of Size, the KV cache adds more as a
+                  conversation fills up more of the Context window.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3 style={{ fontSize: 13, marginTop: 20, marginBottom: 2 }}>Units &amp; terms</h3>
+          <p className="text-muted" style={{ marginTop: 0, marginBottom: 10, fontSize: 12 }}>
+            The letters and abbreviations that show up above, spelled out.
+          </p>
+          <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <tbody>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  B
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  <em>Billion</em> -- the unit Params is counted in. "12B" is said "twelve B" or
+                  "a twelve-billion-parameter model." A model's B number is the single most common
+                  shorthand for how big/capable it roughly is.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  M
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  <em>Million</em>. Shows up two different ways on this page: a small model's
+                  Params count ("638M" = 638 million parameters -- smaller than any "B" model), or
+                  a huge Context window ("1.0M" = about one million tokens).
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  K
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  <em>Thousand</em>. Only shows up in Context here -- "131K" is said "131 thousand"
+                  and means about 131,000 tokens of context.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Token
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  The actual unit a model reads and writes in -- not quite a word, roughly 3/4 of
+                  one on average ("hello there" is about 2-3 tokens). Every K/M in the Context
+                  column is counting tokens, not words or characters.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Qx (Q4, Q5, Q8...)
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  The number in a Quant label -- roughly how many bits represent each weight. Said
+                  "Q-four," "Q-five," etc., or "four-bit quantization." Higher = closer to the
+                  original model's quality but a bigger file; this is the number worth comparing,
+                  more than the letters after it.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  _K_M / _0 / _K_S suffixes
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  The letters after a Quant's number (e.g. the "_K_M" in "Q4_K_M") name the
+                  specific compression method and size variant within that bit-width -- not worth
+                  memorizing. Treat the leading Q-number as the meaningful part and these as an
+                  implementation detail.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Quantized / quantization
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  Compressing a model's weights down from the precision they were trained at to
+                  fewer bits, trading a little quality for a much smaller, faster-to-run file.
+                  Every model on this page with a Qx quant level <em>is</em> a quantized model --
+                  that compression is what makes it small enough to run locally at all.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Parameters / weights
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  The (typically billions of) numbers a model learned during training. "Parameter
+                  count" and "weights" are used interchangeably, and both are shorthand for
+                  roughly how big/capable a model is -- the same number the Params column reports.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  Inference
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  Actually running a model to generate a reply, as opposed to training it. This is
+                  what your machine is doing every time a chat message goes out -- how fast it
+                  happens depends heavily on Params, Quant, and your hardware.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  F16 / FP16 (FP32)
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  "Full precision" or "half precision" -- an unquantized or lightly-compressed
+                  model, before any Qx quantization is applied. The largest and slowest option,
+                  closest to the model exactly as it was trained.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  VRAM / RAM
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  The memory a model's weights and active context (KV cache) occupy while it
+                  runs. VRAM (the GPU's own memory) is what makes generation fast; system RAM is
+                  the fallback Ollama spills into for whatever doesn't fit in VRAM, which still
+                  works but runs slower. A model needing more VRAM than a GPU has doesn't fail to
+                  load -- it just leans more on that slower fallback.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {models.length > 0 && (
+        <div className="card" style={{ marginTop: 20 }}>
           <h2 style={{ fontSize: 15, marginTop: 0 }}>Capabilities</h2>
           <p className="text-muted" style={{ marginTop: -8, fontSize: 12 }}>
-            What Ollama reports each model can do beyond plain text completion. A model showing
-            none of these still works for chat -- it just doesn&apos;t support that extra
-            capability, the same as every other model here that doesn&apos;t list it.
-          </p>
-          <p className="text-muted" style={{ marginTop: -8, fontSize: 12 }}>
-            Informational only -- RolePlaymate doesn&apos;t currently use any of these for chat.
-            Tool calls and images are never sent, and the &quot;thinking&quot; pass is explicitly
-            turned off on every request, whether or not a model supports it.
+            What Ollama reports each model can do beyond plain text. Informational only --
+            RolePlaymate doesn&apos;t use any of these for chat.
           </p>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
             {Object.entries(CAPABILITY_ICONS).map(([key, icon]) => (

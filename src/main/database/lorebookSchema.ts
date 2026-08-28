@@ -6,8 +6,8 @@
  * Two scopes, same storage, different meaning in the prompt:
  *
  *  - **world** — shared world-building. Many-to-many with characters (via
- *    `character_lorebooks`), so one "Kestrel setting" book serves every character in that
- *    world. Injected as *common knowledge*.
+ *    `character_lorebooks`) and, separately, with personas (via `persona_lorebooks`). Injected
+ *    as *common knowledge*, but only on whichever side attached it -- see persona_lorebooks.
  *  - **personal** — one character's private history, owned outright by that character.
  *    Injected as things *that character* remembers, explicitly not common knowledge. The
  *    distinction matters: a model told "the mutiny happened" as world fact will let anyone
@@ -54,6 +54,18 @@ export const LOREBOOK_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_character_lorebooks_book ON character_lorebooks(lorebook_id);
+
+  -- World books only, mirroring character_lorebooks. Invisible to the character: only
+  -- getEntriesForCharacter feeds a normal reply, so this only reaches "Suggest reply" (via
+  -- getEntriesForPersonaWithWorldBooks). A book in both tables is just visible in both places.
+  CREATE TABLE IF NOT EXISTS persona_lorebooks (
+    persona_id TEXT NOT NULL REFERENCES user_personas(id) ON DELETE CASCADE,
+    lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (persona_id, lorebook_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_persona_lorebooks_book ON persona_lorebooks(lorebook_id);
 
   CREATE TABLE IF NOT EXISTS lorebook_entries (
     id TEXT PRIMARY KEY,

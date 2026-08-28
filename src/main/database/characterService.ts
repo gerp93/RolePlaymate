@@ -155,11 +155,20 @@ export class CharacterService {
     }
   }
 
-  /** Cascades to character_fields, character_field_versions, and character_images via the
-   * schema's ON DELETE CASCADE constraints, which are enforced now that foreign keys are on.
-   * Note this removes the image *rows* but not the files on disk -- callers that care fetch
-   * the paths before deleting and unlink them (see the characters:delete IPC handler). */
+  /** Cascades to character_fields, character_field_versions, character_images, and scenarios
+   * (and their own versions/images) via the schema's ON DELETE CASCADE constraints, which are
+   * enforced now that foreign keys are on. Note this removes image *rows* but not the files on
+   * disk -- callers that care fetch the paths before deleting and unlink them (see the
+   * characters:delete IPC handler).
+   *
+   * conversations.character_id is ON DELETE SET NULL, not CASCADE -- left that way so a DDL
+   * change alone can't silently start deleting chat history on existing databases. Instead,
+   * delete this character's conversations explicitly first, in the same transaction; messages
+   * and memories then cascade from the conversation delete. */
   deleteCharacter(id: string): void {
-    this.db.prepare(`DELETE FROM characters WHERE id = ?`).run(id);
+    transaction(this.db, () => {
+      this.db.prepare(`DELETE FROM conversations WHERE character_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM characters WHERE id = ?`).run(id);
+    });
   }
 }

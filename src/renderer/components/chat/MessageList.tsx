@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { MouseEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { Message, MessageVariant } from '../../../shared/types/message';
 import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
@@ -6,6 +6,8 @@ import { resolveCoverImage } from '../../utils/avatarImage';
 import { toImageUrl } from '../../utils/imageUrl';
 import FormattedContent from '../FormattedContent';
 import ImageLightbox from '../ImageLightbox';
+import LimitedTextarea from '../LimitedTextarea';
+import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 
 interface Props {
   messages: Message[];
@@ -17,6 +19,10 @@ interface Props {
   onSelectVariant: (variantId: string) => void;
   /** Hand-edits the last (assistant) message's content -- see chatSession.editMessage. */
   onEditLast: (content: string) => void;
+  /** Rewrites the user message behind the pending reply and regenerates that reply against the
+   * new text -- see chatSession.editPriorUserMessage. Only offered on the one message right
+   * before the pending assistant reply. */
+  onEditPrior: (messageId: string, content: string) => void;
   onDeleteLast: () => void;
   onViewPrompt: (messageId: string) => void;
   characterName: string;
@@ -41,6 +47,7 @@ export default function MessageList({
   onRegenerate,
   onSelectVariant,
   onEditLast,
+  onEditPrior,
   onDeleteLast,
   onViewPrompt,
   characterName,
@@ -50,17 +57,18 @@ export default function MessageList({
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   // Which message (if any) is showing an edit textarea in place of its formatted content, and
-  // what's currently typed into it. Only ever the last message -- see canActOnLast/isGreeting
-  // below, which also gate whether the Edit button itself is offered.
+  // what's currently typed into it. Either the last message (assistant, see canActOnLast/
+  // isGreeting below) or the one right before it (the user turn behind a pending reply, see
+  // canEditPriorUser) -- never both at once, and never anything earlier.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   // The bubble's own rendered width just before switching into edit mode, frozen as an inline
   // style for the duration of the edit. Bubbles shrink-wrap to their content by default (see
   // .chat-bubble-assistant's align-self: flex-start), so without this a short reply's bubble
   // would collapse down to whatever a bare, still-empty-ish textarea measures as, then jump
-  // back out as text is typed -- captured once on click instead of tracked continuously.
+  // back out as text is typed -- measured off the clicked button's own bubble ancestor at click
+  // time rather than a persistent ref, since which bubble can start an edit now varies.
   const [editWidth, setEditWidth] = useState<number | null>(null);
-  const lastBubbleRef = useRef<HTMLDivElement | null>(null);
 
   // A message bubble's avatar is always the gallery's cover image -- no per-message variation
   // (that's what the large margin portraits' carousel is for). Cheap to compute once per role.
@@ -101,73 +109,84 @@ export default function MessageList({
   // gets a variant of its own (the backend rejects a redo attempt on it for the same reason);
   // this just keeps the control from being offered in the first place.
   const isGreeting = lastIndex === 0 && shown[0]?.role === 'assistant';
+  // The one message besides the last that can still be edited: the user turn the pending reply
+  // is answering. Anything earlier already has a reply after it -- see
+  // chatSession.editPriorUserMessage for why that boundary exists.
+  const canEditPriorUser =
+    canActOnLast && lastIndex >= 1 && shown[lastIndex]?.role === 'assistant' && shown[lastIndex - 1]?.role === 'user';
+
+  const startEdit = (e: MouseEvent<HTMLButtonElement>, message: Message) => {
+    const bubble = e.currentTarget.closest('.chat-bubble') as HTMLElement | null;
+    setEditWidth(bubble?.getBoundingClientRect().width ?? null);
+    setEditDraft(message.content);
+    setEditingId(message.id);
+  };
 
   return (
     <div className="chat-transcript">
-      {shown.map((message, i) => (
-        <Bubble
-          key={message.id}
-          containerRef={i === lastIndex ? lastBubbleRef : undefined}
-          containerStyle={
-            canActOnLast && i === lastIndex && editingId === message.id && editWidth
-              ? { width: editWidth, maxWidth: editWidth }
-              : undefined
-          }
-          role={message.role}
-          name={message.role === 'user' ? personaName : characterName}
-          avatarUrl={avatarFor(message.role)}
-          content={message.content}
-          model={message.role === 'assistant' ? message.model : null}
-          onViewPrompt={message.model ? () => onViewPrompt(message.id) : undefined}
-          isEditing={canActOnLast && i === lastIndex && editingId === message.id}
-          editDraft={editDraft}
-          onEditDraftChange={setEditDraft}
-          onSaveEdit={() => {
-            onEditLast(editDraft);
-            setEditingId(null);
-            setEditWidth(null);
-          }}
-          onCancelEdit={() => {
-            setEditingId(null);
-            setEditWidth(null);
-          }}
-        >
-          {canActOnLast && i === lastIndex && editingId !== message.id && (
-            <div className="chat-message-footer">
-              {message.role === 'assistant' && !isGreeting && (
-                <VariantNav
-                  variants={variants}
-                  selectedId={message.selectedVariantId}
-                  onSelect={onSelectVariant}
-                  onRegenerate={onRegenerate}
-                />
-              )}
-              {message.role === 'assistant' && !isGreeting && (
-                <button
-                  type="button"
-                  className="chat-variant-btn chat-message-edit"
-                  onClick={() => {
-                    setEditWidth(lastBubbleRef.current?.getBoundingClientRect().width ?? null);
-                    setEditDraft(message.content);
-                    setEditingId(message.id);
-                  }}
-                  title="Edit this response"
-                >
-                  ✏️ Edit
-                </button>
-              )}
-              <button
-                type="button"
-                className="chat-variant-btn chat-message-delete"
-                onClick={onDeleteLast}
-                title="Delete this message"
-              >
-                🗑
-              </button>
-            </div>
-          )}
-        </Bubble>
-      ))}
+      {shown.map((message, i) => {
+        const isEditableSlot = (canActOnLast && i === lastIndex) || (canEditPriorUser && i === lastIndex - 1);
+        const isEditing = isEditableSlot && editingId === message.id;
+        return (
+          <Bubble
+            key={message.id}
+            containerStyle={isEditing && editWidth ? { width: editWidth, maxWidth: editWidth } : undefined}
+            role={message.role}
+            name={message.role === 'user' ? personaName : characterName}
+            avatarUrl={avatarFor(message.role)}
+            content={message.content}
+            model={message.role === 'assistant' ? message.model : null}
+            onViewPrompt={message.model ? () => onViewPrompt(message.id) : undefined}
+            isEditing={isEditing}
+            editDraft={editDraft}
+            onEditDraftChange={setEditDraft}
+            onSaveEdit={() => {
+              if (i === lastIndex) onEditLast(editDraft);
+              else onEditPrior(message.id, editDraft);
+              setEditingId(null);
+              setEditWidth(null);
+            }}
+            onCancelEdit={() => {
+              setEditingId(null);
+              setEditWidth(null);
+            }}
+          >
+            {isEditableSlot && editingId !== message.id && (
+              <div className="chat-message-footer">
+                {i === lastIndex && message.role === 'assistant' && !isGreeting && (
+                  <VariantNav
+                    variants={variants}
+                    selectedId={message.selectedVariantId}
+                    onSelect={onSelectVariant}
+                    onRegenerate={onRegenerate}
+                  />
+                )}
+                {((i === lastIndex && message.role === 'assistant' && !isGreeting) ||
+                  (canEditPriorUser && i === lastIndex - 1)) && (
+                  <button
+                    type="button"
+                    className="chat-variant-btn chat-message-edit"
+                    onClick={(e) => startEdit(e, message)}
+                    title={i === lastIndex ? 'Edit this response' : 'Edit this message and regenerate the reply to it'}
+                  >
+                    ✏️ Edit
+                  </button>
+                )}
+                {i === lastIndex && !isGreeting && (
+                  <button
+                    type="button"
+                    className="chat-variant-btn chat-message-delete"
+                    onClick={onDeleteLast}
+                    title="Delete this message"
+                  >
+                    🗑️ Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </Bubble>
+        );
+      })}
       {streamingText ? (
         <Bubble role="assistant" name={characterName} avatarUrl={characterAvatarUrl} content={streamingText} streaming />
       ) : (
@@ -259,7 +278,6 @@ function Bubble({
   onEditDraftChange,
   onSaveEdit,
   onCancelEdit,
-  containerRef,
   containerStyle,
   children,
 }: {
@@ -273,33 +291,52 @@ function Bubble({
   model?: string | null;
   /** Present only when there's logged prompt data to show -- see `model`. */
   onViewPrompt?: () => void;
-  /** Swaps the formatted content for an editable textarea -- see MessageList's editingId. Only
-   * ever true for the last message, and only while its Edit button is active. */
+  /** Swaps the formatted content for an editable textarea -- see MessageList's editingId. */
   isEditing?: boolean;
   editDraft?: string;
   onEditDraftChange?: (value: string) => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
-  /** Only ever attached to the last message, so MessageList can measure its rendered width
-   * before switching into edit mode -- see MessageList's editWidth. */
-  containerRef?: React.Ref<HTMLDivElement>;
   /** Freezes the bubble at its pre-edit width -- see editWidth. */
   containerStyle?: React.CSSProperties;
   children?: ReactNode;
 }) {
+  // Plain text, not the rendered FormattedContent HTML -- the transcript's own content is
+  // already the "full formatted message" (italics/bold as *asterisks*, same as what's stored
+  // and what goes to the model), so copying it verbatim is what pastes usably elsewhere.
+  const [copied, setCopied] = useState(false);
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      if (copyTimeout.current) clearTimeout(copyTimeout.current);
+      copyTimeout.current = setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
   return (
-    <div
-      ref={containerRef}
-      className={`chat-bubble chat-bubble-${role}${streaming ? ' chat-bubble-streaming' : ''}`}
-      style={containerStyle}
-    >
+    <div className={`chat-bubble chat-bubble-${role}${streaming ? ' chat-bubble-streaming' : ''}`} style={containerStyle}>
       <BubbleAvatarPanel url={avatarUrl} name={name} />
       <div className="chat-bubble-content">
-        <div className="chat-bubble-name">{name}</div>
+        <div className="chat-bubble-name-row">
+          <div className="chat-bubble-name">{name}</div>
+          {!streaming && (
+            <button
+              type="button"
+              className="chat-bubble-copy"
+              onClick={handleCopy}
+              title={copied ? 'Copied!' : 'Copy message'}
+            >
+              {copied ? '✅' : '📋'}
+            </button>
+          )}
+        </div>
         {isEditing ? (
           <div className="chat-bubble-edit">
-            <textarea
+            <LimitedTextarea
               className="chat-bubble-edit-textarea"
+              limit={FIELD_LIMITS.chatMessage}
+              compactCount
               value={editDraft}
               onChange={(e) => onEditDraftChange?.(e.target.value)}
               autoFocus

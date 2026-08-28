@@ -4,15 +4,16 @@ import { Character } from '../../shared/types/character';
 import { CharacterField, FIELD_TYPES } from '../../shared/types/characterField';
 import { CharacterImage } from '../../shared/types/characterImage';
 import FieldEditor from '../components/FieldEditor';
+import ScenariosPanel from '../components/ScenariosPanel';
 import PersonalHistoryPanel from '../components/lore/PersonalHistoryPanel';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
-  scenario: 'The setting or context the conversation takes place in...',
-  greeting: 'The first message the character sends to start the chat...',
   dialogue: 'Sample exchanges showing how the character speaks...',
 };
 
@@ -125,8 +126,9 @@ export default function CharacterDetail() {
     <div className="character-detail-page">
       <div className="character-detail-fields">
         <div className="page-header">
-          <input
+          <LimitedInput
             value={nameDraft}
+            limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
             onBlur={handleNameBlur}
             style={{
@@ -135,11 +137,11 @@ export default function CharacterDetail() {
               border: 'none',
               background: 'transparent',
               padding: '4px 0',
-              width: '100%',
             }}
           />
-          <input
+          <LimitedInput
             value={descriptionDraft}
+            limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}
             onBlur={handleDescriptionBlur}
             placeholder="Short description or tagline..."
@@ -149,7 +151,6 @@ export default function CharacterDetail() {
               border: 'none',
               background: 'transparent',
               padding: '2px 0 4px',
-              width: '100%',
             }}
           />
         </div>
@@ -168,6 +169,10 @@ export default function CharacterDetail() {
             />
           );
         })}
+
+        <div style={{ marginTop: 16 }}>
+          <ScenariosPanel characterId={character.id} />
+        </div>
 
         {/* Private history belongs on the character, not beside the shared world books --
             it is this character's own past and must never look attachable elsewhere. */}

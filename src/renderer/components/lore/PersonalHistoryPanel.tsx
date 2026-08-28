@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Lorebook, LorebookEntry } from '../../../shared/types/lorebook';
+import { LOREBOOK_ENTRIES_IMPORT_SAMPLE } from '../../../shared/lorebookImportSample';
 import LoreEntryEditor from './LoreEntryEditor';
+import LorebookJsonImport from './LorebookJsonImport';
+import LimitedInput from '../LimitedInput';
+import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 import { useSecurity } from '../../context/SecurityContext';
 import LockedPlaceholder from '../LockedPlaceholder';
 import './Lore.css';
@@ -21,6 +25,7 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
   const [worldBooks, setWorldBooks] = useState<Lorebook[]>([]);
   const [attachedIds, setAttachedIds] = useState<string[]>([]);
   const [newTitle, setNewTitle] = useState('');
+  const [importing, setImporting] = useState(false);
 
   const refresh = useCallback(async () => {
     // Creates the personal book on first view rather than alongside every character, so
@@ -51,6 +56,23 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
     await refresh();
   };
 
+  const importJson = async () => {
+    if (!book) return;
+    setImporting(true);
+    try {
+      const result = await window.electronAPI.loreEntries.importFromJson(book.id);
+      if (!result) return;
+      await refresh();
+      if (result.warnings.length > 0) {
+        alert(`Imported ${result.count} ${result.count === 1 ? 'entry' : 'entries'} with some gaps:\n\n${result.warnings.join('\n')}`);
+      }
+    } catch (err) {
+      alert(`Import failed: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const toggleWorldBook = async (lorebookId: string, attached: boolean) => {
     if (attached) {
       await window.electronAPI.lorebooks.detach(characterId, lorebookId);
@@ -77,8 +99,10 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
           </p>
         </div>
         <div className="lore-new-entry">
-          <input
+          <LimitedInput
             value={newTitle}
+            limit={FIELD_LIMITS.name}
+            compactCount
             placeholder="New memory title…"
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && void addEntry()}
@@ -93,6 +117,12 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
           </button>
         </div>
       </div>
+
+      <LorebookJsonImport
+        importing={importing}
+        onImport={() => void importJson()}
+        sample={LOREBOOK_ENTRIES_IMPORT_SAMPLE}
+      />
 
       <ul className="lore-entry-list">
         {entries.length === 0 && (

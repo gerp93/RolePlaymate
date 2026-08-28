@@ -9,6 +9,10 @@ import {
   isUsingDefaultLocation,
   setDbPath,
   resetToDefaultDbPath,
+  getEffectiveOllamaHost,
+  isUsingDefaultOllamaHost,
+  setOllamaHost,
+  resetOllamaHost,
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
 import { CharacterService } from './database/characterService';
@@ -17,6 +21,8 @@ import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
 import { PersonaImageService } from './database/personaImageService';
 import { PersonaFieldVersionService } from './database/personaFieldVersionService';
+import { ScenarioService } from './database/scenarioService';
+import { ScenarioImageService } from './database/scenarioImageService';
 import { ModelSamplerService } from './database/modelSamplerService';
 import { ConversationService } from './database/conversationService';
 import { LorebookService } from './database/lorebookService';
@@ -26,7 +32,7 @@ import { PromptSettingsService, ResettableField } from './database/promptSetting
 import { PromptFieldVersionService } from './database/promptFieldVersionService';
 import { DEFAULT_STOP_PHRASES } from './chat/promptTemplates';
 import { PromptTemplates, StopPhraseSettings, TEMPLATE_FIELD_KEYS } from '../shared/types/promptTemplates';
-import { OllamaClient } from './chat/ollamaClient';
+import { OllamaClient, DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
   chooseCharacterImage,
@@ -36,17 +42,46 @@ import {
   getImagesDir,
 } from './images';
 import { parseCharacterHtml, parseLorebookHtml, resolveLocalAvatarPath } from './htmlImport';
+import { parseLorebookJson } from './lorebookJsonImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
+import { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
-import { ChatSendRequest, ChatRegenerateRequest, ChatStreamEvent, SamplerParams } from '../shared/types/chat';
+import {
+  ChatSendRequest,
+  ChatRegenerateRequest,
+  ChatEditPriorMessageRequest,
+  ChatStreamEvent,
+  SamplerParams,
+} from '../shared/types/chat';
 import {
   CreateLorebookInput,
   UpdateLorebookInput,
   CreateLorebookEntryInput,
   UpdateLorebookEntryInput,
 } from '../shared/types/lorebook';
+import {
+  guardCharacterCreate,
+  guardCharacterUpdate,
+  guardScenarioCreate,
+  guardScenarioUpdate,
+  guardPersonaCreate,
+  guardPersonaUpdate,
+  guardLorebookCreate,
+  guardLorebookUpdate,
+  guardLoreEntryCreate,
+  guardLoreEntryUpdate,
+  guardProseContent,
+  guardGreeting,
+  guardLoreText,
+  guardChatMessage,
+  guardDirections,
+  guardMemory,
+  guardStopPhrasesUpdate,
+  guardUrl,
+  guardConversationTitle,
+} from './fieldLengthGuards';
 import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
@@ -176,6 +211,8 @@ let fieldVersionService: FieldVersionService;
 let characterImageService: CharacterImageService;
 let personaImageService: PersonaImageService;
 let personaFieldVersionService: PersonaFieldVersionService;
+let scenarioService: ScenarioService;
+let scenarioImageService: ScenarioImageService;
 let modelSamplerService: ModelSamplerService;
 let conversationService: ConversationService;
 let promptBuilder: PromptBuilder;
@@ -314,6 +351,8 @@ app.whenReady().then(() => {
   characterImageService = new CharacterImageService(db);
   personaImageService = new PersonaImageService(db);
   personaFieldVersionService = new PersonaFieldVersionService(db, securityService);
+  scenarioService = new ScenarioService(db, securityService);
+  scenarioImageService = new ScenarioImageService(db);
   conversationService = new ConversationService(db, securityService, personaFieldVersionService);
   promptSettingsService = new PromptSettingsService(db);
   promptFieldVersionService = new PromptFieldVersionService(db);
@@ -324,7 +363,10 @@ app.whenReady().then(() => {
     promptSettingsService,
     promptFieldVersionService
   );
-  ollamaClient = new OllamaClient();
+  // A function, not a resolved string, so a host change from the settings page (see
+  // ollamaHost:set below) takes effect on the client's very next request -- no restart, unlike
+  // the db path, which OllamaClient never caches for that reason.
+  ollamaClient = new OllamaClient(getEffectiveOllamaHost);
   lorebookService = new LorebookService(db, securityService);
   modelSamplerService = new ModelSamplerService(db);
   chatSessions = new ChatSessionManager(
@@ -332,7 +374,8 @@ app.whenReady().then(() => {
     promptBuilder,
     ollamaClient,
     lorebookService,
-    modelSamplerService
+    modelSamplerService,
+    scenarioService
   );
 
   registerIPCHandlers();
@@ -373,11 +416,13 @@ function registerIPCHandlers() {
   ipcMain.handle('characters:getAll', () => characterService.getAllCharacters());
   ipcMain.handle('characters:getById', (_, id: string) => characterService.getCharacterById(id));
 
-  // Creating a character also creates its three fixed fields (personality/scenario/greeting),
-  // each with a blank first version -- unlike TrackDraft's freely-added Parts, a character's
-  // fields are a fixed set, so there's no separate "add field" action.
+  // Creating a character also creates its fixed fields (personality/greeting/dialogue), each
+  // with a blank first version -- unlike TrackDraft's freely-added Parts, a character's fields
+  // are a fixed set, so there's no separate "add field" action. Scenario is not among them --
+  // it's a separate 1-to-N entity the user adds explicitly (see scenarios:create).
   ipcMain.handle('characters:create', (_, input: CreateCharacterInput) =>
     transaction(db!, () => {
+      guardCharacterCreate(input);
       const character = characterService.createCharacter(input);
       for (const fieldType of FIELD_TYPES) {
         const field = fieldService.createField(character.id, fieldType);
@@ -387,9 +432,10 @@ function registerIPCHandlers() {
     })
   );
 
-  ipcMain.handle('characters:update', (_, id: string, input: UpdateCharacterInput) =>
-    characterService.updateCharacter(id, input)
-  );
+  ipcMain.handle('characters:update', (_, id: string, input: UpdateCharacterInput) => {
+    guardCharacterUpdate(input);
+    return characterService.updateCharacter(id, input);
+  });
 
   ipcMain.handle('characters:setHidden', (_, id: string, hidden: boolean) =>
     characterService.setHidden(id, hidden)
@@ -495,6 +541,22 @@ function registerIPCHandlers() {
         characterImageService.addImage(created.id, copiedPath);
       }
 
+      if (parsed.scenario?.trim() || parsed.greeting?.trim()) {
+        const scenario = scenarioService.createScenario(created.id, 'Imported Scenario');
+        if (parsed.scenario?.trim()) {
+          scenarioService.updateVersionContent(
+            scenarioService.getVersions(scenario.id)[0].id,
+            parsed.scenario.trim()
+          );
+        }
+        if (parsed.greeting?.trim()) {
+          scenarioService.updateGreetingVersionContent(
+            scenarioService.getGreetingVersions(scenario.id)[0].id,
+            parsed.greeting.trim()
+          );
+        }
+      }
+
       return created;
     });
 
@@ -518,9 +580,10 @@ function registerIPCHandlers() {
   ipcMain.handle('fieldVersions:getByField', (_, fieldId: string) => fieldVersionService.getVersionsByField(fieldId));
   ipcMain.handle('fieldVersions:getById', (_, id: string) => fieldVersionService.getVersionById(id));
   ipcMain.handle('fieldVersions:duplicate', (_, versionId: string) => fieldVersionService.duplicateVersion(versionId));
-  ipcMain.handle('fieldVersions:updateContent', (_, id: string, content: string) =>
-    fieldVersionService.updateVersionContent(id, content)
-  );
+  ipcMain.handle('fieldVersions:updateContent', (_, id: string, content: string) => {
+    guardProseContent(content);
+    return fieldVersionService.updateVersionContent(id, content);
+  });
   ipcMain.handle('fieldVersions:delete', (_, id: string) => {
     fieldVersionService.deleteVersion(id);
     return { success: true };
@@ -566,6 +629,89 @@ function registerIPCHandlers() {
   });
   ipcMain.handle('personaImages:setCover', (_, id: string) => {
     personaImageService.setCoverImage(id);
+    return { success: true };
+  });
+
+  // Scenario handlers -- a character's 1-to-N settings/situations, split out from the old
+  // fixed "scenario" CharacterField. See shared/types/scenario.ts.
+  ipcMain.handle('scenarios:getByCharacter', (_, characterId: string) =>
+    scenarioService.getScenariosByCharacter(characterId)
+  );
+  ipcMain.handle('scenarios:getById', (_, id: string) => scenarioService.getScenario(id));
+  ipcMain.handle('scenarios:create', (_, input: CreateScenarioInput) => {
+    guardScenarioCreate(input);
+    return scenarioService.createScenario(input.characterId, input.name, input.description);
+  });
+  ipcMain.handle('scenarios:update', (_, id: string, input: UpdateScenarioInput) => {
+    guardScenarioUpdate(input);
+    if (input.name === undefined && input.description === undefined) {
+      return scenarioService.getScenario(id)!;
+    }
+    return scenarioService.updateScenario(id, input);
+  });
+  ipcMain.handle('scenarios:setHidden', (_, id: string, hidden: boolean) =>
+    scenarioService.setHidden(id, hidden)
+  );
+  // Same file-cleanup order as characters:delete: fetch image paths before the DB cascade
+  // removes the rows, then unlink them.
+  ipcMain.handle('scenarios:delete', (_, id: string) => {
+    const images = scenarioImageService.getImagesByScenario(id);
+    scenarioService.deleteScenario(id);
+    for (const image of images) deleteCharacterImage(image.path);
+    return { success: true };
+  });
+
+  // Scenario version handlers -- same shape as fieldVersions:*.
+  ipcMain.handle('scenarioVersions:getByScenario', (_, scenarioId: string) =>
+    scenarioService.getVersions(scenarioId)
+  );
+  ipcMain.handle('scenarioVersions:create', (_, scenarioId: string, content: string) => {
+    guardProseContent(content, 'Scenario text');
+    return scenarioService.createVersion(scenarioId, content);
+  });
+  ipcMain.handle('scenarioVersions:updateContent', (_, id: string, content: string) => {
+    guardProseContent(content, 'Scenario text');
+    return scenarioService.updateVersionContent(id, content);
+  });
+  ipcMain.handle('scenarioVersions:delete', (_, id: string) => {
+    scenarioService.deleteVersion(id);
+    return { success: true };
+  });
+
+  // Scenario greeting version handlers -- a scenario's own opening greeting, versioned
+  // independently of its descriptive text. Same shape as scenarioVersions:*.
+  ipcMain.handle('scenarioGreetingVersions:getByScenario', (_, scenarioId: string) =>
+    scenarioService.getGreetingVersions(scenarioId)
+  );
+  ipcMain.handle('scenarioGreetingVersions:create', (_, scenarioId: string, content: string) => {
+    guardGreeting(content);
+    return scenarioService.createGreetingVersion(scenarioId, content);
+  });
+  ipcMain.handle('scenarioGreetingVersions:updateContent', (_, id: string, content: string) => {
+    guardGreeting(content);
+    return scenarioService.updateGreetingVersionContent(id, content);
+  });
+  ipcMain.handle('scenarioGreetingVersions:delete', (_, id: string) => {
+    scenarioService.deleteGreetingVersion(id);
+    return { success: true };
+  });
+
+  // Scenario image (gallery) handlers -- mirrors the character image handlers exactly.
+  ipcMain.handle('scenarioImages:getByScenario', (_, scenarioId: string) =>
+    scenarioImageService.getImagesByScenario(scenarioId)
+  );
+  ipcMain.handle('scenarioImages:add', async (_, scenarioId: string) => {
+    const paths = await chooseCharacterImages(mainWindow);
+    return paths.map((path) => scenarioImageService.addImage(scenarioId, path));
+  });
+  ipcMain.handle('scenarioImages:remove', (_, id: string) => {
+    const existing = scenarioImageService.getImageById(id);
+    scenarioImageService.removeImage(id);
+    if (existing) deleteCharacterImage(existing.path);
+    return { success: true };
+  });
+  ipcMain.handle('scenarioImages:setCover', (_, id: string) => {
+    scenarioImageService.setCoverImage(id);
     return { success: true };
   });
 
@@ -616,6 +762,25 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  // Ollama server location -- unlike the db path, takes effect immediately on the next
+  // request, no relaunch needed (see the hostProvider comment where OllamaClient is built).
+  ipcMain.handle('ollamaHost:get', () => ({
+    host: getEffectiveOllamaHost(),
+    isDefault: isUsingDefaultOllamaHost(),
+    defaultHost: DEFAULT_OLLAMA_HOST,
+  }));
+
+  ipcMain.handle('ollamaHost:set', (_, host: string) => {
+    guardUrl(host);
+    setOllamaHost(host);
+    return { success: true };
+  });
+
+  ipcMain.handle('ollamaHost:resetToDefault', () => {
+    resetOllamaHost();
+    return { success: true };
+  });
+
   // Chat handlers.
   //
   // Only prompt composition so far -- no model is involved yet. This exists so the
@@ -624,11 +789,19 @@ function registerIPCHandlers() {
   // streaming and Ollama are wired up and failures get harder to attribute.
   ipcMain.handle(
     'chat:previewSystemPrompt',
-    (_, characterId: string, options?: { personaId?: string; directions?: string; memories?: string[] }) => {
+    (
+      _,
+      characterId: string,
+      options?: { personaId?: string; scenarioId?: string; directions?: string; memories?: string[] }
+    ) => {
       const persona = options?.personaId ? conversationService.getPersona(options.personaId) : null;
+      const scenarioContent = options?.scenarioId ? scenarioService.getActiveContent(options.scenarioId) : null;
+      const scenarioGreeting = options?.scenarioId ? scenarioService.getActiveGreeting(options.scenarioId) : null;
       return promptBuilder.buildSystemPrompt(characterId, {
         personaName: persona?.name ?? null,
         personaBackground: persona?.background ?? null,
+        scenarioContent,
+        scenarioGreeting,
         directions: options?.directions,
         memories: options?.memories,
       });
@@ -636,12 +809,14 @@ function registerIPCHandlers() {
   );
 
   ipcMain.handle('personas:getAll', () => conversationService.listPersonas());
-  ipcMain.handle('personas:create', (_, input: CreateUserPersonaInput) =>
-    conversationService.createPersona(input)
-  );
-  ipcMain.handle('personas:update', (_, id: string, input: UpdateUserPersonaInput) =>
-    conversationService.updatePersona(id, input)
-  );
+  ipcMain.handle('personas:create', (_, input: CreateUserPersonaInput) => {
+    guardPersonaCreate(input);
+    return conversationService.createPersona(input);
+  });
+  ipcMain.handle('personas:update', (_, id: string, input: UpdateUserPersonaInput) => {
+    guardPersonaUpdate(input);
+    return conversationService.updatePersona(id, input);
+  });
 
   ipcMain.handle('personas:setHidden', (_, id: string, hidden: boolean) =>
     conversationService.setPersonaHidden(id, hidden)
@@ -660,9 +835,10 @@ function registerIPCHandlers() {
   ipcMain.handle('personaFieldVersions:duplicate', (_, versionId: string) =>
     personaFieldVersionService.duplicateVersion(versionId)
   );
-  ipcMain.handle('personaFieldVersions:updateContent', (_, id: string, content: string) =>
-    personaFieldVersionService.updateVersionContent(id, content)
-  );
+  ipcMain.handle('personaFieldVersions:updateContent', (_, id: string, content: string) => {
+    guardProseContent(content, 'Background');
+    return personaFieldVersionService.updateVersionContent(id, content);
+  });
   ipcMain.handle('personaFieldVersions:delete', (_, id: string) => {
     personaFieldVersionService.deleteVersion(id);
     return { success: true };
@@ -697,19 +873,32 @@ function registerIPCHandlers() {
   // the transcript and in the model's context rather than being a render-time flourish.
   ipcMain.handle('conversations:create', (_, input: CreateConversationInput) => {
     // Resolve the persona first: the greeting contains {{user}}, so building it without the
-    // persona would greet "User" by name in a conversation that has one selected.
+    // persona would greet "User" by name in a conversation that has one selected. The greeting
+    // itself now comes from the selected scenario (if any) rather than the character -- no
+    // scenario selected means no greeting, same as no scenario means no [SCENARIO] section.
     const persona = input.userPersonaId
       ? conversationService.getPersona(input.userPersonaId)
       : null;
+    const scenarioGreeting = input.scenarioId ? scenarioService.getActiveGreeting(input.scenarioId) : null;
     const built = promptBuilder.buildSystemPrompt(input.characterId, {
       personaName: persona?.name ?? null,
       personaBackground: persona?.background ?? null,
+      scenarioGreeting,
     });
     return conversationService.createConversation({ ...input, greeting: built.greeting });
   });
 
-  ipcMain.handle('conversations:rename', (_, id: string, title: string) =>
-    conversationService.renameConversation(id, title)
+  ipcMain.handle('conversations:rename', (_, id: string, title: string) => {
+    guardConversationTitle(title);
+    return conversationService.renameConversation(id, title);
+  });
+
+  ipcMain.handle('conversations:setPersona', (_, id: string, userPersonaId: string | null) =>
+    conversationService.setConversationPersona(id, userPersonaId)
+  );
+
+  ipcMain.handle('conversations:setScenario', (_, id: string, scenarioId: string | null) =>
+    conversationService.setConversationScenario(id, scenarioId)
   );
 
   ipcMain.handle(
@@ -720,6 +909,7 @@ function registerIPCHandlers() {
       input: {
         characterImageMode?: 'carousel' | 'static';
         characterImageId?: string | null;
+        scenarioImageId?: string | null;
         personaImageMode?: 'carousel' | 'static';
         personaImageId?: string | null;
       }
@@ -730,6 +920,18 @@ function registerIPCHandlers() {
     chatSessions.dropSession(id);
     conversationService.deleteConversation(id);
     return { success: true };
+  });
+
+  ipcMain.handle('conversations:deleteDraft', (_, id: string) => {
+    const deleted = conversationService.deleteDraftConversation(id);
+    if (deleted) chatSessions.dropSession(id);
+    return { deleted };
+  });
+
+  ipcMain.handle('conversations:purgeDrafts', (_, exceptId?: string) => {
+    const deletedIds = conversationService.purgeDraftConversations(exceptId ?? null);
+    for (const id of deletedIds) chatSessions.dropSession(id);
+    return { deletedIds };
   });
 
   // Ollama handlers -- the app stays fully usable when the server is absent, so these
@@ -776,6 +978,9 @@ function registerIPCHandlers() {
     modelSamplerService.resetAll(model);
     return { success: true };
   });
+  ipcMain.handle('modelTuning:setEnabled', (_, model: string, enabled: boolean) =>
+    modelSamplerService.setEnabled(model, enabled)
+  );
 
   registerLorebookHandlers();
   registerChatHandlers();
@@ -797,6 +1002,7 @@ function registerIPCHandlers() {
     return { stopPhrases, overriddenFields };
   });
   ipcMain.handle('promptSettings:updateStopPhrases', (_, partial: Partial<StopPhraseSettings>) => {
+    guardStopPhrasesUpdate(partial);
     promptSettingsService.updateStopPhrases(partial);
     return { success: true };
   });
@@ -823,9 +1029,10 @@ function registerIPCHandlers() {
   ipcMain.handle('promptFieldVersions:duplicate', (_, versionId: string) =>
     promptFieldVersionService.duplicateVersion(versionId)
   );
-  ipcMain.handle('promptFieldVersions:updateContent', (_, id: string, content: string) =>
-    promptFieldVersionService.updateVersionContent(id, content)
-  );
+  ipcMain.handle('promptFieldVersions:updateContent', (_, id: string, content: string) => {
+    guardProseContent(content, 'Template');
+    return promptFieldVersionService.updateVersionContent(id, content);
+  });
   ipcMain.handle('promptFieldVersions:delete', (_, id: string) => {
     promptFieldVersionService.deleteVersion(id);
     return { success: true };
@@ -879,6 +1086,7 @@ function registerIPCHandlers() {
         conversationService.reencryptHiddenPersonaContent(oldKey, newKey);
         personaFieldVersionService.reencryptHiddenContent(oldKey, newKey);
         lorebookService.reencryptAllHiddenContent(oldKey, newKey);
+        scenarioService.reencryptHiddenContent(oldKey, newKey);
 
         // A session that was already unlocked stays unlocked under the new key; one that was
         // locked stays locked -- changing the PIN neither requires nor grants unlock.
@@ -895,12 +1103,14 @@ function registerIPCHandlers() {
 function registerLorebookHandlers() {
   ipcMain.handle('lorebooks:getWorldBooks', () => lorebookService.listWorldBooks());
   ipcMain.handle('lorebooks:getById', (_, id: string) => lorebookService.getBook(id));
-  ipcMain.handle('lorebooks:create', (_, input: CreateLorebookInput) =>
-    lorebookService.createBook(input)
-  );
-  ipcMain.handle('lorebooks:update', (_, id: string, input: UpdateLorebookInput) =>
-    lorebookService.updateBook(id, input)
-  );
+  ipcMain.handle('lorebooks:create', (_, input: CreateLorebookInput) => {
+    guardLorebookCreate(input);
+    return lorebookService.createBook(input);
+  });
+  ipcMain.handle('lorebooks:update', (_, id: string, input: UpdateLorebookInput) => {
+    guardLorebookUpdate(input);
+    return lorebookService.updateBook(id, input);
+  });
   ipcMain.handle('lorebooks:setHidden', (_, id: string, hidden: boolean) =>
     lorebookService.setHidden(id, hidden)
   );
@@ -974,6 +1184,46 @@ function registerLorebookHandlers() {
     return { lorebook, warnings: parsed.warnings };
   });
 
+  // Bulk-creates a new world book from a hand-authored JSON file -- see
+  // shared/lorebookImportSample.ts for the shape and the "Copy sample JSON" buttons that hand
+  // it out.
+  ipcMain.handle('lorebooks:importFromJson', async () => {
+    if (!mainWindow) return null;
+
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import world book from JSON',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+
+    const parsed = parseLorebookJson(fs.readFileSync(picked.filePaths[0], 'utf-8'));
+    if (!parsed.name) {
+      parsed.warnings.unshift('No "name" found -- used "Imported World Book". Rename it after importing.');
+    }
+
+    const lorebook = transaction(db!, () => {
+      const created = lorebookService.createBook({
+        name: parsed.name ?? 'Imported World Book',
+        description: parsed.description ?? undefined,
+      });
+      for (const entry of parsed.entries) {
+        const newEntry = lorebookService.createEntry({
+          lorebookId: created.id,
+          title: entry.title,
+          keys: entry.keys,
+          content: entry.content,
+          alwaysOn: entry.alwaysOn,
+          priority: entry.priority,
+        });
+        if (!entry.enabled) lorebookService.updateEntry(newEntry.id, { enabled: false });
+      }
+      return lorebookService.getBook(created.id)!;
+    });
+
+    return { lorebook, warnings: parsed.warnings };
+  });
+
   ipcMain.handle('lorebooks:clone', (_, id: string) => {
     const source = lorebookService.getBook(id);
     if (!source) throw new Error(`Lorebook with id ${id} not found`);
@@ -1009,31 +1259,80 @@ function registerLorebookHandlers() {
     return { success: true };
   });
 
+  // Same, for a persona's own attached world books.
+  ipcMain.handle('lorebooks:getForPersona', (_, personaId: string) =>
+    lorebookService.getBooksForPersona(personaId)
+  );
+  ipcMain.handle('lorebooks:attachToPersona', (_, personaId: string, lorebookId: string) => {
+    lorebookService.attachBookForPersona(personaId, lorebookId);
+    return { success: true };
+  });
+  ipcMain.handle('lorebooks:detachFromPersona', (_, personaId: string, lorebookId: string) => {
+    lorebookService.detachBookForPersona(personaId, lorebookId);
+    return { success: true };
+  });
+
   // Entries
   ipcMain.handle('loreEntries:getByBook', (_, lorebookId: string) =>
     lorebookService.listEntries(lorebookId)
   );
-  ipcMain.handle('loreEntries:create', (_, input: CreateLorebookEntryInput) =>
-    lorebookService.createEntry(input)
-  );
-  ipcMain.handle('loreEntries:update', (_, id: string, input: UpdateLorebookEntryInput) =>
-    lorebookService.updateEntry(id, input)
-  );
+  ipcMain.handle('loreEntries:create', (_, input: CreateLorebookEntryInput) => {
+    guardLoreEntryCreate(input);
+    return lorebookService.createEntry(input);
+  });
+  ipcMain.handle('loreEntries:update', (_, id: string, input: UpdateLorebookEntryInput) => {
+    guardLoreEntryUpdate(input);
+    return lorebookService.updateEntry(id, input);
+  });
   ipcMain.handle('loreEntries:delete', (_, id: string) => {
     lorebookService.deleteEntry(id);
     return { success: true };
+  });
+
+  // Bulk-adds entries to an already-existing book (a character's or persona's personal
+  // history) from a hand-authored JSON file. "name"/"description" in the JSON, if present,
+  // are ignored -- the book already exists.
+  ipcMain.handle('loreEntries:importFromJson', async (_, lorebookId: string) => {
+    if (!mainWindow) return null;
+
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import entries from JSON',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+
+    const parsed = parseLorebookJson(fs.readFileSync(picked.filePaths[0], 'utf-8'));
+
+    transaction(db!, () => {
+      for (const entry of parsed.entries) {
+        const newEntry = lorebookService.createEntry({
+          lorebookId,
+          title: entry.title,
+          keys: entry.keys,
+          content: entry.content,
+          alwaysOn: entry.alwaysOn,
+          priority: entry.priority,
+        });
+        if (!entry.enabled) lorebookService.updateEntry(newEntry.id, { enabled: false });
+      }
+    });
+
+    return { count: parsed.entries.length, warnings: parsed.warnings };
   });
 
   // Entry versions -- same operations the character field editor offers.
   ipcMain.handle('loreVersions:getByEntry', (_, entryId: string) =>
     lorebookService.getVersions(entryId)
   );
-  ipcMain.handle('loreVersions:create', (_, entryId: string, content: string) =>
-    lorebookService.createVersion(entryId, content)
-  );
-  ipcMain.handle('loreVersions:updateContent', (_, versionId: string, content: string) =>
-    lorebookService.updateVersionContent(versionId, content)
-  );
+  ipcMain.handle('loreVersions:create', (_, entryId: string, content: string) => {
+    guardLoreText(content);
+    return lorebookService.createVersion(entryId, content);
+  });
+  ipcMain.handle('loreVersions:updateContent', (_, versionId: string, content: string) => {
+    guardLoreText(content);
+    return lorebookService.updateVersionContent(versionId, content);
+  });
   ipcMain.handle('loreVersions:delete', (_, versionId: string) => {
     lorebookService.deleteVersion(versionId);
     return { success: true };
@@ -1056,7 +1355,11 @@ function registerLorebookHandlers() {
  * Throws rather than letting decryptIfHidden's lenient locked-read silently feed ciphertext
  * into the model's prompt.
  */
-function assertHiddenContentAccessible(characterId: string | null, personaId?: string | null): void {
+function assertHiddenContentAccessible(
+  characterId: string | null,
+  personaId?: string | null,
+  scenarioId?: string | null
+): void {
   if (securityService.isUnlocked()) return;
   if (characterId && characterService.getCharacterById(characterId)?.isHidden) {
     throw new Error('This character is hidden -- unlock with the PIN before chatting with it.');
@@ -1064,10 +1367,15 @@ function assertHiddenContentAccessible(characterId: string | null, personaId?: s
   if (personaId && conversationService.getPersona(personaId)?.isHidden) {
     throw new Error('This persona is hidden -- unlock with the PIN before using it.');
   }
+  if (scenarioId && scenarioService.getScenario(scenarioId)?.isHidden) {
+    throw new Error('This scenario is hidden -- unlock with the PIN before using it.');
+  }
 }
 
 function registerChatHandlers() {
   ipcMain.handle('chat:send', (event, request: ChatSendRequest & { characterId: string; personaId?: string; model: string }) => {
+    guardChatMessage(request.message);
+    guardDirections(request.directions);
     const streamId = randomUUID();
     const sender = event.sender;
 
@@ -1082,8 +1390,9 @@ function registerChatHandlers() {
     // renderer can subscribe before tokens start arriving.
     void (async () => {
       try {
-        assertHiddenContentAccessible(request.characterId, request.personaId);
-        const { message, debug } = await chatSessions.generate(
+        const conversation = conversationService.getConversation(request.conversationId);
+        assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+        const { message, debug, userMessage } = await chatSessions.generate(
           {
             conversationId: request.conversationId,
             characterId: request.characterId,
@@ -1097,7 +1406,7 @@ function registerChatHandlers() {
           },
           (text) => send({ streamId, type: 'token', text })
         );
-        send({ streamId, type: 'done', message, debug });
+        send({ streamId, type: 'done', message, debug, userMessage });
       } catch (error) {
         // A cancel is a user action, not a failure -- the renderer treats them differently.
         if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
@@ -1124,7 +1433,11 @@ function registerChatHandlers() {
     void (async () => {
       try {
         const conversation = conversationService.getConversation(request.conversationId);
-        assertHiddenContentAccessible(conversation?.characterId ?? null, conversation?.userPersonaId);
+        assertHiddenContentAccessible(
+          conversation?.characterId ?? null,
+          conversation?.userPersonaId,
+          conversation?.scenarioId
+        );
         const { message, debug } = await chatSessions.regenerate(
           request.conversationId,
           (text) => send({ streamId, type: 'token', text }),
@@ -1144,12 +1457,17 @@ function registerChatHandlers() {
     return { streamId };
   });
 
-  // Lets the character take another turn on its own -- same streaming shape as chat:send, and
-  // the same terminal 'done' event, since this appends a brand-new message rather than
-  // replacing the pending one in place (that's what chat:regenerate's 'variantDone' is for).
+  // Rewrites the user message behind the pending reply and regenerates that reply against the
+  // new text -- same streaming shape as chat:regenerate (terminal 'variantDone'), since this
+  // also replaces the pending message's shown content rather than appending a new one.
   ipcMain.handle(
-    'chat:continue',
-    (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
+    'chat:editPriorMessage',
+    (
+      event,
+      request: ChatEditPriorMessageRequest & { characterId: string; personaId?: string; model: string }
+    ) => {
+      guardChatMessage(request.message);
+      guardDirections(request.directions);
       const streamId = randomUUID();
       const sender = event.sender;
 
@@ -1161,7 +1479,57 @@ function registerChatHandlers() {
 
       void (async () => {
         try {
-          assertHiddenContentAccessible(request.characterId, request.personaId);
+          const conversation = conversationService.getConversation(request.conversationId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+          const { message, debug, userMessage } = await chatSessions.editPriorUserMessage(
+            {
+              conversationId: request.conversationId,
+              messageId: request.messageId,
+              characterId: request.characterId,
+              personaId: request.personaId ?? null,
+              personaName: persona?.name ?? null,
+              personaBackground: persona?.background ?? null,
+              userMessage: request.message,
+              model: request.model,
+              directions: request.directions,
+              samplers: request.samplers,
+            },
+            (text) => send({ streamId, type: 'token', text })
+          );
+          send({ streamId, type: 'variantDone', message, debug, userMessage });
+        } catch (error) {
+          if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+            send({ streamId, type: 'cancelled' });
+          } else {
+            send({ streamId, type: 'error', message: (error as Error).message });
+          }
+        }
+      })();
+
+      return { streamId };
+    }
+  );
+
+  // Lets the character take another turn on its own -- same streaming shape as chat:send, and
+  // the same terminal 'done' event, since this appends a brand-new message rather than
+  // replacing the pending one in place (that's what chat:regenerate's 'variantDone' is for).
+  ipcMain.handle(
+    'chat:continue',
+    (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
+      guardDirections(request.directions);
+      const streamId = randomUUID();
+      const sender = event.sender;
+
+      const send = (payload: ChatStreamEvent) => {
+        if (!sender.isDestroyed()) sender.send('chat:stream', payload);
+      };
+
+      const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+
+      void (async () => {
+        try {
+          const conversation = conversationService.getConversation(request.conversationId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
           const { message, debug } = await chatSessions.continueAsCharacter(
             {
               conversationId: request.conversationId,
@@ -1207,7 +1575,8 @@ function registerChatHandlers() {
       _,
       request: { conversationId: string; characterId: string; personaId?: string; model: string }
     ) => {
-      assertHiddenContentAccessible(request.characterId, request.personaId);
+      const conversation = conversationService.getConversation(request.conversationId);
+      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
       const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
       const suggestion = await chatSessions.suggestReply(
         request.conversationId,
@@ -1229,9 +1598,10 @@ function registerChatHandlers() {
 
   // Hand-edits the last (pending) assistant message -- see ChatSessionManager.editMessage for
   // why this creates a new variant rather than mutating the shown one in place.
-  ipcMain.handle('chat:editMessage', (_, conversationId: string, messageId: string, content: string) =>
-    chatSessions.editMessage(conversationId, messageId, content)
-  );
+  ipcMain.handle('chat:editMessage', (_, conversationId: string, messageId: string, content: string) => {
+    guardChatMessage(content);
+    return chatSessions.editMessage(conversationId, messageId, content);
+  });
 
   // Extraction outlives the request that triggered it, so its result is pushed rather than
   // returned. Broadcast to every window: two windows can have the same conversation open.
@@ -1253,13 +1623,15 @@ function registerChatHandlers() {
 
   // Manually added memories are 'manual', which makes them pinned: always injected,
   // bypassing both the similarity threshold and the token budget.
-  ipcMain.handle('memories:add', (_, conversationId: string, content: string) =>
-    conversationService.addMemory({ conversationId, content, source: 'manual' })
-  );
+  ipcMain.handle('memories:add', (_, conversationId: string, content: string) => {
+    guardMemory(content);
+    return conversationService.addMemory({ conversationId, content, source: 'manual' });
+  });
 
-  ipcMain.handle('memories:update', (_, id: string, content: string) =>
-    conversationService.updateMemory(id, content)
-  );
+  ipcMain.handle('memories:update', (_, id: string, content: string) => {
+    guardMemory(content);
+    return conversationService.updateMemory(id, content);
+  });
 
   ipcMain.handle('memories:delete', (_, id: string) => {
     conversationService.deleteMemory(id);

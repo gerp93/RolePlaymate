@@ -9,6 +9,7 @@ import {
   ChatStreamEvent,
   ChatSendRequest,
   ChatRegenerateRequest,
+  ChatEditPriorMessageRequest,
   ChatDebugInfo,
   SamplerParams,
   ModelSamplerDefaults,
@@ -19,7 +20,14 @@ import {
   UpdateUserPersonaInput,
   PersonaBackgroundVersion,
 } from '../shared/types/userPersona';
-import { Conversation, CreateConversationInput, ImageMode } from '../shared/types/conversation';
+import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../shared/types/conversation';
+import {
+  Scenario,
+  ScenarioVersion,
+  ScenarioImage,
+  CreateScenarioInput,
+  UpdateScenarioInput,
+} from '../shared/types/scenario';
 import { Message, MessageVariant } from '../shared/types/message';
 import { ConversationMemory } from '../shared/types/conversationMemory';
 import {
@@ -70,6 +78,32 @@ declare global {
         remove: (id: string) => Promise<{ success: boolean }>;
         setCover: (id: string) => Promise<{ success: boolean }>;
       };
+      scenarios: {
+        getByCharacter: (characterId: string) => Promise<Scenario[]>;
+        getById: (id: string) => Promise<Scenario | null>;
+        create: (input: CreateScenarioInput) => Promise<Scenario>;
+        update: (id: string, input: UpdateScenarioInput) => Promise<Scenario>;
+        setHidden: (id: string, hidden: boolean) => Promise<Scenario>;
+        delete: (id: string) => Promise<{ success: boolean }>;
+      };
+      scenarioVersions: {
+        getByScenario: (scenarioId: string) => Promise<ScenarioVersion[]>;
+        create: (scenarioId: string, content: string) => Promise<ScenarioVersion>;
+        updateContent: (id: string, content: string) => Promise<ScenarioVersion>;
+        delete: (id: string) => Promise<{ success: boolean }>;
+      };
+      scenarioGreetingVersions: {
+        getByScenario: (scenarioId: string) => Promise<ScenarioVersion[]>;
+        create: (scenarioId: string, content: string) => Promise<ScenarioVersion>;
+        updateContent: (id: string, content: string) => Promise<ScenarioVersion>;
+        delete: (id: string) => Promise<{ success: boolean }>;
+      };
+      scenarioImages: {
+        getByScenario: (scenarioId: string) => Promise<ScenarioImage[]>;
+        add: (scenarioId: string) => Promise<ScenarioImage[]>;
+        remove: (id: string) => Promise<{ success: boolean }>;
+        setCover: (id: string) => Promise<{ success: boolean }>;
+      };
       dbLocation: {
         get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string }>;
         browseExisting: () => Promise<string | null>;
@@ -77,15 +111,23 @@ declare global {
         set: (newPath: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
       };
+      ollamaHost: {
+        get: () => Promise<{ host: string; isDefault: boolean; defaultHost: string }>;
+        set: (host: string) => Promise<{ success: boolean }>;
+        resetToDefault: () => Promise<{ success: boolean }>;
+      };
       chat: {
         previewSystemPrompt: (
           characterId: string,
-          options?: { personaId?: string; directions?: string; memories?: string[] }
+          options?: { personaId?: string; scenarioId?: string; directions?: string; memories?: string[] }
         ) => Promise<BuiltPrompt>;
         send: (
           request: ChatSendRequest & { characterId: string; personaId?: string; model: string }
         ) => Promise<{ streamId: string }>;
         regenerate: (request: ChatRegenerateRequest) => Promise<{ streamId: string }>;
+        editPriorMessage: (
+          request: ChatEditPriorMessageRequest & { characterId: string; personaId?: string; model: string }
+        ) => Promise<{ streamId: string }>;
         continue: (request: {
           conversationId: string;
           characterId: string;
@@ -136,6 +178,9 @@ declare global {
         delete: (id: string) => Promise<{ success: true }>;
         chooseImage: () => Promise<string | null>;
         importFromHtml: () => Promise<{ lorebook: Lorebook; warnings: string[] } | null>;
+        /** Creates a brand-new world book from a hand-authored JSON file -- see
+         * shared/lorebookImportSample.ts for the shape. */
+        importFromJson: () => Promise<{ lorebook: Lorebook; warnings: string[] } | null>;
         clone: (id: string) => Promise<Lorebook>;
         /** Creates the book on first request rather than alongside every character. */
         getPersonalBook: (characterId: string) => Promise<Lorebook>;
@@ -146,12 +191,18 @@ declare global {
         ) => Promise<{ world: Lorebook[]; personal: Lorebook | null }>;
         attach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
         detach: (characterId: string, lorebookId: string) => Promise<{ success: true }>;
+        /** Same, for a persona's own attached world books (only used by "Suggest reply"). */
+        getForPersona: (personaId: string) => Promise<{ world: Lorebook[]; personal: Lorebook | null }>;
+        attachToPersona: (personaId: string, lorebookId: string) => Promise<{ success: true }>;
+        detachFromPersona: (personaId: string, lorebookId: string) => Promise<{ success: true }>;
       };
       loreEntries: {
         getByBook: (lorebookId: string) => Promise<LorebookEntry[]>;
         create: (input: CreateLorebookEntryInput) => Promise<LorebookEntry>;
         update: (id: string, input: UpdateLorebookEntryInput) => Promise<LorebookEntry>;
         delete: (id: string) => Promise<{ success: true }>;
+        /** Bulk-adds entries to an already-existing book from a hand-authored JSON file. */
+        importFromJson: (lorebookId: string) => Promise<{ count: number; warnings: string[] } | null>;
       };
       loreVersions: {
         getByEntry: (entryId: string) => Promise<LorebookEntryVersion[]>;
@@ -160,21 +211,26 @@ declare global {
         delete: (versionId: string) => Promise<{ success: true }>;
       };
       conversations: {
-        getAll: () => Promise<Conversation[]>;
+        getAll: () => Promise<ConversationListItem[]>;
         getById: (id: string) => Promise<Conversation | null>;
         getMessages: (id: string) => Promise<Message[]>;
         create: (input: CreateConversationInput) => Promise<Conversation>;
         rename: (id: string, title: string) => Promise<Conversation>;
+        setPersona: (id: string, userPersonaId: string | null) => Promise<Conversation>;
+        setScenario: (id: string, scenarioId: string | null) => Promise<Conversation>;
         setImageMode: (
           id: string,
           input: {
             characterImageMode?: ImageMode;
             characterImageId?: string | null;
+            scenarioImageId?: string | null;
             personaImageMode?: ImageMode;
             personaImageId?: string | null;
           }
         ) => Promise<Conversation>;
         delete: (id: string) => Promise<{ success: true }>;
+        deleteDraft: (id: string) => Promise<{ deleted: boolean }>;
+        purgeDrafts: (exceptId?: string) => Promise<{ deletedIds: string[] }>;
       };
       ollama: {
         listModels: () => Promise<
@@ -193,6 +249,7 @@ declare global {
         update: (model: string, partial: Partial<SamplerParams>) => Promise<ModelSamplerDefaults>;
         resetField: (model: string, field: keyof SamplerParams) => Promise<{ success: boolean }>;
         resetAll: (model: string) => Promise<{ success: boolean }>;
+        setEnabled: (model: string, enabled: boolean) => Promise<ModelSamplerDefaults>;
       };
       personas: {
         getAll: () => Promise<UserPersona[]>;

@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { getLastConversationId } from '../utils/lastConversation';
 import { useSecurity } from '../context/SecurityContext';
 import PinModal from './PinModal';
@@ -22,6 +22,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   const lastConversationId = getLastConversationId();
   const { hiddenUnlocked, lock } = useSecurity();
   const [pinModalOpen, setPinModalOpen] = useState(false);
+  // Chat's own conversation sidebar wants to sit almost flush against the window edge --
+  // .main-content's normal 32px left padding is too generous for it, unlike every other page
+  // here which relies on that padding for breathing room around a centered form/table.
+  const { pathname } = useLocation();
+  const isChatRoute = pathname.startsWith('/chat');
 
   const navItems = NAV_ITEMS.map((item) =>
     item.to === '/chat' && lastConversationId ? { ...item, to: `/chat/${lastConversationId}` } : item
@@ -58,7 +63,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {hiddenUnlocked ? '🔓' : '🔒'}
         </button>
       </nav>
-      <main className="main-content">{children}</main>
+      <main className={`main-content${isChatRoute ? ' main-content-chat' : ''}`}>{children}</main>
       {pinModalOpen && <PinModal onClose={() => setPinModalOpen(false)} />}
     </div>
   );

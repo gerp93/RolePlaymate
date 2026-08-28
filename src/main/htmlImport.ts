@@ -8,6 +8,14 @@ export interface ParsedCharacterImport {
   description: string | null;
   /** Only the field types actually found on the page -- callers should leave the rest blank. */
   fields: Partial<Record<FieldType, string>>;
+  /** The page's "Scenario" section, if found. Kept separate from `fields` since scenario is no
+   * longer a fixed CharacterField -- callers create a Scenario from this instead (see
+   * characters:importFromHtml). */
+  scenario: string | null;
+  /** The page's "Greeting" section. Same treatment as `scenario` -- greeting is scenario-
+   * specific now too, so this becomes that same Scenario's greeting rather than a
+   * CharacterField. */
+  greeting: string | null;
   /** The profile image's `src` as written in the page -- usually a path relative to the saved
    * HTML file's own "_files" folder. Resolve with resolveLocalAvatarPath before using it. */
   avatarSrc: string | null;
@@ -15,11 +23,16 @@ export interface ParsedCharacterImport {
   warnings: string[];
 }
 
+/** The section labels this importer recognizes -- the fixed CharacterFields plus "scenario" and
+ * "greeting", which are extracted the same way but handled separately (see
+ * ParsedCharacterImport.scenario/greeting). */
+type ImportSection = FieldType | 'scenario' | 'greeting';
+
 // A saved chatbot profile page labels each section with a standalone heading element
 // ("Greeting", "Personality", ...) immediately followed by a container holding that
 // section's content -- this holds regardless of the exact class names the source site ships,
 // which is what makes matching on label text (rather than CSS classes) durable.
-const SECTION_LABELS: Record<string, FieldType> = {
+const SECTION_LABELS: Record<string, ImportSection> = {
   greeting: 'greeting',
   personality: 'personality',
   scenario: 'scenario',
@@ -46,11 +59,24 @@ export function parseCharacterHtml(html: string): ParsedCharacterImport {
     warnings.push('No description found.');
   }
 
-  const fields = extractFields(root);
+  const extracted = extractFields(root);
+  const scenario = extracted.scenario ?? null;
+  const greeting = extracted.greeting ?? null;
+  const fields: Partial<Record<FieldType, string>> = {};
+  for (const fieldType of FIELD_TYPES) {
+    if (extracted[fieldType] !== undefined) fields[fieldType] = extracted[fieldType];
+  }
+
   const missingTypes = new Set<FieldType>(FIELD_TYPES);
   for (const fieldType of Object.keys(fields) as FieldType[]) missingTypes.delete(fieldType);
   for (const fieldType of missingTypes) {
     warnings.push(`No "${fieldType}" section found on the page -- left blank.`);
+  }
+  if (!scenario) {
+    warnings.push('No "scenario" section found on the page -- left blank.');
+  }
+  if (!greeting) {
+    warnings.push('No "greeting" section found on the page -- left blank.');
   }
 
   // Prefer the visible profile image's src: it's normally a path into the "_files" folder
@@ -63,7 +89,7 @@ export function parseCharacterHtml(html: string): ParsedCharacterImport {
     warnings.push('No portrait image found.');
   }
 
-  return { name, description, fields, avatarSrc, warnings };
+  return { name, description, fields, scenario, greeting, avatarSrc, warnings };
 }
 
 /** `confident: true` means a genuine name-shaped source was found (page heading or browser-tab
@@ -119,8 +145,8 @@ function extractIdentity(root: HTMLElement): Identity {
 
 /** Finds every standalone label element ("Greeting", "Personality", ...) and converts the
  * content container immediately after it into formatted plain text. */
-function extractFields(root: HTMLElement): Partial<Record<FieldType, string>> {
-  const fields: Partial<Record<FieldType, string>> = {};
+function extractFields(root: HTMLElement): Partial<Record<ImportSection, string>> {
+  const fields: Partial<Record<ImportSection, string>> = {};
 
   for (const el of root.querySelectorAll('*')) {
     if (el.children.length > 0) continue; // only leaf (text-only) elements can be section labels

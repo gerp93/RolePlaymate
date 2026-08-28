@@ -62,6 +62,11 @@ textarea {
   padding: 24px 32px;
 }
 
+.main-content-chat {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
 .page-header {
   margin-bottom: 20px;
 }
@@ -83,6 +88,13 @@ textarea {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 16px 20px;
+}
+
+/* Alternating row background for plain reference tables (Model Tuning's Sampler Parameters
+   and Model Terminology cards) -- these are dense walls of text, and a bare white background
+   makes it easy to lose which row you're on scanning across a wide description column. */
+.zebra-table tr:nth-child(even) {
+  background: var(--color-bg-hover);
 }
 
 .field {
@@ -126,6 +138,43 @@ textarea {
   color: var(--color-accent-red);
   font-size: 12px;
   margin: 8px 0 0;
+}
+
+.limited-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.limited-field input,
+.limited-field textarea {
+  width: 100%;
+}
+
+.lore-new-entry .limited-field,
+.lore-new-book .limited-field,
+.memories-add .limited-field {
+  flex: 1;
+}
+
+.limited-field-grow {
+  flex: 1;
+}
+
+.char-count {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+.char-count-near-limit {
+  color: var(--color-accent-blue);
+}
+
+.char-count-at-limit {
+  color: var(--color-accent-red);
 }
 
 .version-diff-panel {

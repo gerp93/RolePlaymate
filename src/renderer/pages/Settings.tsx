@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { THEME_LABELS, Theme } from '../utils/themes';
 import { CHAT_FONT_SIZES, ChatFontSize, getStoredChatFontSize, saveChatFontSize } from '../utils/chatFontSize';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 export default function Settings() {
   const { currentTheme, setTheme, availableThemes } = useTheme();
@@ -11,6 +13,13 @@ export default function Settings() {
     null
   );
   const [dbBusy, setDbBusy] = useState(false);
+
+  const [ollamaHost, setOllamaHostState] = useState<{ host: string; isDefault: boolean; defaultHost: string } | null>(
+    null
+  );
+  const [ollamaHostDraft, setOllamaHostDraft] = useState('');
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaMessage, setOllamaMessage] = useState<string | null>(null);
 
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -27,6 +36,10 @@ export default function Settings() {
   useEffect(() => {
     window.electronAPI.dbLocation.get().then(setDbLocation);
     window.electronAPI.app.getVersion().then(setAppVersion);
+    window.electronAPI.ollamaHost.get().then((result) => {
+      setOllamaHostState(result);
+      setOllamaHostDraft(result.host);
+    });
   }, []);
 
   async function handleCheckForUpdates() {
@@ -59,6 +72,34 @@ export default function Settings() {
     if (!confirm(`Switch back to the default database location (${dbLocation?.defaultPath})?`)) return;
     setDbBusy(true);
     await window.electronAPI.dbLocation.resetToDefault();
+  }
+
+  async function handleSaveOllamaHost() {
+    setOllamaBusy(true);
+    setOllamaMessage(null);
+    try {
+      await window.electronAPI.ollamaHost.set(ollamaHostDraft);
+      const result = await window.electronAPI.ollamaHost.get();
+      setOllamaHostState(result);
+      setOllamaHostDraft(result.host);
+      setOllamaMessage('Saved.');
+    } finally {
+      setOllamaBusy(false);
+    }
+  }
+
+  async function handleResetOllamaHost() {
+    setOllamaBusy(true);
+    setOllamaMessage(null);
+    try {
+      await window.electronAPI.ollamaHost.resetToDefault();
+      const result = await window.electronAPI.ollamaHost.get();
+      setOllamaHostState(result);
+      setOllamaHostDraft(result.host);
+      setOllamaMessage('Reset to default.');
+    } finally {
+      setOllamaBusy(false);
+    }
   }
 
   async function handleChangePin() {
@@ -267,6 +308,50 @@ export default function Settings() {
             {dbBusy && (
               <p className="text-muted" style={{ fontSize: 13, marginTop: 8 }}>
                 Restarting RolePlaymate to load the new location…
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <h2 style={{ fontSize: 15, marginTop: 0 }}>Ollama Server</h2>
+        <p className="text-muted" style={{ marginTop: -8, fontSize: 13 }}>
+          The local Ollama server RolePlaymate talks to for chat. Change this if it&apos;s
+          running on a different port, or on another machine on your network.
+        </p>
+        {ollamaHost && (
+          <>
+            <div className="field">
+              <label>Server URL{ollamaHost.isDefault ? ' (default)' : ''}</label>
+              <LimitedInput
+                value={ollamaHostDraft}
+                limit={FIELD_LIMITS.url}
+                onChange={(e) => setOllamaHostDraft(e.target.value)}
+                placeholder={ollamaHost.defaultHost}
+                style={{ maxWidth: 300, fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <p className="text-muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+                *default is {ollamaHost.defaultHost}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="btn"
+                disabled={ollamaBusy || !ollamaHostDraft.trim() || ollamaHostDraft === ollamaHost.host}
+                onClick={() => void handleSaveOllamaHost()}
+              >
+                Save
+              </button>
+              {!ollamaHost.isDefault && (
+                <button className="btn" disabled={ollamaBusy} onClick={() => void handleResetOllamaHost()}>
+                  Reset to Default
+                </button>
+              )}
+            </div>
+            {ollamaMessage && (
+              <p className="text-muted" style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                {ollamaMessage}
               </p>
             )}
           </>

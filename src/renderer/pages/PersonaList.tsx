@@ -4,6 +4,8 @@ import { UserPersona } from '../../shared/types/userPersona';
 import { PersonaImage } from '../../shared/types/personaImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
+import LimitedInput from '../components/LimitedInput';
+import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 // Same sizing rule as the character grid -- fewer tiles get bigger, more tiles bottom out and
 // scroll instead of shrinking further. Kept identical on purpose: the two grids should read as
@@ -89,16 +91,18 @@ export default function PersonaList() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <LimitedInput
             value={newName}
+            limit={FIELD_LIMITS.name}
+            compactCount
+            fieldClassName="limited-field-grow"
             onChange={(e) => {
               setNewName(e.target.value);
               if (nameError) setNameError(false);
             }}
             onKeyDown={(e) => e.key === 'Enter' && void handleCreate()}
             placeholder="New persona name"
-            style={{ flex: 1 }}
           />
           <button className="btn btn-primary" onClick={() => void handleCreate()}>
             Create Persona
@@ -132,14 +136,14 @@ export default function PersonaList() {
                     <p className="text-muted persona-warning">No background yet</p>
                   )}
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      className="btn"
-                      disabled={!persona.isHidden && !hiddenUnlocked}
-                      title={!persona.isHidden && !hiddenUnlocked ? 'Unlock from the topbar to hide items' : undefined}
-                      onClick={(e) => void handleToggleHidden(e, persona.id, persona.isHidden)}
-                    >
-                      {persona.isHidden ? 'Unhide' : 'Hide'}
-                    </button>
+                    {hiddenUnlocked && (
+                      <button
+                        className="btn"
+                        onClick={(e) => void handleToggleHidden(e, persona.id, persona.isHidden)}
+                      >
+                        {persona.isHidden ? 'Unhide' : 'Hide'}
+                      </button>
+                    )}
                     <button className="btn" onClick={(e) => void handleClone(e, persona.id)}>
                       Clone
                     </button>

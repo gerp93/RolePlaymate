@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
-import { Conversation, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
+import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
 import { Message, MessageRole, MessageVariant } from '../../shared/types/message';
 import { ChatDebugInfo } from '../../shared/types/chat';
 import {
@@ -23,12 +23,30 @@ const CONVERSATION_COLUMNS = `
   model,
   character_id as characterId,
   user_persona_id as userPersonaId,
+  scenario_id as scenarioId,
   character_image_mode as characterImageMode,
   character_image_id as characterImageId,
+  scenario_image_id as scenarioImageId,
   persona_image_mode as personaImageMode,
   persona_image_id as personaImageId,
   created_at as createdAt,
   updated_at as updatedAt
+`;
+
+const CONVERSATION_COLUMNS_FROM_C = `
+  c.id,
+  c.title,
+  c.model,
+  c.character_id as characterId,
+  c.user_persona_id as userPersonaId,
+  c.scenario_id as scenarioId,
+  c.character_image_mode as characterImageMode,
+  c.character_image_id as characterImageId,
+  c.scenario_image_id as scenarioImageId,
+  c.persona_image_mode as personaImageMode,
+  c.persona_image_id as personaImageId,
+  c.created_at as createdAt,
+  c.updated_at as updatedAt
 `;
 
 const MESSAGE_COLUMNS = `
@@ -77,6 +95,25 @@ const PERSONA_FROM = `
   LEFT JOIN persona_background_versions pbv ON pbv.persona_id = up.id AND pbv.is_active = 1
 `;
 
+function rowToConversationListItem(
+  row: Record<string, unknown>,
+  security: SecurityService
+): ConversationListItem {
+  const conversation = rowToConversation(row);
+  const scenarioNameRaw = row.scenarioName as string | null | undefined;
+  const scenarioIsHidden = !!row.scenarioIsHidden;
+  return {
+    ...conversation,
+    messageCount: Number(row.messageCount ?? 0),
+    userMessageCount: Number(row.userMessageCount ?? 0),
+    lastMessageAt: (row.lastMessageAt as string | null) ?? null,
+    scenarioName:
+      scenarioNameRaw == null
+        ? null
+        : security.decryptIfHidden(scenarioNameRaw, scenarioIsHidden),
+  };
+}
+
 function rowToConversation(row: Record<string, unknown>): Conversation {
   return {
     id: row.id as string,
@@ -84,8 +121,10 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     model: row.model as string,
     characterId: (row.characterId as string | null) ?? null,
     userPersonaId: (row.userPersonaId as string | null) ?? null,
+    scenarioId: (row.scenarioId as string | null) ?? null,
     characterImageMode: row.characterImageMode as ImageMode,
     characterImageId: (row.characterImageId as string | null) ?? null,
+    scenarioImageId: (row.scenarioImageId as string | null) ?? null,
     personaImageMode: row.personaImageMode as ImageMode,
     personaImageId: (row.personaImageId as string | null) ?? null,
     createdAt: row.createdAt as string,
@@ -133,6 +172,15 @@ function rowToMemory(row: Record<string, unknown>): ConversationMemory {
  * constraint, since nothing reads it now. */
 export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
 
+/** A conversation that only has the seeded opening greeting -- not yet started by the user.
+ * Continue-only threads (many assistant turns, zero user rows) are committed, not drafts. */
+const GREETING_ONLY_DRAFT_WHERE = `
+  (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user'
+  )
+`;
+
 export class ConversationService {
   constructor(
     private db: DatabaseSync,
@@ -159,13 +207,61 @@ export class ConversationService {
 
   // --- Conversations -------------------------------------------------------------------
 
-  listConversations(limit = 100): Conversation[] {
+  listConversations(limit = 100): ConversationListItem[] {
     return this.db
       .prepare(
-        `SELECT ${CONVERSATION_COLUMNS} FROM conversations ORDER BY updated_at DESC LIMIT ?`
+        `SELECT
+           ${CONVERSATION_COLUMNS_FROM_C},
+           s.name AS scenarioName,
+           s.is_hidden AS scenarioIsHidden,
+           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS messageCount,
+           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS userMessageCount,
+           (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS lastMessageAt
+         FROM conversations c
+         LEFT JOIN scenarios s ON s.id = c.scenario_id
+         WHERE NOT (${GREETING_ONLY_DRAFT_WHERE})
+         ORDER BY COALESCE(lastMessageAt, c.updated_at) DESC
+         LIMIT ?`
       )
       .all(limit)
-      .map(rowToConversation);
+      .map((row) => rowToConversationListItem(row, this.security));
+  }
+
+  isDraftConversation(conversationId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS userCount
+         FROM messages WHERE conversation_id = ?`
+      )
+      .get(conversationId) as { total: number; userCount: number | null };
+    return row.total === 1 && (row.userCount ?? 0) === 0;
+  }
+
+  /** Drops a conversation that only has the seeded opening greeting. */
+  deleteDraftConversation(id: string): boolean {
+    if (!this.isDraftConversation(id)) return false;
+    this.deleteConversation(id);
+    return true;
+  }
+
+  /** Drops every greeting-only draft. Pass `exceptConversationId` to keep the one the user
+   * is currently viewing. */
+  purgeDraftConversations(exceptConversationId?: string | null): string[] {
+    const rows = (
+      exceptConversationId
+        ? this.db.prepare(
+            `SELECT c.id FROM conversations c
+             WHERE ${GREETING_ONLY_DRAFT_WHERE}
+             AND c.id != ?`
+          ).all(exceptConversationId)
+        : this.db.prepare(`SELECT c.id FROM conversations c WHERE ${GREETING_ONLY_DRAFT_WHERE}`).all()
+    ) as { id: string }[];
+
+    for (const row of rows) {
+      this.deleteConversation(row.id);
+    }
+    return rows.map((row) => row.id);
   }
 
   getConversation(id: string): Conversation | null {
@@ -187,12 +283,16 @@ export class ConversationService {
   createConversation(input: CreateConversationInput & { greeting?: string }): Conversation {
     const id = uuidv4();
     const now = new Date().toISOString();
+    const scenarioId = input.scenarioId ?? null;
+    const defaultImage = this.resolveDefaultImageForScenario(scenarioId);
 
     return transaction(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO conversations (id, title, model, character_id, user_persona_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO conversations
+             (id, title, model, character_id, user_persona_id, scenario_id,
+              character_image_mode, character_image_id, scenario_image_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -200,6 +300,10 @@ export class ConversationService {
           input.model,
           input.characterId,
           input.userPersonaId ?? null,
+          scenarioId,
+          defaultImage.mode,
+          defaultImage.characterImageId,
+          defaultImage.scenarioImageId,
           now,
           now
         );
@@ -221,6 +325,7 @@ export class ConversationService {
     input: {
       characterImageMode?: ImageMode;
       characterImageId?: string | null;
+      scenarioImageId?: string | null;
       personaImageMode?: ImageMode;
       personaImageId?: string | null;
     }
@@ -232,17 +337,40 @@ export class ConversationService {
     this.db
       .prepare(
         `UPDATE conversations
-         SET character_image_mode = ?, character_image_id = ?, persona_image_mode = ?, persona_image_id = ?
+         SET character_image_mode = ?, character_image_id = ?, scenario_image_id = ?,
+             persona_image_mode = ?, persona_image_id = ?
          WHERE id = ?`
       )
       .run(
         input.characterImageMode ?? existing.characterImageMode,
         input.characterImageId !== undefined ? input.characterImageId : existing.characterImageId,
+        input.scenarioImageId !== undefined ? input.scenarioImageId : existing.scenarioImageId,
         input.personaImageMode ?? existing.personaImageMode,
         input.personaImageId !== undefined ? input.personaImageId : existing.personaImageId,
         id
       );
     return this.getConversation(id)!;
+  }
+
+  /** `characterImageId`/`scenarioImageId` pin the same character-side portrait slot, so picking
+   * a new scenario resolves a fresh default for both rather than leaving a stale character-side
+   * pick sitting alongside the new scenario's own images. Used by createConversation and
+   * setConversationScenario, which is why it returns full column values rather than the
+   * "omitted = keep existing" partial shape setImageMode takes. */
+  private resolveDefaultImageForScenario(scenarioId: string | null): {
+    mode: ImageMode;
+    characterImageId: string | null;
+    scenarioImageId: string | null;
+  } {
+    if (scenarioId) {
+      const cover = this.db
+        .prepare(`SELECT id FROM scenario_images WHERE scenario_id = ? ORDER BY position LIMIT 1`)
+        .get(scenarioId) as { id: string } | undefined;
+      if (cover) {
+        return { mode: 'static', characterImageId: null, scenarioImageId: cover.id };
+      }
+    }
+    return { mode: 'carousel', characterImageId: null, scenarioImageId: null };
   }
 
   renameConversation(id: string, title: string): Conversation {
@@ -261,6 +389,45 @@ export class ConversationService {
    * whichever one was used most recently rather than freezing on the one it started with. */
   updateConversationModel(id: string, model: string): void {
     this.db.prepare(`UPDATE conversations SET model = ? WHERE id = ?`).run(model, id);
+  }
+
+  /** Lets the user-side persona change mid-conversation (one person stepping away, another
+   * taking their place) without disturbing history -- past messages and memories already hold
+   * literal text, not a {{user}} placeholder, so nothing about them changes; only the next
+   * turn's freshly-built system prompt picks up the new persona. Resets the persona image
+   * selection since a static pick belonged to whoever was previously selected here. */
+  setConversationPersona(id: string, userPersonaId: string | null): Conversation {
+    const existing = this.getConversation(id);
+    if (!existing) {
+      throw new Error(`Conversation with id ${id} not found`);
+    }
+    this.db
+      .prepare(
+        `UPDATE conversations SET user_persona_id = ?, persona_image_mode = 'carousel', persona_image_id = NULL WHERE id = ?`
+      )
+      .run(userPersonaId, id);
+    return this.getConversation(id)!;
+  }
+
+  /** Same idea as setConversationPersona, for the character-side scenario. Unlike persona's
+   * reset-to-carousel, this seeds the character-side image pick from the new scenario's own
+   * cover image when it has one (see resolveDefaultImageForScenario) -- a scenario's image is
+   * meant to become the default shown once that scenario is selected, not just clear whatever
+   * was picked before. */
+  setConversationScenario(id: string, scenarioId: string | null): Conversation {
+    const existing = this.getConversation(id);
+    if (!existing) {
+      throw new Error(`Conversation with id ${id} not found`);
+    }
+    const defaultImage = this.resolveDefaultImageForScenario(scenarioId);
+    this.db
+      .prepare(
+        `UPDATE conversations
+         SET scenario_id = ?, character_image_mode = ?, character_image_id = ?, scenario_image_id = ?
+         WHERE id = ?`
+      )
+      .run(scenarioId, defaultImage.mode, defaultImage.characterImageId, defaultImage.scenarioImageId, id);
+    return this.getConversation(id)!;
   }
 
   /** Cascades to messages and memories via the schema's foreign keys. */
@@ -303,7 +470,25 @@ export class ConversationService {
     if (!last || last.id !== messageId) {
       throw new Error('Only the most recent message can be deleted');
     }
+    const first = this.db
+      .prepare(`SELECT id, role FROM messages WHERE conversation_id = ? ORDER BY seq ASC LIMIT 1`)
+      .get(conversationId) as { id: string; role: MessageRole } | undefined;
+    if (first?.id === messageId && first.role === 'assistant') {
+      throw new Error('The opening greeting cannot be deleted');
+    }
     this.db.prepare(`DELETE FROM messages WHERE id = ?`).run(messageId);
+  }
+
+  /** Updates a message's stored text in place -- unlike appendMessage, doesn't touch `seq` or
+   * role, and unlike the assistant-side edit flow (message_variants), keeps no history of
+   * prior text: this is for correcting the user's own words, not swapping between AI
+   * generations. Callers decide which messages are safe to touch this way -- see
+   * ChatSessionManager.editPriorUserMessage, currently the only caller. */
+  updateMessageContent(id: string, content: string): Message {
+    this.db.prepare(`UPDATE messages SET content = ? WHERE id = ?`).run(content, id);
+    const message = this.getMessage(id);
+    if (!message) throw new Error(`Message with id ${id} not found`);
+    return message;
   }
 
   /** Allocates `seq` and bumps the conversation's `updated_at` in one transaction, so two
