@@ -1,14 +1,16 @@
 import { CharacterFieldService } from '../database/characterFieldService';
 import { FieldVersionService } from '../database/fieldVersionService';
 import { CharacterService } from '../database/characterService';
+import { PromptSettingsService } from '../database/promptSettingsService';
+import { PromptFieldVersionService } from '../database/promptFieldVersionService';
 import { FieldType } from '../../shared/types/characterField';
 import { BuiltPrompt } from '../../shared/types/chat';
 import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import {
-  DEFAULT_TEMPLATES,
   DEFAULT_STOP_PHRASES,
   PromptTemplates,
   StopPhraseSettings,
+  TEMPLATE_TAGS,
 } from './promptTemplates';
 
 export interface PromptBuildOptions {
@@ -68,11 +70,23 @@ function fill(template: string, values: Record<string, string>): string {
   );
 }
 
+/** Fills a template field's body with `values` and, if anything's actually there, wraps it in
+ * its fixed `[TAG]`/`[/TAG]` (also filled with `values`, since personalLore/personaLore's tags
+ * carry their own {char}/{persona} placeholder). Returns '' for an empty body so the caller's
+ * `if (x) parts.push(x)` skips the section entirely, matching every other section here. */
+function wrappedSection(field: keyof PromptTemplates, templates: PromptTemplates, values: Record<string, string>): string {
+  const body = fill(templates[field], values).trim();
+  if (!body) return '';
+  return section(fill(TEMPLATE_TAGS[field], values).trim(), body);
+}
+
 export class PromptBuilder {
   constructor(
     private characters: CharacterService,
     private fields: CharacterFieldService,
-    private versions: FieldVersionService
+    private versions: FieldVersionService,
+    private promptSettings: PromptSettingsService,
+    private promptFieldVersions: PromptFieldVersionService
   ) {}
 
   /** The currently-active version text for each field type. `getVersionsByField` self-heals
@@ -105,8 +119,12 @@ export class PromptBuilder {
       throw new Error(`Character with id ${characterId} not found`);
     }
 
-    const templates = { ...DEFAULT_TEMPLATES, ...options.templates };
-    const stopSettings = { ...DEFAULT_STOP_PHRASES, ...options.stopPhrases };
+    // Each template's currently-active version (see PromptFieldVersionService), then a per-call
+    // override -- unused by any current caller, but kept for callers that want to override
+    // without touching storage. Stop phrases are still the simpler nullable-override model.
+    const templates = { ...this.promptFieldVersions.getActiveTemplates(), ...options.templates };
+    const overrides = this.promptSettings.getOverrides();
+    const stopSettings = { ...DEFAULT_STOP_PHRASES, ...overrides.stopPhrases, ...options.stopPhrases };
     const personaName = options.personaName?.trim() || null;
     const personaBackground = options.personaBackground?.trim() || null;
     const userName = personaName ?? DEFAULT_USER_NAME;
@@ -135,57 +153,56 @@ export class PromptBuilder {
     // --- Sections 2-5 -------------------------------------------------------------------
     const parts: string[] = [baseSystemPrompt];
 
-    const characterInstructions = templates.characterInstructions.trim();
+    // Every section is filled with this same standard placeholder set -- {lore} is the one
+    // exception, overridden per section below since world/personal/persona lore are different
+    // text, not the same value three times. A custom template can reference any of these
+    // regardless of whether the default text for that field happens to use it.
+    const memories = options.memories?.filter((m) => m.trim()) ?? [];
+    const renderedMemories = memories.length > 0 ? memories.map((m) => `- ${m.trim()}`).join('\n') : '';
+    const directions = options.directions?.trim() ?? '';
+    const baseValues: Record<string, string> = {
+      char: character.name,
+      persona: userName,
+      persona_background: personaBackground ? substituteMacros(personaBackground, character.name, userName) : '',
+      directions,
+      memories: renderedMemories,
+      lore: '',
+    };
+
+    const characterInstructions = wrappedSection('characterInstructions', templates, baseValues);
     if (characterInstructions) parts.push(characterInstructions);
 
+    // Persona context still only fires when BOTH a name and background are present -- a
+    // persona with no background contributes nothing worth a section for.
     if (personaName && personaBackground) {
-      parts.push(
-        fill(templates.personaContext, {
-          persona_name: personaName,
-          persona_background: substituteMacros(personaBackground, character.name, userName),
-        }).trim()
-      );
+      parts.push(wrappedSection('personaContext', templates, baseValues));
     }
 
     // Lore before memories: setting facts are the stable backdrop, conversation memories are
     // the recent specifics, and the model weights later context more heavily.
     const worldLore = options.worldLore ?? [];
     if (worldLore.length > 0) {
-      parts.push(fill(templates.worldLore, { lore: renderLore(worldLore) }).trim());
+      parts.push(wrappedSection('worldLore', templates, { ...baseValues, lore: renderLore(worldLore) }));
     }
 
     const personalLore = options.personalLore ?? [];
     if (personalLore.length > 0) {
-      parts.push(
-        fill(templates.personalLore, {
-          lore: renderLore(personalLore),
-          char: character.name,
-        }).trim()
-      );
+      parts.push(wrappedSection('personalLore', templates, { ...baseValues, lore: renderLore(personalLore) }));
     }
 
     // Only meaningful with a persona actually selected -- personaLore entries only ever come
     // from a persona's own personal book, so this is empty whenever personaName is null anyway.
     const personaLore = options.personaLore ?? [];
     if (personaLore.length > 0 && personaName) {
-      parts.push(
-        fill(templates.personaLore, {
-          lore: renderLore(personaLore),
-          persona: personaName,
-          char: character.name,
-        }).trim()
-      );
+      parts.push(wrappedSection('personaLore', templates, { ...baseValues, lore: renderLore(personaLore) }));
     }
 
-    const memories = options.memories?.filter((m) => m.trim()) ?? [];
     if (memories.length > 0) {
-      const rendered = memories.map((m) => `- ${m.trim()}`).join('\n');
-      parts.push(fill(templates.memory, { memories: rendered }).trim());
+      parts.push(wrappedSection('memory', templates, baseValues));
     }
 
-    const directions = options.directions?.trim();
     if (directions) {
-      parts.push(fill(templates.directions, { directions }).trim());
+      parts.push(wrappedSection('directions', templates, baseValues));
     }
 
     return {

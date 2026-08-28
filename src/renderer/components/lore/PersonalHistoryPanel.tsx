@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Lorebook, LorebookEntry } from '../../../shared/types/lorebook';
 import LoreEntryEditor from './LoreEntryEditor';
+import { useSecurity } from '../../context/SecurityContext';
+import LockedPlaceholder from '../LockedPlaceholder';
 import './Lore.css';
 
 /**
@@ -13,6 +15,7 @@ import './Lore.css';
  * distinction: private history should never look like something you can attach elsewhere.
  */
 export default function PersonalHistoryPanel({ characterId }: { characterId: string }) {
+  const { hiddenUnlocked } = useSecurity();
   const [book, setBook] = useState<Lorebook | null>(null);
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
   const [worldBooks, setWorldBooks] = useState<Lorebook[]>([]);
@@ -34,9 +37,12 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
     setAttachedIds(forCharacter.world.map((b) => b.id));
   }, [characterId]);
 
+  // hiddenUnlocked: refresh() already ran under the previous lock state holds ciphertext when
+  // this character's book is hidden -- re-fetch on every lock/unlock so content updates
+  // immediately instead of only after a manual reload.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, hiddenUnlocked]);
 
   const addEntry = async () => {
     if (!book || !newTitle.trim()) return;
@@ -53,6 +59,12 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
     }
     await refresh();
   };
+
+  // A character can be visible while its own personal lorebook is separately hidden, since
+  // hidden state is per-entity, not inherited -- this guard is independent of CharacterDetail's.
+  if (book?.isHidden && !hiddenUnlocked) {
+    return <LockedPlaceholder label="This character's personal history" />;
+  }
 
   return (
     <div className="card personal-history">
@@ -89,8 +101,11 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
           </li>
         )}
         {entries.map((entry) => (
+          // Keyed on hiddenUnlocked too -- LoreEntryEditor fetches its own version history once
+          // per mount, so it needs to remount (and re-fetch) on lock/unlock the same as refresh()
+          // above, or its already-fetched content would stay stale ciphertext.
           <LoreEntryEditor
-            key={entry.id}
+            key={`${entry.id}-${hiddenUnlocked}`}
             entry={entry}
             onChanged={() => void refresh()}
             onDeleted={async () => {
@@ -109,7 +124,9 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
           </p>
         ) : (
           <ul className="lore-attached-books">
-            {worldBooks.map((worldBook) => {
+            {worldBooks
+              .filter((b) => hiddenUnlocked || !b.isHidden)
+              .map((worldBook) => {
               const attached = attachedIds.includes(worldBook.id);
               return (
                 <li key={worldBook.id}>

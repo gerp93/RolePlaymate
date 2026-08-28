@@ -29,6 +29,45 @@ export const CHAT_DDL = `
     created_at TEXT NOT NULL
   );
 
+  -- A persona can have zero or more portrait images, ordered by position (0 = cover, shown on
+  -- the persona list tile) -- mirrors character_images exactly. Replaces the old single
+  -- \`user_personas.avatar\` column, left in place (unused going forward) purely so
+  -- migrateLegacyPersonaAvatars in schema.ts can still read pre-existing single avatars on
+  -- upgrade, same convention as characters.image_url.
+  CREATE TABLE IF NOT EXISTS persona_images (
+    id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (persona_id) REFERENCES user_personas(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_persona_images_persona ON persona_images(persona_id);
+
+  -- Version history for a persona's background, same idea as character_field_versions but
+  -- keyed directly by persona rather than through a fields-table indirection -- a persona has
+  -- exactly one versionable field, not several field *types* per owner, so there's nothing for
+  -- an intermediate table to distinguish. See personaFieldVersionService.ts. The old
+  -- \`user_personas.background\` column is left in place (unused going forward) purely so
+  -- schema.ts's one-time backfill can still adopt pre-existing background text as v1 on
+  -- upgrade, same convention as \`avatar\`/\`image_url\` above.
+  CREATE TABLE IF NOT EXISTS persona_background_versions (
+    id TEXT PRIMARY KEY,
+    persona_id TEXT NOT NULL REFERENCES user_personas(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (persona_id, version_number)
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_per_persona_background
+    ON persona_background_versions(persona_id) WHERE is_active = 1;
+  CREATE INDEX IF NOT EXISTS idx_persona_background_versions_persona
+    ON persona_background_versions(persona_id);
+
   CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

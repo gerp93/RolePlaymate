@@ -13,6 +13,10 @@
   min-height: 0;
 }
 
+.chat-page.sidebar-collapsed {
+  grid-template-columns: 40px 1fr;
+}
+
 /* --- conversation sidebar ------------------------------------------------------------- */
 
 .chat-sidebar {
@@ -21,6 +25,11 @@
   min-height: 0;
   border-right: 1px solid var(--color-border);
   padding-right: 12px;
+}
+
+.chat-sidebar-collapsed {
+  padding-right: 0;
+  align-items: center;
 }
 
 .chat-sidebar-header {
@@ -34,6 +43,22 @@
 .chat-sidebar-header h2 {
   font-size: 14px;
   margin: 0;
+}
+
+.chat-sidebar-collapse-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.chat-sidebar-collapse-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
 }
 
 .chat-conversation-list {
@@ -103,18 +128,95 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  /* The portrait-margins breakpoint below needs to react to how much width *this column*
+     actually has, not the window's -- the sidebar (240px expanded, 40px collapsed) eats a
+     different chunk out of the window depending on its own state, so a viewport-width media
+     query was going stale (toggle still visible, checked, with margins already squeezed out)
+     whenever the sidebar was expanded. A container query measures .chat-main itself. */
+  container-type: inline-size;
+  container-name: chat-main;
 }
 
-.chat-header {
+/* Three literal vertical columns, left to right: each one's own controls (name/select,
+   image picker) and its own large portrait live in the SAME column div, not in two parallel
+   rows kept in visual sync via matching flex numbers. .chat-column-side and
+   .chat-column-center carry two states each -- grown (portraits showing, so the side columns
+   claim a 220px floor and the center caps at 900px) and default (portraits off or no
+   conversation yet, so the sides shrink to their content and the center just fills whatever's
+   left) -- chosen in Chat.tsx via the portraitsActive flag, same threshold the old
+   chat-conversation-capped class used. */
+.chat-columns {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  padding-top: 12px;
+}
+
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-column-side {
+  flex: 0 0 auto;
+}
+
+.chat-column-side-grown {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+.chat-column-center {
+  flex: 1 1 400px;
+  min-width: 0;
+}
+
+.chat-column-center-capped {
+  flex: 999 1 400px;
+  max-width: 900px;
+}
+
+.chat-column-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding-bottom: 12px;
+  margin-bottom: 12px;
   border-bottom: 1px solid var(--color-border);
 }
 
-.chat-header label {
+.chat-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-model-select {
+  flex: 1;
+  min-width: 160px;
+}
+
+.chat-more-toggle.active {
+  background: var(--color-bg-hover);
+}
+
+.chat-settings-more {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chat-column label {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -122,7 +224,23 @@
   color: var(--color-text-muted);
 }
 
-.chat-header select {
+/* Replaces the Character/Persona <select> once a conversation has real turns in it -- see
+   Chat.tsx's selectionLocked. No "Character"/"Persona" label needed once it's not a control
+   to operate -- the name alone, sized to read as this column's own heading. */
+.chat-header-static {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+}
+
+.chat-header-static-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 4px 0;
+}
+
+.chat-column select {
   background: var(--color-surface);
   color: var(--color-text);
   border: 1px solid var(--color-border);
@@ -132,7 +250,7 @@
   min-width: 140px;
 }
 
-.chat-header select:disabled {
+.chat-column select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -140,6 +258,95 @@
 .chat-debug-toggle.active,
 .chat-directions-toggle.active {
   background: var(--color-bg-hover);
+}
+
+.chat-portraits-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* --- image picker (character/persona avatar mode) -------------------------------------- */
+
+.image-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.image-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.image-picker-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.image-picker-thumb-random {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-hover);
+  font-size: 15px;
+}
+
+.image-picker-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 10px;
+  width: max-content;
+  max-width: 340px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  z-index: 40;
+}
+
+.image-picker-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.image-picker-option .image-picker-thumb {
+  width: 68px;
+  height: 68px;
+}
+
+.image-picker-option.active {
+  border-color: var(--color-accent-green);
+  color: var(--color-text);
 }
 
 .chat-banner {
@@ -159,12 +366,40 @@
   margin-left: 12px;
 }
 
-.chat-body {
-  display: flex;
-  gap: 16px;
+/* --- large portraits docked at the bottom of the side columns (opt-in, see the More panel
+   checkbox) -------------------------------------------------------------------------------- */
+
+.chat-portrait-margin {
+  /* Sits below this column's header block and fills whatever's left of the column's height.
+     Width comes from the column itself (.chat-column-side-grown's 220px floor), not from this
+     element -- unlike the old two-row layout, this is nested in a column flex container now,
+     so its own flex-basis governs height, not width. */
   flex: 1;
-  min-height: 0;
-  padding-top: 12px;
+  min-height: 220px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.chat-portrait-margin img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Below this width there's no longer room for two 220px-minimum margins plus a usable
+   transcript (220 + 220 + the transcript's own 400px floor + two 16px gaps = 872px), so the
+   feature goes away rather than rendering squished -- both the toggle (nothing to offer) and
+   any already-open margins (nothing sensible to show). Keyed to .chat-main's own width (see
+   its container-type above), not the window's, so it tracks correctly whether the sidebar is
+   expanded or collapsed instead of going stale relative to whatever it measured on load. */
+@container chat-main (max-width: 880px) {
+  .chat-portraits-toggle,
+  .chat-portrait-margin {
+    display: none;
+  }
 }
 
 .chat-conversation {
@@ -192,25 +427,66 @@
   justify-content: center;
 }
 
+/* --- bubble: a fixed-size avatar tile fused into the bubble's corner ----------------------
+   Not stretched to the bubble's height (that fought the text layout and clipped it) -- a
+   constant-size rounded-square tile, sized independently of however tall the message turns
+   out to be, sitting flush at the top of the bubble the way an email client or Slack thread
+   shows the sender's avatar next to a message that can be any length. Mirrored per side:
+   assistant bubbles put the tile on the left, user bubbles reverse the row to put it on the
+   right -- same left=character/right=persona mapping the margin portraits use. */
 .chat-bubble {
-  border-radius: 12px;
-  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  max-width: 78%;
-}
-
-.chat-bubble-user {
-  align-self: flex-end;
-  background: var(--color-bg-hover);
+  max-width: 82%;
 }
 
 .chat-bubble-assistant {
   align-self: flex-start;
 }
 
+.chat-bubble-user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+  background: var(--color-bg-hover);
+}
+
+.chat-bubble-avatar-panel {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.chat-bubble-avatar-panel-fallback {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  background: var(--color-bg-hover);
+}
+
+img.chat-bubble-avatar-panel {
+  cursor: pointer;
+}
+
+.chat-bubble-content {
+  flex: 1;
+  min-width: 0;
+}
+
 .chat-bubble-name {
-  font-size: 11px;
+  font-size: calc(var(--chat-bubble-font-size, 18px) * 0.75);
   font-weight: 700;
   margin-bottom: 4px;
   color: var(--color-text-muted);
@@ -224,11 +500,47 @@
   color: var(--color-accent-green);
 }
 
+.chat-bubble-user .chat-bubble-avatar-panel-fallback {
+  color: var(--color-accent-blue);
+}
+
+.chat-bubble-assistant .chat-bubble-avatar-panel-fallback {
+  color: var(--color-accent-green);
+}
+
 .chat-bubble-body {
-  font-size: 14px;
+  font-size: var(--chat-bubble-font-size, 18px);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Replaces .chat-bubble-body while the last assistant message is being hand-edited -- see
+   MessageList's editingId. */
+.chat-bubble-edit-textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: var(--chat-bubble-font-size, 18px);
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  /* Grows with content instead of a fixed row count -- a narrower bubble wraps the same text
+     into more visual lines than a newline count would predict, which under a fixed `rows`
+     was cutting long replies off behind a scrollbar. max-height + resize stay as a fallback/
+     manual override for anything absurdly long. */
+  field-sizing: content;
+  min-height: 4.5em;
+  max-height: 60vh;
+  resize: vertical;
+}
+
+.chat-bubble-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 /* Blinking caret so a slow first token doesn't read as a hang. */
@@ -417,6 +729,14 @@
   resize: vertical;
 }
 
+/* The composer is what you're about to say back -- it should read at the same size as
+   everything already said in the transcript above it, not the smaller fixed size a plain
+   textarea gets everywhere else in the app. Directions stays at the smaller fixed size: it's
+   a one-off stage direction, not dialogue. */
+.chat-input {
+  font-size: var(--chat-bubble-font-size, 18px);
+}
+
 .chat-directions {
   width: 100%;
   font-size: 13px;
@@ -424,6 +744,19 @@
 
 .chat-send {
   min-width: 84px;
+}
+
+/* Send + Continue stacked in the same width Send alone used to take, rather than two
+   full-height buttons widening the row -- .chat-composer-row's align-items: stretch already
+   makes this column match the textarea's height. */
+.chat-composer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-composer-actions .chat-send {
+  flex: 1;
 }
 
 .chat-footer {

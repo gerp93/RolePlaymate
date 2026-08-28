@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { CharacterImage } from '../../shared/types/characterImage';
 import { toImageUrl } from '../utils/imageUrl';
+import { useSecurity } from '../context/SecurityContext';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
 // instead of shrinking further.
@@ -15,6 +16,7 @@ function tileMinWidthFor(count: number): number {
 }
 
 export default function CharacterList() {
+  const { hiddenUnlocked } = useSecurity();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [coverImages, setCoverImages] = useState<Record<string, CharacterImage[]>>({});
   const [newName, setNewName] = useState('');
@@ -22,9 +24,12 @@ export default function CharacterList() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
+  // hiddenUnlocked: characters already fetched under the previous lock state hold ciphertext
+  // for anything hidden -- re-fetch on every lock/unlock so names update immediately instead
+  // of only after a manual reload.
   useEffect(() => {
     load();
-  }, []);
+  }, [hiddenUnlocked]);
 
   async function load() {
     setLoading(true);
@@ -61,6 +66,13 @@ export default function CharacterList() {
     e.preventDefault();
     e.stopPropagation();
     await window.electronAPI.characters.clone(id);
+    await load();
+  }
+
+  async function handleToggleHidden(e: React.MouseEvent, id: string, hidden: boolean) {
+    e.preventDefault();
+    e.stopPropagation();
+    await window.electronAPI.characters.setHidden(id, !hidden);
     await load();
   }
 
@@ -121,27 +133,38 @@ export default function CharacterList() {
           className="character-grid"
           style={{ '--tile-min-width': `${tileMinWidthFor(characters.length)}px` } as React.CSSProperties}
         >
-          {characters.map((character) => {
-            const cover = coverImages[character.id]?.[0];
-            return (
-              <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
-                <div className="character-card-portrait">
-                  {cover ? <img src={toImageUrl(cover.path)} alt={character.name} /> : <span>?</span>}
-                </div>
-                <div className="character-card-body">
-                  <p className="character-card-name">{character.name}</p>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn" onClick={(e) => handleClone(e, character.id)}>
-                      Clone
-                    </button>
-                    <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
-                      Delete
-                    </button>
+          {characters
+            .filter((character) => hiddenUnlocked || !character.isHidden)
+            .map((character) => {
+              const cover = coverImages[character.id]?.[0];
+              return (
+                <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
+                  <div className="character-card-portrait">
+                    {cover ? <img src={toImageUrl(cover.path)} alt={character.name} /> : <span>?</span>}
                   </div>
-                </div>
-              </Link>
-            );
-          })}
+                  <div className="character-card-body">
+                    <p className="character-card-name">{character.name}</p>
+                    {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        className="btn"
+                        disabled={!character.isHidden && !hiddenUnlocked}
+                        title={!character.isHidden && !hiddenUnlocked ? 'Unlock from the topbar to hide items' : undefined}
+                        onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
+                      >
+                        {character.isHidden ? 'Unhide' : 'Hide'}
+                      </button>
+                      <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                        Clone
+                      </button>
+                      <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
         </div>
       )}
     </div>

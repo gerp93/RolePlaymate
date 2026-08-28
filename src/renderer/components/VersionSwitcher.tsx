@@ -1,14 +1,13 @@
 import { useState } from 'react';
-import { CharacterFieldVersion } from '../../shared/types/fieldVersion';
-import VersionDiffPanel from './VersionDiffPanel';
+import VersionDiffPanel, { VersionLike } from './VersionDiffPanel';
 
-interface Props {
-  versions: CharacterFieldVersion[];
+interface Props<V extends VersionLike> {
+  versions: V[];
   viewedVersionId: string | null;
   onSelectViewed: (versionId: string) => void;
 }
 
-export default function VersionSwitcher({ versions, viewedVersionId, onSelectViewed }: Props) {
+export default function VersionSwitcher<V extends VersionLike>({ versions, viewedVersionId, onSelectViewed }: Props<V>) {
   const [compareOpen, setCompareOpen] = useState(false);
   const viewed = versions.find((v) => v.id === viewedVersionId) ?? null;
 

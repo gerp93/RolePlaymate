@@ -15,11 +15,19 @@ import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
 import { CharacterImageService } from './database/characterImageService';
+import { PersonaImageService } from './database/personaImageService';
+import { PersonaFieldVersionService } from './database/personaFieldVersionService';
+import { ModelSamplerService } from './database/modelSamplerService';
 import { ConversationService } from './database/conversationService';
 import { LorebookService } from './database/lorebookService';
+import { SecurityService } from './database/securityService';
 import { PromptBuilder } from './chat/promptBuilder';
+import { PromptSettingsService, ResettableField } from './database/promptSettingsService';
+import { PromptFieldVersionService } from './database/promptFieldVersionService';
+import { DEFAULT_STOP_PHRASES } from './chat/promptTemplates';
+import { PromptTemplates, StopPhraseSettings, TEMPLATE_FIELD_KEYS } from '../shared/types/promptTemplates';
 import { OllamaClient } from './chat/ollamaClient';
-import { ChatSessionManager } from './chat/chatSession';
+import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
   chooseCharacterImage,
   chooseCharacterImages,
@@ -27,12 +35,12 @@ import {
   cloneCharacterImage,
   getImagesDir,
 } from './images';
-import { parseCharacterHtml, resolveLocalAvatarPath } from './htmlImport';
+import { parseCharacterHtml, parseLorebookHtml, resolveLocalAvatarPath } from './htmlImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
-import { ChatSendRequest, ChatRegenerateRequest, ChatStreamEvent } from '../shared/types/chat';
+import { ChatSendRequest, ChatRegenerateRequest, ChatStreamEvent, SamplerParams } from '../shared/types/chat';
 import {
   CreateLorebookInput,
   UpdateLorebookInput,
@@ -166,11 +174,17 @@ let characterService: CharacterService;
 let fieldService: CharacterFieldService;
 let fieldVersionService: FieldVersionService;
 let characterImageService: CharacterImageService;
+let personaImageService: PersonaImageService;
+let personaFieldVersionService: PersonaFieldVersionService;
+let modelSamplerService: ModelSamplerService;
 let conversationService: ConversationService;
 let promptBuilder: PromptBuilder;
+let promptSettingsService: PromptSettingsService;
+let promptFieldVersionService: PromptFieldVersionService;
 let ollamaClient: OllamaClient;
 let chatSessions: ChatSessionManager;
 let lorebookService: LorebookService;
+let securityService: SecurityService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -291,19 +305,34 @@ app.whenReady().then(() => {
   });
 
   db = openDatabaseWithRecovery();
-  characterService = new CharacterService(db);
+  // SecurityService first -- CharacterService, FieldVersionService, ConversationService, and
+  // LorebookService all depend on it for hidden-content encryption/decryption.
+  securityService = new SecurityService(db);
+  fieldVersionService = new FieldVersionService(db, securityService);
+  characterService = new CharacterService(db, securityService, fieldVersionService);
   fieldService = new CharacterFieldService(db);
-  fieldVersionService = new FieldVersionService(db);
   characterImageService = new CharacterImageService(db);
-  conversationService = new ConversationService(db);
-  promptBuilder = new PromptBuilder(characterService, fieldService, fieldVersionService);
+  personaImageService = new PersonaImageService(db);
+  personaFieldVersionService = new PersonaFieldVersionService(db, securityService);
+  conversationService = new ConversationService(db, securityService, personaFieldVersionService);
+  promptSettingsService = new PromptSettingsService(db);
+  promptFieldVersionService = new PromptFieldVersionService(db);
+  promptBuilder = new PromptBuilder(
+    characterService,
+    fieldService,
+    fieldVersionService,
+    promptSettingsService,
+    promptFieldVersionService
+  );
   ollamaClient = new OllamaClient();
-  lorebookService = new LorebookService(db);
+  lorebookService = new LorebookService(db, securityService);
+  modelSamplerService = new ModelSamplerService(db);
   chatSessions = new ChatSessionManager(
     conversationService,
     promptBuilder,
     ollamaClient,
-    lorebookService
+    lorebookService,
+    modelSamplerService
   );
 
   registerIPCHandlers();
@@ -360,6 +389,10 @@ function registerIPCHandlers() {
 
   ipcMain.handle('characters:update', (_, id: string, input: UpdateCharacterInput) =>
     characterService.updateCharacter(id, input)
+  );
+
+  ipcMain.handle('characters:setHidden', (_, id: string, hidden: boolean) =>
+    characterService.setHidden(id, hidden)
   );
 
   // Clones a character's name (suffixed), every portrait image, and every field's full
@@ -422,8 +455,8 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
-  // Imports a character from a saved chatbot-profile HTML page (tested against SpicyChat's
-  // "Save Page As..." export). Parses name/description/fields programmatically, skipping and
+  // Imports a character from a saved chatbot-profile HTML page ("Save Page As..." export from
+  // a chatbot site). Parses name/description/fields programmatically, skipping and
   // reporting anything it can't find rather than failing the whole import.
   ipcMain.handle('characters:importFromHtml', async () => {
     if (!mainWindow) return null;
@@ -516,6 +549,26 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  // Persona image (gallery) handlers -- mirrors the character image handlers exactly.
+  ipcMain.handle('personaImages:getByPersona', (_, personaId: string) =>
+    personaImageService.getImagesByPersona(personaId)
+  );
+  ipcMain.handle('personaImages:getAllGroupedByPersona', () => personaImageService.getAllGroupedByPersona());
+  ipcMain.handle('personaImages:add', async (_, personaId: string) => {
+    const paths = await chooseCharacterImages(mainWindow);
+    return paths.map((path) => personaImageService.addImage(personaId, path));
+  });
+  ipcMain.handle('personaImages:remove', (_, id: string) => {
+    const existing = personaImageService.getImageById(id);
+    personaImageService.removeImage(id);
+    if (existing) deleteCharacterImage(existing.path);
+    return { success: true };
+  });
+  ipcMain.handle('personaImages:setCover', (_, id: string) => {
+    personaImageService.setCoverImage(id);
+    return { success: true };
+  });
+
   // Database location handlers
   ipcMain.handle('dbLocation:get', () => ({
     path: getEffectiveDbPath(),
@@ -589,26 +642,50 @@ function registerIPCHandlers() {
   ipcMain.handle('personas:update', (_, id: string, input: UpdateUserPersonaInput) =>
     conversationService.updatePersona(id, input)
   );
+
+  ipcMain.handle('personas:setHidden', (_, id: string, hidden: boolean) =>
+    conversationService.setPersonaHidden(id, hidden)
+  );
   ipcMain.handle('personas:delete', (_, id: string) => {
     conversationService.deletePersona(id);
     return { success: true };
   });
 
-  // Opens the native picker and copies the chosen file into userData/images, same convention
-  // as a character portrait -- just one path per persona rather than a gallery.
-  ipcMain.handle('personas:chooseAvatar', async () => {
-    const path = await chooseCharacterImage(mainWindow);
-    return path;
+  // Background version history -- mirrors fieldVersions:* above, keyed directly by persona
+  // instead of an opaque per-character field id (a persona has exactly one versionable field).
+  ipcMain.handle('personaFieldVersions:getByPersona', (_, personaId: string) =>
+    personaFieldVersionService.getVersionsByPersona(personaId)
+  );
+  ipcMain.handle('personaFieldVersions:getById', (_, id: string) => personaFieldVersionService.getVersionById(id));
+  ipcMain.handle('personaFieldVersions:duplicate', (_, versionId: string) =>
+    personaFieldVersionService.duplicateVersion(versionId)
+  );
+  ipcMain.handle('personaFieldVersions:updateContent', (_, id: string, content: string) =>
+    personaFieldVersionService.updateVersionContent(id, content)
+  );
+  ipcMain.handle('personaFieldVersions:delete', (_, id: string) => {
+    personaFieldVersionService.deleteVersion(id);
+    return { success: true };
   });
 
-  // Clones a persona's name (suffixed), description, background and avatar into a brand-new,
-  // independent persona -- same shape as characters:clone.
+  // Clones a persona's name (suffixed), description and background into a brand-new,
+  // independent persona, then clones every gallery image the same way characters:clone does
+  // (file writes aren't transactional, so this loop runs outside conversationService.clonePersona's
+  // own DB write).
   ipcMain.handle('personas:clone', (_, id: string) => {
     const source = conversationService.getPersona(id);
     if (!source) throw new Error(`UserPersona with id ${id} not found`);
 
-    const clonedAvatarPath = source.avatar ? cloneCharacterImage(source.avatar) : null;
-    return conversationService.clonePersona(id, clonedAvatarPath);
+    const clonedImagePaths = personaImageService
+      .getImagesByPersona(source.id)
+      .map((image) => cloneCharacterImage(image.path))
+      .filter((clonedPath): clonedPath is string => clonedPath !== null);
+
+    const cloned = conversationService.clonePersona(id);
+    for (const clonedPath of clonedImagePaths) {
+      personaImageService.addImage(cloned.id, clonedPath);
+    }
+    return cloned;
   });
 
   // Conversation handlers
@@ -635,6 +712,20 @@ function registerIPCHandlers() {
     conversationService.renameConversation(id, title)
   );
 
+  ipcMain.handle(
+    'conversations:setImageMode',
+    (
+      _,
+      id: string,
+      input: {
+        characterImageMode?: 'carousel' | 'static';
+        characterImageId?: string | null;
+        personaImageMode?: 'carousel' | 'static';
+        personaImageId?: string | null;
+      }
+    ) => conversationService.setImageMode(id, input)
+  );
+
   ipcMain.handle('conversations:delete', (_, id: string) => {
     chatSessions.dropSession(id);
     conversationService.deleteConversation(id);
@@ -651,12 +742,154 @@ function registerIPCHandlers() {
     }
   });
 
+  // Same call as ollama:listModels, but keeping the per-model metadata Ollama already reports
+  // -- see the Model Tuning settings page.
+  ipcMain.handle('ollama:listModelsDetailed', async () => {
+    try {
+      return { available: true as const, models: await ollamaClient.listModelsDetailed() };
+    } catch (error) {
+      return { available: false as const, models: [], message: (error as Error).message };
+    }
+  });
+
+  // Model Tuning settings page -- per-model sampler defaults, layered under a chat-level
+  // (Composer slider) override the same way chatSession.ts merges them for real generation.
+  // See modelSamplerService.ts.
+  ipcMain.handle('modelTuning:getGlobalDefaults', () => DEFAULT_SAMPLERS);
+  ipcMain.handle('modelTuning:getAll', () => modelSamplerService.getAll());
+  ipcMain.handle('modelTuning:getEffective', (_, model: string) =>
+    modelSamplerService.getEffective(model, DEFAULT_SAMPLERS)
+  );
+  // What an unset field falls back to for this model -- the family-preset layer, without any
+  // actually-saved override. See the Model Tuning page's per-row placeholder text.
+  ipcMain.handle('modelTuning:getRecommended', (_, model: string) =>
+    modelSamplerService.getRecommendedDefaults(model, DEFAULT_SAMPLERS)
+  );
+  ipcMain.handle('modelTuning:update', (_, model: string, partial: Partial<SamplerParams>) =>
+    modelSamplerService.upsert(model, partial)
+  );
+  ipcMain.handle('modelTuning:resetField', (_, model: string, field: keyof SamplerParams) => {
+    modelSamplerService.resetField(model, field);
+    return { success: true };
+  });
+  ipcMain.handle('modelTuning:resetAll', (_, model: string) => {
+    modelSamplerService.resetAll(model);
+    return { success: true };
+  });
+
   registerLorebookHandlers();
   registerChatHandlers();
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('updates:check', () => checkForUpdatesNow());
+
+  // Prompt settings handlers -- see src/renderer/pages/PromptSettings.tsx. Templates now have
+  // full version history (see promptFieldVersions:* below); this namespace is stop phrases only.
+  ipcMain.handle('promptSettings:get', () => {
+    const overrides = promptSettingsService.getOverrides();
+    const stopPhrases: StopPhraseSettings = { ...DEFAULT_STOP_PHRASES, ...overrides.stopPhrases };
+    const overriddenFields = [
+      ...(overrides.stopPhrases.base !== undefined ? ['stopPhrasesBase'] : []),
+      ...(overrides.stopPhrases.useCharacterNameAsStop !== undefined ? ['useCharacterNameAsStop'] : []),
+      ...(overrides.stopPhrases.usePersonaNameAsStop !== undefined ? ['usePersonaNameAsStop'] : []),
+    ];
+    return { stopPhrases, overriddenFields };
+  });
+  ipcMain.handle('promptSettings:updateStopPhrases', (_, partial: Partial<StopPhraseSettings>) => {
+    promptSettingsService.updateStopPhrases(partial);
+    return { success: true };
+  });
+  ipcMain.handle('promptSettings:resetField', (_, field: ResettableField) => {
+    promptSettingsService.resetField(field);
+    return { success: true };
+  });
+  // Resets both halves of the page: every template field gets a new default-content version
+  // (see PromptFieldVersionService.resetToDefault), and stop phrases go back to NULL overrides.
+  ipcMain.handle('promptSettings:resetAll', () => {
+    for (const fieldKey of TEMPLATE_FIELD_KEYS) {
+      promptFieldVersionService.resetToDefault(fieldKey);
+    }
+    promptSettingsService.resetAll();
+    return { success: true };
+  });
+
+  // Prompt template version handlers -- mirrors fieldVersions:* above, keyed by the template's
+  // fixed field key instead of a character field id. See PromptFieldVersionService.
+  ipcMain.handle('promptFieldVersions:getByField', (_, fieldKey: keyof PromptTemplates) =>
+    promptFieldVersionService.getVersionsByField(fieldKey)
+  );
+  ipcMain.handle('promptFieldVersions:getById', (_, id: string) => promptFieldVersionService.getVersionById(id));
+  ipcMain.handle('promptFieldVersions:duplicate', (_, versionId: string) =>
+    promptFieldVersionService.duplicateVersion(versionId)
+  );
+  ipcMain.handle('promptFieldVersions:updateContent', (_, id: string, content: string) =>
+    promptFieldVersionService.updateVersionContent(id, content)
+  );
+  ipcMain.handle('promptFieldVersions:delete', (_, id: string) => {
+    promptFieldVersionService.deleteVersion(id);
+    return { success: true };
+  });
+  ipcMain.handle('promptFieldVersions:resetToDefault', (_, fieldKey: keyof PromptTemplates) =>
+    promptFieldVersionService.resetToDefault(fieldKey)
+  );
+
+  // Security handlers -- gate the "reveal hidden items" toggle, and own the encryption key
+  // for actually-hidden content. `unlock` returns false on a wrong PIN rather than throwing:
+  // a wrong PIN is an expected outcome, not an error.
+  ipcMain.handle('security:unlock', (_, pin: string) => {
+    const ok = securityService.unlock(pin);
+    if (ok) {
+      // One-time-per-row upgrade of any hidden content still sitting in legacy plaintext
+      // (from before real encryption existed) -- cheap once everything's migrated, since each
+      // row is just a prefix check.
+      characterService.migrateLegacyHiddenContent();
+      fieldVersionService.migrateLegacyHiddenContent();
+      conversationService.migrateLegacyHiddenPersonaContent();
+      personaFieldVersionService.migrateLegacyHiddenContent();
+      lorebookService.migrateLegacyHiddenContent();
+    }
+    return ok;
+  });
+
+  ipcMain.handle('security:lock', () => {
+    securityService.lock();
+    return { success: true };
+  });
+
+  // A PIN change is a rekey, not just a hash swap: every currently-hidden character/persona/
+  // lorebook's encrypted content is decrypted under the old key and re-encrypted under the
+  // new one, in one transaction, before the new PIN is persisted -- see securityService.ts's
+  // reencryptWithKeys and the plan this shipped under for why plaintext never touches disk
+  // mid-rekey.
+  ipcMain.handle('security:setPin', (_, currentPin: string, newPin: string) => {
+    try {
+      securityService.validatePinChange(currentPin, newPin);
+      const oldKey = securityService.deriveKey(currentPin);
+      const wasUnlocked = securityService.isUnlocked();
+
+      transaction(db!, () => {
+        // Rotates pin_hash/pin_salt/key_salt first, so deriveKey(newPin) right after reads
+        // the freshly-written salt back out rather than main.ts re-deriving it by hand.
+        securityService.persistNewPin(newPin);
+        const newKey = securityService.deriveKey(newPin);
+
+        characterService.reencryptHiddenContent(oldKey, newKey);
+        fieldVersionService.reencryptHiddenContent(oldKey, newKey);
+        conversationService.reencryptHiddenPersonaContent(oldKey, newKey);
+        personaFieldVersionService.reencryptHiddenContent(oldKey, newKey);
+        lorebookService.reencryptAllHiddenContent(oldKey, newKey);
+
+        // A session that was already unlocked stays unlocked under the new key; one that was
+        // locked stays locked -- changing the PIN neither requires nor grants unlock.
+        if (wasUnlocked) securityService.setCachedKey(newKey);
+      });
+
+      return { ok: true as const };
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
+    }
+  });
 }
 
 function registerLorebookHandlers() {
@@ -668,6 +901,9 @@ function registerLorebookHandlers() {
   ipcMain.handle('lorebooks:update', (_, id: string, input: UpdateLorebookInput) =>
     lorebookService.updateBook(id, input)
   );
+  ipcMain.handle('lorebooks:setHidden', (_, id: string, hidden: boolean) =>
+    lorebookService.setHidden(id, hidden)
+  );
   ipcMain.handle('lorebooks:delete', (_, id: string) => {
     lorebookService.deleteBook(id);
     return { success: true };
@@ -678,6 +914,64 @@ function registerLorebookHandlers() {
   ipcMain.handle('lorebooks:chooseImage', async () => {
     const path = await chooseCharacterImage(mainWindow);
     return path;
+  });
+
+  // Imports a world book from a saved lorebook-detail page ("Save Page As... > Webpage,
+  // Complete" export from a chatbot site). Same shape as characters:importFromHtml --
+  // parses what it can, reports what it couldn't find, and never fails the whole import over a
+  // missing piece.
+  ipcMain.handle('lorebooks:importFromHtml', async () => {
+    if (!mainWindow) return null;
+
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import lorebook from HTML',
+      properties: ['openFile'],
+      filters: [{ name: 'HTML pages', extensions: ['html', 'htm'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return null;
+
+    const htmlFilePath = picked.filePaths[0];
+    const html = fs.readFileSync(htmlFilePath, 'utf-8');
+    const parsed = parseLorebookHtml(html);
+
+    // Copy the cover image before opening the transaction, for the same reason as
+    // characters:importFromHtml -- file writes aren't transactional.
+    const localImagePath = resolveLocalAvatarPath(htmlFilePath, parsed.avatarSrc);
+    const copiedImagePath = localImagePath ? cloneCharacterImage(localImagePath) : null;
+
+    const lorebook = transaction(db!, () => {
+      const created = lorebookService.createBook({
+        name: parsed.name,
+        description: parsed.description ?? undefined,
+      });
+
+      if (copiedImagePath) {
+        lorebookService.updateBook(created.id, { image: copiedImagePath });
+      }
+
+      for (const entry of parsed.entries) {
+        lorebookService.createEntry({
+          lorebookId: created.id,
+          title: entry.title,
+          keys: entry.keys,
+          content: entry.content,
+        });
+      }
+
+      return lorebookService.getBook(created.id)!;
+    });
+
+    if (localImagePath) {
+      if (!copiedImagePath) {
+        parsed.warnings.push('Found a cover image but could not copy it.');
+      }
+    } else if (parsed.avatarSrc) {
+      parsed.warnings.push(
+        'Cover image was not found next to the HTML file -- save the page as "Webpage, Complete" to include it, or add one manually.'
+      );
+    }
+
+    return { lorebook, warnings: parsed.warnings };
   });
 
   ipcMain.handle('lorebooks:clone', (_, id: string) => {
@@ -754,6 +1048,24 @@ function registerLorebookHandlers() {
  * One channel carrying a discriminated union, not four channels -- one listener
  * registration, one switch, one cleanup path in the renderer.
  */
+/**
+ * A hidden character/persona can't be selected in Chat's dropdowns while locked (existing
+ * list filtering), so this should never actually fire through the UI -- it's a backstop
+ * against a stale route/request reaching generation anyway (e.g. the Chat page still mounted
+ * on a conversation whose character was hidden and the app locked without navigating away).
+ * Throws rather than letting decryptIfHidden's lenient locked-read silently feed ciphertext
+ * into the model's prompt.
+ */
+function assertHiddenContentAccessible(characterId: string | null, personaId?: string | null): void {
+  if (securityService.isUnlocked()) return;
+  if (characterId && characterService.getCharacterById(characterId)?.isHidden) {
+    throw new Error('This character is hidden -- unlock with the PIN before chatting with it.');
+  }
+  if (personaId && conversationService.getPersona(personaId)?.isHidden) {
+    throw new Error('This persona is hidden -- unlock with the PIN before using it.');
+  }
+}
+
 function registerChatHandlers() {
   ipcMain.handle('chat:send', (event, request: ChatSendRequest & { characterId: string; personaId?: string; model: string }) => {
     const streamId = randomUUID();
@@ -770,6 +1082,7 @@ function registerChatHandlers() {
     // renderer can subscribe before tokens start arriving.
     void (async () => {
       try {
+        assertHiddenContentAccessible(request.characterId, request.personaId);
         const { message, debug } = await chatSessions.generate(
           {
             conversationId: request.conversationId,
@@ -810,6 +1123,8 @@ function registerChatHandlers() {
 
     void (async () => {
       try {
+        const conversation = conversationService.getConversation(request.conversationId);
+        assertHiddenContentAccessible(conversation?.characterId ?? null, conversation?.userPersonaId);
         const { message, debug } = await chatSessions.regenerate(
           request.conversationId,
           (text) => send({ streamId, type: 'token', text }),
@@ -829,6 +1144,51 @@ function registerChatHandlers() {
     return { streamId };
   });
 
+  // Lets the character take another turn on its own -- same streaming shape as chat:send, and
+  // the same terminal 'done' event, since this appends a brand-new message rather than
+  // replacing the pending one in place (that's what chat:regenerate's 'variantDone' is for).
+  ipcMain.handle(
+    'chat:continue',
+    (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
+      const streamId = randomUUID();
+      const sender = event.sender;
+
+      const send = (payload: ChatStreamEvent) => {
+        if (!sender.isDestroyed()) sender.send('chat:stream', payload);
+      };
+
+      const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+
+      void (async () => {
+        try {
+          assertHiddenContentAccessible(request.characterId, request.personaId);
+          const { message, debug } = await chatSessions.continueAsCharacter(
+            {
+              conversationId: request.conversationId,
+              characterId: request.characterId,
+              personaId: request.personaId ?? null,
+              personaName: persona?.name ?? null,
+              personaBackground: persona?.background ?? null,
+              model: request.model,
+              directions: request.directions,
+              samplers: request.samplers,
+            },
+            (text) => send({ streamId, type: 'token', text })
+          );
+          send({ streamId, type: 'done', message, debug });
+        } catch (error) {
+          if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+            send({ streamId, type: 'cancelled' });
+          } else {
+            send({ streamId, type: 'error', message: (error as Error).message });
+          }
+        }
+      })();
+
+      return { streamId };
+    }
+  );
+
   ipcMain.handle('chat:getVariants', (_, messageId: string) =>
     conversationService.getVariants(messageId)
   );
@@ -847,6 +1207,7 @@ function registerChatHandlers() {
       _,
       request: { conversationId: string; characterId: string; personaId?: string; model: string }
     ) => {
+      assertHiddenContentAccessible(request.characterId, request.personaId);
       const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
       const suggestion = await chatSessions.suggestReply(
         request.conversationId,
@@ -864,6 +1225,12 @@ function registerChatHandlers() {
     'chat:selectVariant',
     (_, conversationId: string, messageId: string, variantId: string) =>
       chatSessions.chooseVariant(conversationId, messageId, variantId)
+  );
+
+  // Hand-edits the last (pending) assistant message -- see ChatSessionManager.editMessage for
+  // why this creates a new variant rather than mutating the shown one in place.
+  ipcMain.handle('chat:editMessage', (_, conversationId: string, messageId: string, content: string) =>
+    chatSessions.editMessage(conversationId, messageId, content)
   );
 
   // Extraction outlives the request that triggered it, so its result is pushed rather than

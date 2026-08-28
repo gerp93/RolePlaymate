@@ -5,6 +5,7 @@
  * The app loads no model itself and makes no network calls of its own -- everything here
  * targets a server the user runs on their own machine. Uses global `fetch`, so no dependency.
  */
+import { OllamaModelInfo } from '../../shared/types/ollama';
 
 export const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
 
@@ -90,6 +91,25 @@ export class OllamaClient {
     const response = await this.request('/api/tags', { method: 'GET' }, REQUEST_TIMEOUT_MS);
     const data = (await response.json()) as { models?: { name?: string }[] };
     return (data.models ?? []).map((m) => m.name ?? '').filter(Boolean);
+  }
+
+  /** Same `/api/tags` call as listModels, but keeping the metadata it already reports per
+   * model (parameter count, quantization, context window, disk size, capabilities) instead of
+   * discarding everything but the tag -- see the Model Tuning settings page. */
+  async listModelsDetailed(): Promise<OllamaModelInfo[]> {
+    const response = await this.request('/api/tags', { method: 'GET' }, REQUEST_TIMEOUT_MS);
+    const data = (await response.json()) as { models?: OllamaTagsModel[] };
+    return (data.models ?? [])
+      .map((m) => ({
+        name: m.name ?? m.model ?? '',
+        sizeBytes: m.size ?? 0,
+        family: m.details?.family ?? '',
+        parameterSize: m.details?.parameter_size ?? '',
+        quantization: m.details?.quantization_level ?? '',
+        contextLength: m.details?.context_length ?? null,
+        capabilities: m.capabilities ?? [],
+      }))
+      .filter((m) => m.name);
   }
 
   /**
@@ -232,6 +252,20 @@ export class OllamaClient {
       }
     }
   }
+}
+
+/** Raw shape of one entry in /api/tags -- see listModelsDetailed. */
+interface OllamaTagsModel {
+  name?: string;
+  model?: string;
+  size?: number;
+  details?: {
+    family?: string;
+    parameter_size?: string;
+    quantization_level?: string;
+    context_length?: number;
+  };
+  capabilities?: string[];
 }
 
 interface OllamaChatChunk {

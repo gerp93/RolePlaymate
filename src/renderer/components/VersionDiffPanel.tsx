@@ -1,14 +1,22 @@
 import { useState } from 'react';
-import { CharacterFieldVersion } from '../../shared/types/fieldVersion';
 import { diffVersionContent } from '../../shared/utils/versionDiff';
 
-interface Props {
-  versions: CharacterFieldVersion[];
+/** The only shape VersionDiffPanel actually needs -- works for both CharacterFieldVersion and
+ * PromptFieldVersion (or any future versioned-content record) without a shared base type. */
+export interface VersionLike {
+  id: string;
+  versionNumber: number;
+  isActive: boolean;
+  content: string;
+}
+
+interface Props<V extends VersionLike> {
+  versions: V[];
   defaultFromId: string;
   defaultToId: string;
 }
 
-export default function VersionDiffPanel({ versions, defaultFromId, defaultToId }: Props) {
+export default function VersionDiffPanel<V extends VersionLike>({ versions, defaultFromId, defaultToId }: Props<V>) {
   const [fromId, setFromId] = useState(defaultFromId);
   const [toId, setToId] = useState(defaultToId);
 

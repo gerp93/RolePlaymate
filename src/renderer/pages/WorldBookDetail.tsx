@@ -3,11 +3,14 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Lorebook, LorebookEntry } from '../../shared/types/lorebook';
 import LoreEntryEditor from '../components/lore/LoreEntryEditor';
 import { toImageUrl } from '../utils/imageUrl';
+import { useSecurity } from '../context/SecurityContext';
+import LockedPlaceholder from '../components/LockedPlaceholder';
 import '../components/lore/Lore.css';
 
 export default function WorldBookDetail() {
   const { lorebookId } = useParams<{ lorebookId: string }>();
   const navigate = useNavigate();
+  const { hiddenUnlocked } = useSecurity();
   const [book, setBook] = useState<Lorebook | null>(null);
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
   const [nameDraft, setNameDraft] = useState('');
@@ -31,9 +34,12 @@ export default function WorldBookDetail() {
     setEntries(loadedEntries);
   }, [lorebookId, navigate]);
 
+  // hiddenUnlocked: load() already ran under the previous lock state holds ciphertext when
+  // this book is hidden -- re-fetch on every lock/unlock so content updates immediately
+  // instead of only after a manual reload.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, hiddenUnlocked]);
 
   async function handleNameBlur() {
     if (!lorebookId || !book) return;
@@ -74,6 +80,7 @@ export default function WorldBookDetail() {
   };
 
   if (!book) return <div className="text-muted">Loading…</div>;
+  if (book.isHidden && !hiddenUnlocked) return <LockedPlaceholder label="This world book" />;
 
   return (
     <div className="character-detail-page">
@@ -140,8 +147,11 @@ export default function WorldBookDetail() {
             </li>
           )}
           {entries.map((entry) => (
+            // Keyed on hiddenUnlocked too -- LoreEntryEditor fetches its own version history
+            // once per mount, so it needs to remount (and re-fetch) on lock/unlock the same as
+            // load() above, or its already-fetched content would stay stale ciphertext.
             <LoreEntryEditor
-              key={entry.id}
+              key={`${entry.id}-${hiddenUnlocked}`}
               entry={entry}
               onChanged={() => void load()}
               onDeleted={async () => {

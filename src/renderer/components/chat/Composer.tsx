@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { SamplerParams } from '../../../shared/types/chat';
 
 interface Props {
   disabled: boolean;
   isGenerating: boolean;
-  samplers: Pick<SamplerParams, 'temperature' | 'maxTokens'>;
-  onSamplersChange: (next: Pick<SamplerParams, 'temperature' | 'maxTokens'>) => void;
   onSend: (message: string, directions: string) => void;
+  /** Lets the character take another turn on its own -- no message required, since there isn't
+   * one this turn. Still passes along whatever's in the Directions box, same as onSend. */
+  onContinue: (directions: string) => void;
   onCancel: () => void;
   /** Undefined when there's nothing to suggest from yet (no character/model picked) -- the
    * button is hidden rather than disabled in that case. */
@@ -14,8 +14,8 @@ interface Props {
 }
 
 /**
- * Input, per-turn directions, and the two sampler controls the source exposed in chat
- * (temperature and max tokens; the rest come from settings).
+ * Message input, per-turn directions, and the reply-suggestion drafts. Temperature/max tokens
+ * live in Chat.tsx's header settings now, not here -- see chat-settings-more.
  *
  * Directions are transient by design: they are injected into this turn's system prompt and
  * then cleared, never stored on the conversation.
@@ -23,9 +23,8 @@ interface Props {
 export default function Composer({
   disabled,
   isGenerating,
-  samplers,
-  onSamplersChange,
   onSend,
+  onContinue,
   onCancel,
   onSuggest,
 }: Props) {
@@ -44,6 +43,13 @@ export default function Composer({
     if (!message.trim() || disabled || isGenerating) return;
     onSend(message, directions);
     setMessage('');
+    setDirections('');
+    setSuggestions([]);
+  };
+
+  const submitContinue = () => {
+    if (disabled || isGenerating) return;
+    onContinue(directions);
     setDirections('');
     setSuggestions([]);
   };
@@ -96,30 +102,6 @@ export default function Composer({
             {suggesting ? '💡 Thinking…' : '💡 Suggest'}
           </button>
         )}
-
-        <label className="chat-slider">
-          Temperature <output>{samplers.temperature.toFixed(2)}</output>
-          <input
-            type="range"
-            min={0.1}
-            max={1.5}
-            step={0.1}
-            value={samplers.temperature}
-            onChange={(e) => onSamplersChange({ ...samplers, temperature: Number(e.target.value) })}
-          />
-        </label>
-
-        <label className="chat-slider">
-          Max tokens <output>{samplers.maxTokens}</output>
-          <input
-            type="range"
-            min={64}
-            max={512}
-            step={64}
-            value={samplers.maxTokens}
-            onChange={(e) => onSamplersChange({ ...samplers, maxTokens: Number(e.target.value) })}
-          />
-        </label>
       </div>
 
       {directionsOpen && (
@@ -183,14 +165,25 @@ export default function Composer({
             Stop
           </button>
         ) : (
-          <button
-            type="button"
-            className="btn btn-primary chat-send"
-            disabled={disabled || !message.trim()}
-            onClick={submit}
-          >
-            Send
-          </button>
+          <div className="chat-composer-actions">
+            <button
+              type="button"
+              className="btn btn-primary chat-send"
+              disabled={disabled || !message.trim()}
+              onClick={submit}
+            >
+              Send
+            </button>
+            <button
+              type="button"
+              className="btn chat-send"
+              disabled={disabled}
+              onClick={submitContinue}
+              title="Have the character take another turn on its own, without a reply from you"
+            >
+              Continue
+            </button>
+          </div>
         )}
       </div>
     </div>

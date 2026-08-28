@@ -31,12 +31,20 @@ export interface UseChatSession {
   memoryCount: number;
   refreshMemoryCount: () => Promise<void>;
   send: (input: SendInput) => Promise<void>;
+  /** Appends another assistant message with no new user message first -- lets the character
+   * take a second turn on its own. Streams and appends exactly like `send`, just without the
+   * optimistic user bubble (there's no new user message to show). */
+  continueAsCharacter: (input: ContinueInput) => Promise<void>;
   /** Generates another variant of the last response, using the same context it was answering.
    * Selected automatically once it lands -- nothing is folded into context or extracted until
    * the next `send`, whichever variant happens to be selected then. */
   regenerate: (samplers?: Partial<SamplerParams>, model?: string) => Promise<void>;
   /** Switches which variant of the last message is shown. Instant -- no model call. */
   selectVariant: (variantId: string) => Promise<void>;
+  /** Hand-edits the last message's content -- assistant only, see chatSession.editMessage.
+   * Records the edit as a new variant rather than overwriting, so the original stays reachable
+   * through the same variant switcher a redo would leave behind. */
+  editLastMessage: (content: string) => Promise<void>;
   /** Deletes the conversation's last message (LIFO -- see conversationService.deleteMessage).
    * Any memories extracted from it go with it. */
   deleteLastMessage: () => Promise<void>;
@@ -53,6 +61,9 @@ export interface SendInput {
   directions?: string;
   samplers?: Partial<SamplerParams>;
 }
+
+/** Same shape as SendInput minus `message` -- see UseChatSession.continueAsCharacter. */
+export type ContinueInput = Omit<SendInput, 'message'>;
 
 export function useChatSession(conversationId: string | null): UseChatSession {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -209,6 +220,35 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     [conversationId, isGenerating]
   );
 
+  const continueAsCharacter = useCallback(
+    async (input: ContinueInput) => {
+      if (!conversationId || isGenerating) return;
+
+      setError(null);
+      setStreamingText('');
+      setIsGenerating(true);
+
+      // No optimistic bubble to add -- unlike send(), there's no new user message, just the
+      // character's own next line once it streams in via the 'done' handler above.
+      try {
+        const { streamId } = await window.electronAPI.chat.continue({
+          conversationId,
+          characterId: input.characterId,
+          model: input.model,
+          personaId: input.personaId,
+          directions: input.directions,
+          samplers: input.samplers,
+        });
+        activeStreamId.current = streamId;
+      } catch (continueError) {
+        setError((continueError as Error).message);
+        setIsGenerating(false);
+        activeStreamId.current = null;
+      }
+    },
+    [conversationId, isGenerating]
+  );
+
   const regenerate = useCallback(
     async (samplers?: Partial<SamplerParams>, model?: string) => {
       if (!conversationId || isGenerating) return;
@@ -239,6 +279,22 @@ export function useChatSession(conversationId: string | null): UseChatSession {
 
       const updated = await window.electronAPI.chat.selectVariant(conversationId, last.id, variantId);
       setMessages((current) => current.map((m) => (m.id === updated.id ? updated : m)));
+    },
+    [conversationId, messages]
+  );
+
+  const editLastMessage = useCallback(
+    async (content: string) => {
+      if (!conversationId) return;
+      const last = messages[messages.length - 1];
+      if (!last || last.role !== 'assistant') return;
+
+      try {
+        const updated = await window.electronAPI.chat.editMessage(conversationId, last.id, content);
+        setMessages((current) => current.map((m) => (m.id === updated.id ? updated : m)));
+      } catch (editError) {
+        setError((editError as Error).message);
+      }
     },
     [conversationId, messages]
   );
@@ -274,8 +330,10 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     memoryCount,
     refreshMemoryCount,
     send,
+    continueAsCharacter,
     regenerate,
     selectVariant,
+    editLastMessage,
     deleteLastMessage,
     cancel,
     dismissError,

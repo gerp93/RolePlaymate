@@ -42,3 +42,54 @@
 .topbar a.active {
   background: var(--color-top-bar-hover);
 }
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.hidden-toggle {
+  font-size: 16px;
+  padding: 6px 10px;
+}
+
+.hidden-toggle.active {
+  border-color: var(--color-accent-green);
+  color: var(--color-accent-green);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-dialog {
+  width: min(360px, 90vw);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.modal-dialog h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lightbox-image {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: var(--radius);
+  object-fit: contain;
+  cursor: default;
+}

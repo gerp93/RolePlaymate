@@ -2,6 +2,7 @@ export interface Character {
   id: string;
   name: string;
   description: string | null;
+  isHidden: boolean;
   createdAt: string;
   updatedAt: string;
 }

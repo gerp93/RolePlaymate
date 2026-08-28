@@ -2,19 +2,24 @@ import { Character, CreateCharacterInput, UpdateCharacterInput } from '../shared
 import { CharacterField } from '../shared/types/characterField';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
+import { OllamaModelInfo } from '../shared/types/ollama';
+import { PersonaImage } from '../shared/types/personaImage';
 import {
   BuiltPrompt,
   ChatStreamEvent,
   ChatSendRequest,
   ChatRegenerateRequest,
   ChatDebugInfo,
+  SamplerParams,
+  ModelSamplerDefaults,
 } from '../shared/types/chat';
 import {
   UserPersona,
   CreateUserPersonaInput,
   UpdateUserPersonaInput,
+  PersonaBackgroundVersion,
 } from '../shared/types/userPersona';
-import { Conversation, CreateConversationInput } from '../shared/types/conversation';
+import { Conversation, CreateConversationInput, ImageMode } from '../shared/types/conversation';
 import { Message, MessageVariant } from '../shared/types/message';
 import { ConversationMemory } from '../shared/types/conversationMemory';
 import {
@@ -26,6 +31,7 @@ import {
   CreateLorebookEntryInput,
   UpdateLorebookEntryInput,
 } from '../shared/types/lorebook';
+import { PromptTemplates, StopPhraseSettings, PromptFieldVersion } from '../shared/types/promptTemplates';
 
 declare global {
   interface Window {
@@ -35,6 +41,7 @@ declare global {
         getById: (id: string) => Promise<Character | null>;
         create: (input: CreateCharacterInput) => Promise<Character>;
         update: (id: string, input: UpdateCharacterInput) => Promise<Character>;
+        setHidden: (id: string, hidden: boolean) => Promise<Character>;
         clone: (id: string) => Promise<Character>;
         delete: (id: string) => Promise<{ success: boolean }>;
         importFromHtml: () => Promise<{ character: Character; warnings: string[] } | null>;
@@ -56,6 +63,13 @@ declare global {
         remove: (id: string) => Promise<{ success: boolean }>;
         setCover: (id: string) => Promise<{ success: boolean }>;
       };
+      personaImages: {
+        getByPersona: (personaId: string) => Promise<PersonaImage[]>;
+        getAllGroupedByPersona: () => Promise<Record<string, PersonaImage[]>>;
+        add: (personaId: string) => Promise<PersonaImage[]>;
+        remove: (id: string) => Promise<{ success: boolean }>;
+        setCover: (id: string) => Promise<{ success: boolean }>;
+      };
       dbLocation: {
         get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string }>;
         browseExisting: () => Promise<string | null>;
@@ -72,6 +86,14 @@ declare global {
           request: ChatSendRequest & { characterId: string; personaId?: string; model: string }
         ) => Promise<{ streamId: string }>;
         regenerate: (request: ChatRegenerateRequest) => Promise<{ streamId: string }>;
+        continue: (request: {
+          conversationId: string;
+          characterId: string;
+          personaId?: string;
+          model: string;
+          directions?: string;
+          samplers?: Partial<SamplerParams>;
+        }) => Promise<{ streamId: string }>;
         getVariants: (messageId: string) => Promise<MessageVariant[]>;
         getMessageDebug: (messageId: string) => Promise<ChatDebugInfo | null>;
         suggestReply: (request: {
@@ -85,6 +107,7 @@ declare global {
           messageId: string,
           variantId: string
         ) => Promise<Message>;
+        editMessage: (conversationId: string, messageId: string, content: string) => Promise<Message>;
         deleteMessage: (conversationId: string, messageId: string) => Promise<{ success: boolean }>;
         cancel: (conversationId: string) => Promise<{ cancelled: boolean }>;
         isGenerating: (conversationId: string) => Promise<boolean>;
@@ -109,8 +132,10 @@ declare global {
         getById: (id: string) => Promise<Lorebook | null>;
         create: (input: CreateLorebookInput) => Promise<Lorebook>;
         update: (id: string, input: UpdateLorebookInput) => Promise<Lorebook>;
+        setHidden: (id: string, hidden: boolean) => Promise<Lorebook>;
         delete: (id: string) => Promise<{ success: true }>;
         chooseImage: () => Promise<string | null>;
+        importFromHtml: () => Promise<{ lorebook: Lorebook; warnings: string[] } | null>;
         clone: (id: string) => Promise<Lorebook>;
         /** Creates the book on first request rather than alongside every character. */
         getPersonalBook: (characterId: string) => Promise<Lorebook>;
@@ -140,20 +165,49 @@ declare global {
         getMessages: (id: string) => Promise<Message[]>;
         create: (input: CreateConversationInput) => Promise<Conversation>;
         rename: (id: string, title: string) => Promise<Conversation>;
+        setImageMode: (
+          id: string,
+          input: {
+            characterImageMode?: ImageMode;
+            characterImageId?: string | null;
+            personaImageMode?: ImageMode;
+            personaImageId?: string | null;
+          }
+        ) => Promise<Conversation>;
         delete: (id: string) => Promise<{ success: true }>;
       };
       ollama: {
         listModels: () => Promise<
           { available: true; models: string[] } | { available: false; models: string[]; message: string }
         >;
+        listModelsDetailed: () => Promise<
+          | { available: true; models: OllamaModelInfo[] }
+          | { available: false; models: OllamaModelInfo[]; message: string }
+        >;
+      };
+      modelTuning: {
+        getGlobalDefaults: () => Promise<SamplerParams>;
+        getAll: () => Promise<ModelSamplerDefaults[]>;
+        getEffective: (model: string) => Promise<SamplerParams>;
+        getRecommended: (model: string) => Promise<SamplerParams>;
+        update: (model: string, partial: Partial<SamplerParams>) => Promise<ModelSamplerDefaults>;
+        resetField: (model: string, field: keyof SamplerParams) => Promise<{ success: boolean }>;
+        resetAll: (model: string) => Promise<{ success: boolean }>;
       };
       personas: {
         getAll: () => Promise<UserPersona[]>;
         create: (input: CreateUserPersonaInput) => Promise<UserPersona>;
         update: (id: string, input: UpdateUserPersonaInput) => Promise<UserPersona>;
+        setHidden: (id: string, hidden: boolean) => Promise<UserPersona>;
         delete: (id: string) => Promise<{ success: true }>;
-        chooseAvatar: () => Promise<string | null>;
         clone: (id: string) => Promise<UserPersona>;
+      };
+      personaFieldVersions: {
+        getByPersona: (personaId: string) => Promise<PersonaBackgroundVersion[]>;
+        getById: (id: string) => Promise<PersonaBackgroundVersion | null>;
+        duplicate: (versionId: string) => Promise<PersonaBackgroundVersion>;
+        updateContent: (id: string, content: string) => Promise<PersonaBackgroundVersion>;
+        delete: (id: string) => Promise<{ success: boolean }>;
       };
       app: {
         getVersion: () => Promise<string>;
@@ -164,6 +218,30 @@ declare global {
           version?: string;
           message?: string;
         }>;
+      };
+      security: {
+        unlock: (pin: string) => Promise<boolean>;
+        lock: () => Promise<{ success: boolean }>;
+        setPin: (currentPin: string, newPin: string) => Promise<{ ok: boolean; error?: string }>;
+      };
+      promptSettings: {
+        get: () => Promise<{
+          stopPhrases: StopPhraseSettings;
+          overriddenFields: string[];
+        }>;
+        updateStopPhrases: (partial: Partial<StopPhraseSettings>) => Promise<{ success: boolean }>;
+        resetField: (
+          field: 'stopPhrasesBase' | 'useCharacterNameAsStop' | 'usePersonaNameAsStop'
+        ) => Promise<{ success: boolean }>;
+        resetAll: () => Promise<{ success: boolean }>;
+      };
+      promptFieldVersions: {
+        getByField: (fieldKey: keyof PromptTemplates) => Promise<PromptFieldVersion[]>;
+        getById: (id: string) => Promise<PromptFieldVersion | null>;
+        duplicate: (versionId: string) => Promise<PromptFieldVersion>;
+        updateContent: (id: string, content: string) => Promise<PromptFieldVersion>;
+        delete: (id: string) => Promise<{ success: boolean }>;
+        resetToDefault: (fieldKey: keyof PromptTemplates) => Promise<PromptFieldVersion>;
       };
     };
   }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Lorebook, LorebookEntry } from '../../../shared/types/lorebook';
 import LoreEntryEditor from './LoreEntryEditor';
+import { useSecurity } from '../../context/SecurityContext';
+import LockedPlaceholder from '../LockedPlaceholder';
 import './Lore.css';
 
 /**
@@ -9,6 +11,7 @@ import './Lore.css';
  * so there is nothing to show beyond this persona's own memories.
  */
 export default function PersonaHistoryPanel({ personaId }: { personaId: string }) {
+  const { hiddenUnlocked } = useSecurity();
   const [book, setBook] = useState<Lorebook | null>(null);
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
   const [newTitle, setNewTitle] = useState('');
@@ -20,9 +23,12 @@ export default function PersonaHistoryPanel({ personaId }: { personaId: string }
     setEntries(loadedEntries);
   }, [personaId]);
 
+  // hiddenUnlocked: refresh() already ran under the previous lock state hold ciphertext when
+  // this persona's book is hidden -- re-fetch on every lock/unlock so content updates
+  // immediately instead of only after a manual reload.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, hiddenUnlocked]);
 
   const addEntry = async () => {
     if (!book || !newTitle.trim()) return;
@@ -30,6 +36,12 @@ export default function PersonaHistoryPanel({ personaId }: { personaId: string }
     setNewTitle('');
     await refresh();
   };
+
+  // A persona can be visible while its own personal lorebook is separately hidden -- same
+  // independent guard as PersonalHistoryPanel.
+  if (book?.isHidden && !hiddenUnlocked) {
+    return <LockedPlaceholder label="This persona's personal history" />;
+  }
 
   return (
     <div className="card personal-history">
@@ -66,8 +78,11 @@ export default function PersonaHistoryPanel({ personaId }: { personaId: string }
           </li>
         )}
         {entries.map((entry) => (
+          // Keyed on hiddenUnlocked too -- LoreEntryEditor fetches its own version history once
+          // per mount, so it needs to remount (and re-fetch) on lock/unlock the same as refresh()
+          // above, or its already-fetched content would stay stale ciphertext.
           <LoreEntryEditor
-            key={entry.id}
+            key={`${entry.id}-${hiddenUnlocked}`}
             entry={entry}
             onChanged={() => void refresh()}
             onDeleted={async () => {

@@ -16,6 +16,7 @@ export interface Lorebook {
   ownerPersonaId: string | null;
   /** World books only: an optional cover image, shown on the World books grid. */
   image: string | null;
+  isHidden: boolean;
   createdAt: string;
   updatedAt: string;
 }

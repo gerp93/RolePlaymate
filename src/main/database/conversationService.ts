@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
-import { Conversation, CreateConversationInput } from '../../shared/types/conversation';
+import { Conversation, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
 import { Message, MessageRole, MessageVariant } from '../../shared/types/message';
 import { ChatDebugInfo } from '../../shared/types/chat';
 import {
@@ -14,6 +14,8 @@ import {
   UpdateUserPersonaInput,
 } from '../../shared/types/userPersona';
 import { transaction } from './schema';
+import { SecurityService } from './securityService';
+import { PersonaFieldVersionService } from './personaFieldVersionService';
 
 const CONVERSATION_COLUMNS = `
   id,
@@ -21,6 +23,10 @@ const CONVERSATION_COLUMNS = `
   model,
   character_id as characterId,
   user_persona_id as userPersonaId,
+  character_image_mode as characterImageMode,
+  character_image_id as characterImageId,
+  persona_image_mode as personaImageMode,
+  persona_image_id as personaImageId,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -53,13 +59,22 @@ const MEMORY_COLUMNS = `
   created_at as createdAt
 `;
 
+// background comes from the active persona_background_versions row, not the (now legacy-only)
+// user_personas.background column -- see PersonaFieldVersionService. Every query selecting
+// these columns must join persona_background_versions the same way (see PERSONA_FROM below).
 const PERSONA_COLUMNS = `
-  id,
-  name,
-  description,
-  background,
-  avatar,
-  created_at as createdAt
+  up.id as id,
+  up.name as name,
+  up.description as description,
+  pbv.content as background,
+  up.avatar as avatar,
+  up.is_hidden as isHidden,
+  up.created_at as createdAt
+`;
+
+const PERSONA_FROM = `
+  user_personas up
+  LEFT JOIN persona_background_versions pbv ON pbv.persona_id = up.id AND pbv.is_active = 1
 `;
 
 function rowToConversation(row: Record<string, unknown>): Conversation {
@@ -69,6 +84,10 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     model: row.model as string,
     characterId: (row.characterId as string | null) ?? null,
     userPersonaId: (row.userPersonaId as string | null) ?? null,
+    characterImageMode: row.characterImageMode as ImageMode,
+    characterImageId: (row.characterImageId as string | null) ?? null,
+    personaImageMode: row.personaImageMode as ImageMode,
+    personaImageId: (row.personaImageId as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -108,32 +127,35 @@ function rowToMemory(row: Record<string, unknown>): ConversationMemory {
   };
 }
 
-function rowToPersona(row: Record<string, unknown>): UserPersona {
-  return {
-    id: row.id as string,
-    name: row.name as string,
-    description: (row.description as string | null) ?? null,
-    background: (row.background as string | null) ?? null,
-    avatar: (row.avatar as string | null) ?? null,
-    createdAt: row.createdAt as string,
-  };
-}
 
-/** Titles are derived from the opening message when none is given; long ones are elided
- * rather than stored in full, since the title only ever appears in a list row. */
-const TITLE_MAX_LENGTH = 60;
-
-/** Placeholder until the first user message names the conversation. */
+/** Stored but no longer surfaced anywhere -- the renderer displays character/persona names
+ * instead (see Chat.tsx). Kept as a fixed value rather than removing the column/NOT NULL
+ * constraint, since nothing reads it now. */
 export const DEFAULT_CONVERSATION_TITLE = 'New conversation';
 
-export function deriveTitle(text: string): string {
-  const flat = text.trim().replace(/\s+/g, ' ');
-  if (!flat) return DEFAULT_CONVERSATION_TITLE;
-  return flat.length <= TITLE_MAX_LENGTH ? flat : `${flat.slice(0, TITLE_MAX_LENGTH)}…`;
-}
-
 export class ConversationService {
-  constructor(private db: DatabaseSync) {}
+  constructor(
+    private db: DatabaseSync,
+    private security: SecurityService,
+    private personaFieldVersions: PersonaFieldVersionService
+  ) {}
+
+  /** Decrypts name/description/background when the persona is hidden -- same convention as
+   * CharacterService.rowToCharacter. */
+  private rowToPersona(row: Record<string, unknown>): UserPersona {
+    const isHidden = !!row.isHidden;
+    const description = row.description as string | null;
+    const background = row.background as string | null;
+    return {
+      id: row.id as string,
+      name: this.security.decryptIfHidden(row.name as string, isHidden),
+      description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
+      background: background == null ? null : this.security.decryptIfHidden(background, isHidden),
+      avatar: (row.avatar as string | null) ?? null,
+      isHidden,
+      createdAt: row.createdAt as string,
+    };
+  }
 
   // --- Conversations -------------------------------------------------------------------
 
@@ -188,6 +210,39 @@ export class ConversationService {
 
       return this.getConversation(id)!;
     });
+  }
+
+  /** Which specific portrait shows in the transcript is purely cosmetic -- unlike character/
+   * persona selection (locked once a conversation has messages, see Chat.tsx's
+   * selectionLocked), this can be changed at any point in a conversation's life since it never
+   * touches the model's context. Any field omitted here is left as-is. */
+  setImageMode(
+    id: string,
+    input: {
+      characterImageMode?: ImageMode;
+      characterImageId?: string | null;
+      personaImageMode?: ImageMode;
+      personaImageId?: string | null;
+    }
+  ): Conversation {
+    const existing = this.getConversation(id);
+    if (!existing) {
+      throw new Error(`Conversation with id ${id} not found`);
+    }
+    this.db
+      .prepare(
+        `UPDATE conversations
+         SET character_image_mode = ?, character_image_id = ?, persona_image_mode = ?, persona_image_id = ?
+         WHERE id = ?`
+      )
+      .run(
+        input.characterImageMode ?? existing.characterImageMode,
+        input.characterImageId !== undefined ? input.characterImageId : existing.characterImageId,
+        input.personaImageMode ?? existing.personaImageMode,
+        input.personaImageId !== undefined ? input.personaImageId : existing.personaImageId,
+        id
+      );
+    return this.getConversation(id)!;
   }
 
   renameConversation(id: string, title: string): Conversation {
@@ -469,36 +524,39 @@ export class ConversationService {
   // --- Personas ------------------------------------------------------------------------
 
   listPersonas(): UserPersona[] {
-    return this.db.prepare(`SELECT ${PERSONA_COLUMNS} FROM user_personas ORDER BY name`).all().map(rowToPersona);
+    return this.db
+      .prepare(`SELECT ${PERSONA_COLUMNS} FROM ${PERSONA_FROM} ORDER BY up.name`)
+      .all()
+      .map((r) => this.rowToPersona(r));
   }
 
   getPersona(id: string): UserPersona | null {
-    const row = this.db.prepare(`SELECT ${PERSONA_COLUMNS} FROM user_personas WHERE id = ?`).get(id);
-    return row ? rowToPersona(row) : null;
+    const row = this.db.prepare(`SELECT ${PERSONA_COLUMNS} FROM ${PERSONA_FROM} WHERE up.id = ?`).get(id);
+    return row ? this.rowToPersona(row) : null;
   }
 
+  /** `background` is not written to the `user_personas` column (unused going forward, see
+   * PERSONA_COLUMNS) -- it seeds the persona's first background version instead, same
+   * transaction, matching how a character's fields get their own version 1 at creation. */
   createPersona(input: CreateUserPersonaInput): UserPersona {
     const id = uuidv4();
-    this.db
-      .prepare(
-        `INSERT INTO user_personas (id, name, description, background, avatar, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        input.name,
-        input.description ?? null,
-        input.background ?? null,
-        input.avatar ?? null,
-        new Date().toISOString()
-      );
-    return this.getPersona(id)!;
+    return transaction(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT INTO user_personas (id, name, description, avatar, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(id, input.name, input.description ?? null, input.avatar ?? null, new Date().toISOString());
+      this.personaFieldVersions.createVersion(id, input.background ?? '');
+      return this.getPersona(id)!;
+    });
   }
 
-  /** Clones a persona's name (suffixed), description and background. `clonedAvatarPath` is
-   * the caller's responsibility (see characters:clone in main.ts for why -- file writes
-   * aren't transactional, so copying the avatar file happens outside any DB transaction). */
-  clonePersona(id: string, clonedAvatarPath: string | null): UserPersona {
+  /** Clones a persona's name (suffixed), description and background. Gallery images are the
+   * caller's responsibility (see characters:clone in main.ts for why -- file writes aren't
+   * transactional, so copying image files happens outside any DB transaction, in a loop over
+   * personaImageService after this returns). */
+  clonePersona(id: string): UserPersona {
     const source = this.getPersona(id);
     if (!source) throw new Error(`UserPersona with id ${id} not found`);
 
@@ -506,27 +564,93 @@ export class ConversationService {
       name: `${source.name} (Copy)`,
       description: source.description ?? undefined,
       background: source.background ?? undefined,
-      avatar: clonedAvatarPath ?? undefined,
     });
   }
 
+  /** `background` can no longer be set here -- only through personaFieldVersions:* (create a
+   * new version, same as a character field). */
   updatePersona(id: string, input: UpdateUserPersonaInput): UserPersona {
     const existing = this.getPersona(id);
     if (!existing) {
       throw new Error(`UserPersona with id ${id} not found`);
     }
+    const name = input.name ?? existing.name;
+    const description = input.description ?? existing.description;
     this.db
-      .prepare(
-        `UPDATE user_personas SET name = ?, description = ?, background = ?, avatar = ? WHERE id = ?`
-      )
+      .prepare(`UPDATE user_personas SET name = ?, description = ?, avatar = ? WHERE id = ?`)
       .run(
-        input.name ?? existing.name,
-        input.description ?? existing.description,
-        input.background ?? existing.background,
+        this.security.encryptIfHidden(name, existing.isHidden),
+        description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
         input.avatar ?? existing.avatar,
         id
       );
     return this.getPersona(id)!;
+  }
+
+  /** Same shape as CharacterService.setHidden: `existing` is already plaintext (decrypted if
+   * currently hidden, since getPersona requires unlock to have decrypted it -- checked below
+   * for both directions), so hide encrypts it under the new flag and unhide just flips the
+   * flag back to plain columns. `background`'s own versions are cascaded separately via
+   * personaFieldVersions.setHiddenForPersona, same convention as
+   * CharacterService.setHidden -> FieldVersionService.setHiddenForCharacter. */
+  setPersonaHidden(id: string, hidden: boolean): UserPersona {
+    const existing = this.getPersona(id);
+    if (!existing) {
+      throw new Error(`UserPersona with id ${id} not found`);
+    }
+    if (!this.security.isUnlocked()) {
+      throw new Error('Unlock with the PIN before hiding or unhiding an item');
+    }
+
+    const name = hidden ? this.security.encrypt(existing.name) : existing.name;
+    const description =
+      existing.description == null
+        ? null
+        : hidden
+          ? this.security.encrypt(existing.description)
+          : existing.description;
+
+    return transaction(this.db, () => {
+      this.db
+        .prepare(`UPDATE user_personas SET name = ?, description = ?, is_hidden = ? WHERE id = ?`)
+        .run(name, description, hidden ? 1 : 0, id);
+      this.personaFieldVersions.setHiddenForPersona(id, hidden);
+      return this.getPersona(id)!;
+    });
+  }
+
+  /** PIN-change rekey for every currently-hidden persona's name/description. `background`'s
+   * versions are rekeyed separately -- see personaFieldVersions.reencryptHiddenContent. */
+  reencryptHiddenPersonaContent(oldKey: Buffer, newKey: Buffer): void {
+    const rows = this.db
+      .prepare(`SELECT id, name, description FROM user_personas WHERE is_hidden = 1`)
+      .all() as { id: string; name: string; description: string | null }[];
+
+    const stmt = this.db.prepare(`UPDATE user_personas SET name = ?, description = ? WHERE id = ?`);
+    for (const row of rows) {
+      const name = this.security.reencryptWithKeys(row.name, oldKey, newKey);
+      const description =
+        row.description == null ? null : this.security.reencryptWithKeys(row.description, oldKey, newKey);
+      stmt.run(name, description, row.id);
+    }
+  }
+
+  /** After a successful unlock, upgrades any hidden persona's name/description still sitting
+   * in legacy plaintext to real ciphertext. `background`'s versions are migrated separately --
+   * see personaFieldVersions.migrateLegacyHiddenContent. */
+  migrateLegacyHiddenPersonaContent(): void {
+    const rows = this.db
+      .prepare(`SELECT id, name, description FROM user_personas WHERE is_hidden = 1`)
+      .all() as { id: string; name: string; description: string | null }[];
+
+    const stmt = this.db.prepare(`UPDATE user_personas SET name = ?, description = ? WHERE id = ?`);
+    for (const row of rows) {
+      const name = this.security.migrateLegacyContent(row.name, true);
+      const description = row.description == null ? null : this.security.migrateLegacyContent(row.description, true);
+      if (name !== row.name || description !== row.description) {
+        stmt.run(name, description, row.id);
+      }
+    }
   }
 
   /** Conversations that used this persona keep their transcript; their `user_persona_id`

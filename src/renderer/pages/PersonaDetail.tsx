@@ -1,24 +1,36 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { UserPersona } from '../../shared/types/userPersona';
+import { PersonaImage } from '../../shared/types/personaImage';
 import PersonaHistoryPanel from '../components/lore/PersonaHistoryPanel';
+import PersonaBackgroundEditor from '../components/PersonaBackgroundEditor';
 import { toImageUrl } from '../utils/imageUrl';
+import { useSecurity } from '../context/SecurityContext';
+import LockedPlaceholder from '../components/LockedPlaceholder';
 
 export default function PersonaDetail() {
   const { personaId } = useParams<{ personaId: string }>();
   const navigate = useNavigate();
+  const { hiddenUnlocked } = useSecurity();
   const [persona, setPersona] = useState<UserPersona | null>(null);
+  const [images, setImages] = useState<PersonaImage[]>([]);
+  const [imageIndex, setImageIndex] = useState(0);
   const [nameDraft, setNameDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
-  const [backgroundDraft, setBackgroundDraft] = useState('');
-  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
 
+  // hiddenUnlocked: a persona already fetched under the previous lock state holds ciphertext
+  // when hidden -- re-fetch on every lock/unlock so content updates immediately instead of
+  // only after a manual reload.
   useEffect(() => {
     if (personaId) void load(personaId);
-  }, [personaId]);
+  }, [personaId, hiddenUnlocked]);
 
-  async function load(id: string) {
-    const all = await window.electronAPI.personas.getAll();
+  async function load(id: string, preferImageId?: string) {
+    const [all, imageList] = await Promise.all([
+      window.electronAPI.personas.getAll(),
+      window.electronAPI.personaImages.getByPersona(id),
+    ]);
     const found = all.find((p) => p.id === id) ?? null;
     if (!found) {
       navigate('/personas');
@@ -27,7 +39,9 @@ export default function PersonaDetail() {
     setPersona(found);
     setNameDraft(found.name);
     setDescriptionDraft(found.description ?? '');
-    setBackgroundDraft(found.background ?? '');
+    setImages(imageList);
+    const preferredIndex = preferImageId ? imageList.findIndex((img) => img.id === preferImageId) : -1;
+    setImageIndex(preferredIndex >= 0 ? preferredIndex : 0);
   }
 
   async function handleNameBlur() {
@@ -47,29 +61,50 @@ export default function PersonaDetail() {
     }
   }
 
-  async function handleBackgroundBlur() {
-    if (!personaId || !persona) return;
-    if (backgroundDraft !== (persona.background ?? '')) {
-      await window.electronAPI.personas.update(personaId, { background: backgroundDraft });
-      await load(personaId);
+  async function handleAddImage() {
+    if (!personaId) return;
+    setImageBusy(true);
+    try {
+      const added = await window.electronAPI.personaImages.add(personaId);
+      if (added.length > 0) {
+        await load(personaId, added[0].id);
+      }
+    } finally {
+      setImageBusy(false);
     }
   }
 
-  async function handleChooseAvatar() {
+  async function handleRemoveCurrentImage() {
     if (!personaId) return;
-    setAvatarBusy(true);
-    try {
-      const path = await window.electronAPI.personas.chooseAvatar();
-      if (path) {
-        await window.electronAPI.personas.update(personaId, { avatar: path });
-        await load(personaId);
-      }
-    } finally {
-      setAvatarBusy(false);
-    }
+    const current = images[imageIndex];
+    if (!current) return;
+    if (!confirm('Remove this image? This cannot be undone.')) return;
+    await window.electronAPI.personaImages.remove(current.id);
+    await load(personaId);
+  }
+
+  async function handleSetCover() {
+    if (!personaId) return;
+    const current = images[imageIndex];
+    if (!current) return;
+    await window.electronAPI.personaImages.setCover(current.id);
+    await load(personaId, current.id);
+  }
+
+  function showPrevImage() {
+    if (images.length < 2) return;
+    setImageIndex((i) => (i - 1 + images.length) % images.length);
+  }
+
+  function showNextImage() {
+    if (images.length < 2) return;
+    setImageIndex((i) => (i + 1) % images.length);
   }
 
   if (!persona) return <div className="text-muted">Loading…</div>;
+  if (persona.isHidden && !hiddenUnlocked) return <LockedPlaceholder label="This persona" />;
+
+  const currentImage = images[imageIndex];
 
   return (
     <div className="character-detail-page">
@@ -104,35 +139,71 @@ export default function PersonaDetail() {
           />
         </div>
 
-        <div className="field">
-          <label htmlFor="persona-background">
-            Background <span className="text-muted">— sent to the model</span>
-          </label>
-          <textarea
-            id="persona-background"
-            rows={6}
-            value={backgroundDraft}
-            onChange={(e) => setBackgroundDraft(e.target.value)}
-            onBlur={handleBackgroundBlur}
-            placeholder="Without a background, the persona only supplies a name."
-          />
-          {!backgroundDraft.trim() && (
-            <p className="text-muted persona-warning">
-              No background — this persona won&apos;t add a persona section to the prompt.
-            </p>
-          )}
-        </div>
+        {/* Keyed on hiddenUnlocked too -- PersonaBackgroundEditor fetches its own version
+            history once per mount, so it needs to remount (and re-fetch) on lock/unlock the
+            same as this page's own load() above, or its already-fetched content would stay
+            stale ciphertext. */}
+        <PersonaBackgroundEditor key={`${persona.id}-${hiddenUnlocked}`} personaId={persona.id} />
 
         <PersonaHistoryPanel personaId={persona.id} />
       </div>
 
       <div className="character-detail-portrait-panel">
         <div className="character-detail-portrait-large">
-          {persona.avatar ? <img src={toImageUrl(persona.avatar)} alt={persona.name} /> : <span>?</span>}
+          {currentImage ? <img src={toImageUrl(currentImage.path)} alt={persona.name} /> : <span>?</span>}
+
+          {images.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="portrait-nav-btn portrait-nav-prev"
+                onClick={showPrevImage}
+                aria-label="Previous image"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="portrait-nav-btn portrait-nav-next"
+                onClick={showNextImage}
+                aria-label="Next image"
+              >
+                ›
+              </button>
+            </>
+          )}
         </div>
-        <button className="btn" disabled={avatarBusy} onClick={() => void handleChooseAvatar()}>
-          {avatarBusy ? 'Choosing…' : persona.avatar ? 'Change Image…' : 'Add Image…'}
-        </button>
+
+        {images.length > 1 && (
+          <div className="portrait-dots">
+            {images.map((img, i) => (
+              <button
+                key={img.id}
+                type="button"
+                className={`portrait-dot${i === imageIndex ? ' active' : ''}`}
+                onClick={() => setImageIndex(i)}
+                aria-label={`Show image ${i + 1} of ${images.length}`}
+              />
+            ))}
+          </div>
+        )}
+
+        {images.length > 1 && imageIndex !== 0 && (
+          <button className="btn" onClick={() => void handleSetCover()} title="Show this image on the persona card">
+            Set as Cover
+          </button>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" disabled={imageBusy} onClick={() => void handleAddImage()} style={{ flex: 1 }}>
+            {imageBusy ? 'Adding…' : 'Add Image…'}
+          </button>
+          {currentImage && (
+            <button className="btn btn-danger" onClick={() => void handleRemoveCurrentImage()}>
+              Remove
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

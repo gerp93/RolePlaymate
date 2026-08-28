@@ -17,7 +17,7 @@ export interface ParsedCharacterImport {
 
 // A saved chatbot profile page labels each section with a standalone heading element
 // ("Greeting", "Personality", ...) immediately followed by a container holding that
-// section's content -- this holds regardless of the exact class names SpicyChat ships,
+// section's content -- this holds regardless of the exact class names the source site ships,
 // which is what makes matching on label text (rather than CSS classes) durable.
 const SECTION_LABELS: Record<string, FieldType> = {
   greeting: 'greeting',
@@ -27,9 +27,9 @@ const SECTION_LABELS: Record<string, FieldType> = {
   'example dialogue': 'dialogue',
 };
 
-/** Parses a saved chatbot-profile HTML page (tested against SpicyChat's export) into character
- * fields. Missing sections are simply omitted from `fields`/`avatarSrc` and noted in `warnings`
- * -- nothing throws just because a section wasn't on the page. */
+/** Parses a saved chatbot-profile HTML page into character fields. Missing sections are simply
+ * omitted from `fields`/`avatarSrc` and noted in `warnings` -- nothing throws just because a
+ * section wasn't on the page. */
 export function parseCharacterHtml(html: string): ParsedCharacterImport {
   const root = parse(html, { comment: false });
   const warnings: string[] = [];
@@ -248,4 +248,124 @@ export function resolveLocalAvatarPath(htmlFilePath: string, avatarSrc: string |
 
   const candidate = path.resolve(dir, decoded);
   return fs.existsSync(candidate) ? candidate : null;
+}
+
+export interface ParsedLorebookEntryImport {
+  title: string;
+  /** Trigger keywords as found on the page, comma-separated -- ready to hand straight to
+   * CreateLorebookEntryInput.keys. */
+  keys: string;
+  content: string;
+  /** The source page's lorebook view only ever shows the first few keys inline (then a "+N"
+   * badge for the rest) -- there's no way to recover the hidden ones from a saved copy of this
+   * page, so this is >0 exactly when some were left out. */
+  truncatedKeyCount: number;
+}
+
+export interface ParsedLorebookImport {
+  name: string;
+  description: string | null;
+  /** Same convention as ParsedCharacterImport.avatarSrc -- resolve with resolveLocalAvatarPath. */
+  avatarSrc: string | null;
+  entries: ParsedLorebookEntryImport[];
+  warnings: string[];
+}
+
+/** Parses a saved lorebook-detail page (one open lorebook and its entry list, e.g.
+ * "Save Page As... > Webpage, Complete" from a lorebook's own URL -- a page listing multiple
+ * lorebooks has nothing to scrape, since it's just a grid of links into pages like this one).
+ * Missing pieces are omitted and noted in `warnings` rather than failing the whole import,
+ * matching parseCharacterHtml's approach. */
+export function parseLorebookHtml(html: string): ParsedLorebookImport {
+  const root = parse(html, { comment: false });
+  const warnings: string[] = [];
+
+  const titleP = root
+    .querySelectorAll('*')
+    .find((el) => el.children.length === 0 && el.classList.contains('text-mobile-heading-3'));
+  const name = titleP?.text.trim() || fallbackLorebookName(root);
+  if (!titleP?.text.trim()) {
+    warnings.push(`Could not find a lorebook name -- using "${name}". Rename it after importing.`);
+  }
+
+  // The name/creator-handle block, the description, and the tag chips are siblings two levels
+  // up from the name itself. Filtering direct children by tag ('P') finds the description
+  // regardless of how many of those siblings exist -- tags aren't part of this app's Lorebook
+  // shape and are simply not imported.
+  const infoContainer = titleP?.parentNode?.parentNode ?? null;
+  const description = infoContainer?.children.find((c) => c.tagName === 'P')?.text.trim() || null;
+  if (!description) {
+    warnings.push('No description found.');
+  }
+
+  const avatarSrc = root.querySelector('img[alt="avatar image"]')?.getAttribute('src') || null;
+  if (!avatarSrc) {
+    warnings.push('No cover image found.');
+  }
+
+  const entries = extractLorebookEntries(root);
+  if (entries.length === 0) {
+    warnings.push('No lorebook entries found on the page.');
+  }
+  const truncated = entries.filter((e) => e.truncatedKeyCount > 0);
+  if (truncated.length > 0) {
+    warnings.push(
+      `${truncated.length} ${truncated.length === 1 ? 'entry has' : 'entries have'} more trigger ` +
+        `keys than this saved page shows (the source page's list view only displays the first few) -- ` +
+        `open each flagged entry after importing to fill in the rest.`
+    );
+  }
+
+  return { name, description, avatarSrc, entries, warnings };
+}
+
+function fallbackLorebookName(root: HTMLElement): string {
+  const ogTitle = root.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim();
+  if (ogTitle) return ogTitle.split(/\s+[|–-]\s+/)[0].trim() || ogTitle;
+  return 'Imported Lorebook';
+}
+
+/**
+ * Each entry renders as a <button> holding exactly two `[data-tooltip-content]` wrappers -- one
+ * around the title paragraph, one around the content paragraph (both also visually line-clamped,
+ * but the underlying text nodes carry the full, untruncated string either way). That "exactly
+ * two tooltip wrappers" shape is distinctive enough among everything else on the page (the
+ * back/share/tag buttons carry none) to select entries reliably without depending on exact
+ * class names, which is the same durability tradeoff extractFields above makes for label text.
+ */
+function extractLorebookEntries(root: HTMLElement): ParsedLorebookEntryImport[] {
+  const entries: ParsedLorebookEntryImport[] = [];
+
+  for (const button of root.querySelectorAll('button')) {
+    const tooltipWrappers = button.querySelectorAll('div[data-tooltip-content]');
+    if (tooltipWrappers.length !== 2) continue;
+
+    const [titleWrapper, contentWrapper] = tooltipWrappers;
+    const title = titleWrapper.querySelector('p')?.text.trim();
+    const content = contentWrapper.querySelector('p')?.text.trim();
+    if (!title && !content) continue;
+
+    // The keys row is the title row's next sibling within their shared parent -- see the
+    // title/keys/content div triple in the entry markup this was written against.
+    const titleRow = titleWrapper.parentNode;
+    const keysRow = titleRow?.parentNode?.children[1];
+    const keyParagraphs = keysRow?.children.filter((c) => c.tagName === 'P') ?? [];
+    const visibleKeysText = keyParagraphs[0]?.text.trim() ?? '';
+    const overflowMatch = keyParagraphs[1]?.text.trim().match(/^\+(\d+)$/);
+
+    const keys = visibleKeysText
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean)
+      .join(', ');
+
+    entries.push({
+      title: title || 'Untitled entry',
+      keys,
+      content: content ?? '',
+      truncatedKeyCount: overflowMatch ? parseInt(overflowMatch[1], 10) : 0,
+    });
+  }
+
+  return entries;
 }

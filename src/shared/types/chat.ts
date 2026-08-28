@@ -14,6 +14,21 @@ export interface SamplerParams {
   repetitionPenalty: number;
 }
 
+/** Per-model sampler overrides -- see Model Tuning settings page. Every field nullable: a
+ * model with no row (or a row with some fields left null) falls back to DEFAULT_SAMPLERS for
+ * whichever fields aren't set, the same merge convention a chat-level override already uses
+ * over the global default. Applied as a layer *underneath* a chat-level override (the Composer
+ * sliders), not instead of it -- a per-turn temperature/maxTokens change still wins. */
+export interface ModelSamplerDefaults {
+  model: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  topP: number | null;
+  topK: number | null;
+  repetitionPenalty: number | null;
+  updatedAt: string;
+}
+
 /** Everything the Prompt Debug Console renders. Assembled as one object rather than being
  * stuffed into a global dict after the fact, which is what the source had to do because
  * generating cleared the dict first. */

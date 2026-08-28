@@ -1,73 +1,54 @@
 /**
  * Prompt templates, ported verbatim from KVGenius's core/prompt_builder.py `_BUILTIN_DEFAULTS`.
  *
- * These live as constants for now. Phase 7 moves them into `app-config.json` (the same file
- * dbLocation.ts already owns) so they become user-editable; `buildSystemPrompt` already
- * accepts partial overrides, so that change is a wiring change rather than a rewrite.
+ * The defaults live as constants here permanently -- user overrides are stored separately
+ * (see promptSettingsService.ts) and merged on top in promptBuilder.ts, so these never change
+ * at runtime and always serve as the "reset to default" target for the Settings UI
+ * (src/renderer/pages/PromptSettings.tsx). The `PromptTemplates`/`StopPhraseSettings` shapes
+ * themselves live in shared/types since both the renderer (Settings UI) and main process
+ * (prompt building) need them.
  *
  * Placeholders use Python `str.format` single-brace syntax in the source. They are kept in
  * that form deliberately -- the templates are meant to be user-editable text, and matching
  * the original spelling means a user's KVGenius templates can be pasted in unchanged.
  */
-export interface PromptTemplates {
-  /** Baseline behaviour rules. Always injected when non-empty; takes no placeholders. */
-  characterInstructions: string;
-  /** Takes {persona_name} and {persona_background}. */
-  personaContext: string;
-  /** Takes {directions}. */
-  directions: string;
-  /** Takes {memories} -- a pre-rendered "- " bulleted list. */
-  memory: string;
-  /** Shared setting material. Takes {lore}. */
-  worldLore: string;
-  /** The character's own history. Takes {lore} and {char}. */
-  personalLore: string;
-  /** The persona's own history -- personaLore's counterpart for {{user}} rather than
-   * {{char}}. Takes {lore} and {persona}. */
-  personaLore: string;
-}
+import { PromptTemplates, StopPhraseSettings, TEMPLATE_TAGS } from '../../shared/types/promptTemplates';
 
-export interface StopPhraseSettings {
-  base: string[];
-  useCharacterNameAsStop: boolean;
-  usePersonaNameAsStop: boolean;
-}
+export type { PromptTemplates, StopPhraseSettings };
+export { TEMPLATE_TAGS };
 
+/** Body text only -- promptBuilder.ts wraps each of these in its fixed `[TAG]`/`[/TAG]` (see
+ * TEMPLATE_TAGS). Every field is filled with the same standard placeholder set: {char},
+ * {persona}, {persona_background}, {directions}, {memories}, {lore} (that last one holds
+ * whichever lore is relevant to *that* section -- world/personal/persona lore are different
+ * text, not the same value three times). Unused placeholders in a given section's default
+ * text simply aren't referenced there, but a custom override CAN use any of them -- fill()
+ * always has the full set available, not just the ones the default happens to use. */
 export const DEFAULT_TEMPLATES: PromptTemplates = {
   characterInstructions: [
-    '[CHARACTER RULES]',
-    "You must ONLY write your own character's dialog and actions.",
-    'NEVER write dialog, actions, or thoughts for the user or any other character.',
-    'Wait for the user to provide their own words and actions.',
-    '[/CHARACTER RULES]',
+    "You are ONLY {char}. Write ONLY {char}'s own dialogue, actions, and inner thoughts.",
+    'Never write, imply, or continue dialogue, actions, or thoughts for {persona} or any',
+    "other character -- that is exclusively {persona}'s to write, not yours.",
+    "End your response as soon as {char} is done speaking or acting. Do not write a line",
+    'starting with "{persona}:", and do not describe what {persona} says, does,',
+    'thinks, or feels next. Stop and wait for {persona} to take their own turn.',
   ].join('\n'),
 
   personaContext: [
-    '[USER PERSONA]',
-    'The user is playing a character named "{persona_name}". Address them as {persona_name}.',
-    "{persona_name}'s background: {persona_background}",
-    '[/USER PERSONA]',
+    'The user is playing a character named "{persona}". Address them as {persona}.',
+    "{persona}'s background: {persona_background}",
   ].join('\n'),
 
-  directions: [
-    '[CURRENT SCENE INSTRUCTIONS]',
-    '{directions}',
-    '[/CURRENT SCENE INSTRUCTIONS]',
-  ].join('\n'),
+  directions: '{directions}',
 
-  memory: [
-    '[Key memories from this conversation - use these to maintain continuity:]',
-    '{memories}',
-  ].join('\n'),
+  memory: ['Key memories from this conversation -- use these to maintain continuity:', '{memories}'].join('\n'),
 
   // Framed as common knowledge -- anyone in the setting could know these, so the model is
   // free to have other characters reference them.
   worldLore: [
-    '[WORLD INFORMATION]',
     'Established facts about the setting. Treat these as common knowledge and stay consistent',
     'with them. Do not recite them verbatim; use them only when they are relevant.',
     '{lore}',
-    '[/WORLD INFORMATION]',
   ].join('\n'),
 
   // Deliberately NOT framed as common knowledge. Without this distinction a model told
@@ -75,24 +56,20 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
   // "you remember the mutiny", it keeps the memory in this character's head and lets them
   // choose whether to reveal it.
   personalLore: [
-    '[{char} - PERSONAL HISTORY]',
     "These are {char}'s own memories and private history -- things {char} personally knows or",
     'lived through, NOT common knowledge. Other characters do not know these unless {char}',
     'chooses to tell them. Let them colour how {char} reacts rather than stating them outright.',
     '{lore}',
-    '[/{char} - PERSONAL HISTORY]',
   ].join('\n'),
 
   // {{user}}'s counterpart to personalLore. Framed the same way -- private to the persona,
   // not common knowledge -- so a model that reads both sections doesn't treat the persona's
   // past as something {char} already knows.
   personaLore: [
-    '[{persona} - PERSONAL HISTORY]',
     "These are {persona}'s own memories and private history -- things {persona} personally",
     'knows or lived through, NOT common knowledge to anyone else including {char}. Let them',
     "colour how {persona} is portrayed rather than being stated outright.",
     '{lore}',
-    '[/{persona} - PERSONAL HISTORY]',
   ].join('\n'),
 };
 

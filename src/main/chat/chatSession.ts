@@ -1,8 +1,4 @@
-import {
-  ConversationService,
-  deriveTitle,
-  DEFAULT_CONVERSATION_TITLE,
-} from '../database/conversationService';
+import { ConversationService } from '../database/conversationService';
 import { PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
 import { scanLore, splitByScope } from './loreMatcher';
@@ -19,6 +15,7 @@ import { suggestPersonaReply } from './suggestReply';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
+import { ModelSamplerService } from '../database/modelSamplerService';
 
 /**
  * A generated reply that hasn't been folded into the model's context or mined for memories
@@ -28,13 +25,21 @@ import { ConversationMemory } from '../../shared/types/conversationMemory';
  * the whole point: redoing must not leak the response(s) you didn't keep.
  */
 export interface PendingTurn {
-  userMessage: string;
+  /** Null for a continuation turn -- see ChatSessionManager.continueAsCharacter, which appends
+   * another assistant message with no new user message in between. */
+  userMessage: string | null;
   assistantMessageId: string;
   model: string;
   systemPrompt: string;
   stopPhrases: string[];
   shouldExtract: boolean;
 }
+
+/** Default per-turn nudge for continueAsCharacter when the caller doesn't supply their own
+ * directions -- kept macro-free (no {char}/{persona}) since `directions` is a leaf value
+ * substituted verbatim into the CURRENT SCENE INSTRUCTIONS template, not itself re-filled. */
+export const DEFAULT_CONTINUE_DIRECTIONS =
+  "Continue the scene on your own -- no one has responded yet. Add another beat, action, or line without waiting.";
 
 /**
  * Defaults ported from KVGenius's generate_chat_response. topP/topK/repetitionPenalty match
@@ -99,6 +104,9 @@ export interface GenerateResult {
   debug: ChatDebugInfo;
 }
 
+/** Same shape as GenerateRequest minus `userMessage` -- see ChatSessionManager.continueAsCharacter. */
+export type ContinueRequest = Omit<GenerateRequest, 'userMessage' | 'extractMemories'>;
+
 /** Clamps ported verbatim from the source -- a temperature of 0 or a repeat_penalty below 1
  * makes Ollama behave in ways users read as broken. */
 export function toOllamaOptions(samplers: SamplerParams, stop: string[]): OllamaOptions {
@@ -135,7 +143,8 @@ export class ChatSessionManager {
     private conversations: ConversationService,
     private prompts: PromptBuilder,
     private ollama: OllamaClient,
-    private lorebooks: LorebookService
+    private lorebooks: LorebookService,
+    private modelSamplers: ModelSamplerService
   ) {}
 
   /**
@@ -266,7 +275,13 @@ export class ChatSessionManager {
       throw new Error('A response is already being generated for this conversation');
     }
 
-    const samplers = { ...DEFAULT_SAMPLERS, ...request.samplers };
+    // Layered: global default, then this model's tuned defaults (Model Tuning settings page),
+    // then a chat-level override (the Composer sliders) -- whichever of those actually sets a
+    // given field wins, later layers taking precedence over earlier ones.
+    const samplers = {
+      ...this.modelSamplers.getEffective(request.model, DEFAULT_SAMPLERS),
+      ...request.samplers,
+    };
     const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
 
     this.finalizePending(session, historyLimit);
@@ -338,16 +353,6 @@ export class ChatSessionManager {
       role: 'user',
       content: request.userMessage,
     });
-
-    // Name the conversation after its opening line, as the source did -- a sidebar full of
-    // "New conversation" is unusable once there is more than one.
-    const conversation = this.conversations.getConversation(request.conversationId);
-    if (conversation?.title === DEFAULT_CONVERSATION_TITLE) {
-      this.conversations.renameConversation(
-        request.conversationId,
-        deriveTitle(request.userMessage)
-      );
-    }
 
     const controller = new AbortController();
     session.abort = controller;
@@ -447,11 +452,16 @@ export class ChatSessionManager {
     }
     const effectiveModel = model || pending.model;
 
-    const options = toOllamaOptions({ ...DEFAULT_SAMPLERS, ...samplers }, pending.stopPhrases);
+    const options = toOllamaOptions(
+      { ...this.modelSamplers.getEffective(effectiveModel, DEFAULT_SAMPLERS), ...samplers },
+      pending.stopPhrases
+    );
+    // A continuation turn (see continueAsCharacter) has no user message to replay here either --
+    // same "no trailing user turn" shape its own generation used.
     const messages: OllamaChatMessage[] = [
       ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
       ...session.history,
-      { role: 'user' as const, content: pending.userMessage },
+      ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
     ];
 
     const controller = new AbortController();
@@ -492,7 +502,7 @@ export class ChatSessionManager {
           retrieval: null,
           lore: null,
           systemPrompt: pending.systemPrompt,
-          userMessage: pending.userMessage,
+          userMessage: pending.userMessage ?? '',
           historyTurns: session.history,
           historyLength: session.history.length,
           fullPrompt: '',
@@ -524,6 +534,191 @@ export class ChatSessionManager {
     } finally {
       session.abort = null;
     }
+  }
+
+  /**
+   * Appends another assistant message with no new user message in between -- lets the
+   * character take a second (or third...) turn on its own, for when the user wants the scene
+   * to keep moving without having to type something first. Structurally this is `generate()`
+   * with the trailing user turn removed: same finalize-pending-first, retrieval, and lore-scan
+   * steps, just scanned against the most recent line already in the transcript instead of a
+   * new message, since there isn't one this turn.
+   *
+   * The new message becomes pending exactly like a normal reply -- redoable and editable until
+   * the next real turn or continuation folds it into history.
+   */
+  async continueAsCharacter(request: ContinueRequest, onToken: (text: string) => void): Promise<GenerateResult> {
+    const session = this.getSession(request.conversationId);
+    if (session.abort) {
+      throw new Error('A response is already being generated for this conversation');
+    }
+
+    // Layered: global default, then this model's tuned defaults (Model Tuning settings page),
+    // then a chat-level override (the Composer sliders) -- whichever of those actually sets a
+    // given field wins, later layers taking precedence over earlier ones.
+    const samplers = {
+      ...this.modelSamplers.getEffective(request.model, DEFAULT_SAMPLERS),
+      ...request.samplers,
+    };
+    const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+
+    this.finalizePending(session, historyLimit);
+
+    const historyTurns = session.history.slice(-historyLimit);
+    if (historyTurns.length === 0) {
+      throw new Error('Nothing to continue -- send a message first.');
+    }
+    // No new user message to scan against -- the most recent line already in the scene is the
+    // closest thing to "what's relevant right now".
+    const scanQuery = historyTurns.at(-1)!.content;
+
+    const retrieval = await this.retrieve(
+      request.conversationId,
+      scanQuery,
+      request.memories,
+      request.memoryOptions
+    );
+    const memoryTexts = retrieval
+      ? retrieval.result.selected.map((entry) => entry.memory.content)
+      : (request.memories ?? []);
+
+    const characterLore = scanLore(this.lorebooks.getEntriesForCharacter(request.characterId), historyTurns, scanQuery);
+    const personaLoreResult = request.personaId
+      ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, scanQuery)
+      : null;
+
+    const { world: worldLore, personal: personalLore } = splitByScope(characterLore.selected);
+    const personaLore = personaLoreResult?.selected ?? [];
+
+    const lore = personaLoreResult
+      ? {
+          selected: [...characterLore.selected, ...personaLoreResult.selected],
+          rejected: [...characterLore.rejected, ...personaLoreResult.rejected],
+          consideredCount: characterLore.consideredCount + personaLoreResult.consideredCount,
+          budgetTokensUsed: characterLore.budgetTokensUsed + personaLoreResult.budgetTokensUsed,
+          budgetTokensMax: characterLore.budgetTokensMax + personaLoreResult.budgetTokensMax,
+          scanText: characterLore.scanText,
+        }
+      : characterLore;
+
+    // Falls back to a built-in nudge rather than leaving the section empty -- a blank
+    // directions section reads to a smaller model as "nothing special," and it'll often just
+    // wait rather than understanding it should keep going unprompted.
+    const directions = request.directions?.trim() || DEFAULT_CONTINUE_DIRECTIONS;
+
+    const built = this.prompts.buildSystemPrompt(request.characterId, {
+      personaName: request.personaName,
+      personaBackground: request.personaBackground,
+      directions,
+      memories: memoryTexts,
+      worldLore,
+      personalLore,
+      personaLore,
+    });
+    // No trailing `{ role: 'user', ... }` -- that's the whole point. Whatever chat template the
+    // model uses gets to decide how it handles two turns from the same role in a row; most
+    // roleplay-tuned models handle this fine, same as SillyTavern's "Continue" does.
+    const messages: OllamaChatMessage[] = [
+      ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
+      ...historyTurns,
+    ];
+    const options = toOllamaOptions(samplers, built.stopPhrases);
+
+    const controller = new AbortController();
+    session.abort = controller;
+
+    try {
+      const result = await this.ollama.chat({
+        model: request.model,
+        messages,
+        options,
+        signal: controller.signal,
+        onToken,
+      });
+      const content = result.content.trim();
+
+      const debug: ChatDebugInfo = {
+        baseSystemPrompt: built.baseSystemPrompt,
+        characterInstructions: built.characterInstructions,
+        personaName: request.personaName ?? '',
+        personaBackground: request.personaBackground ?? '',
+        directions,
+        memories: memoryTexts,
+        retrieval: retrieval?.result ?? null,
+        lore,
+        systemPrompt: built.prompt,
+        userMessage: '',
+        historyTurns,
+        historyLength: historyTurns.length,
+        fullPrompt: renderMessagesForDebug(messages),
+        stopPhrases: built.stopPhrases,
+        rawResponse: result.content,
+        cleanedResponse: content,
+        inputTokens: result.promptEvalCount,
+        outputTokens: result.evalCount,
+      };
+      session.lastDebug = debug;
+
+      const { message } = this.conversations.appendAssistantMessage(
+        request.conversationId,
+        content,
+        request.model,
+        debug
+      );
+      this.conversations.updateConversationModel(request.conversationId, request.model);
+
+      session.pending = {
+        userMessage: null,
+        assistantMessageId: message.id,
+        model: request.model,
+        systemPrompt: built.prompt,
+        stopPhrases: built.stopPhrases,
+        shouldExtract: true,
+      };
+
+      return { message, debug };
+    } finally {
+      session.abort = null;
+    }
+  }
+
+  /**
+   * Hand-edits the pending assistant message: records the new text as its own variant (the
+   * same "nothing is overwritten" pattern redo already uses) and selects it, rather than
+   * mutating the existing variant's content in place. The original generation stays reachable
+   * through the variant switcher exactly like a redo you swipe away from.
+   *
+   * Restricted to the pending message for the same reason chooseVariant is: an older assistant
+   * turn already has a user reply after it, so silently rewriting it would also need to redo
+   * everything downstream to stay consistent, which this isn't trying to solve.
+   */
+  editMessage(conversationId: string, messageId: string, content: string): Message {
+    if (this.isGenerating(conversationId)) {
+      throw new Error('Cannot edit a message while a response is generating');
+    }
+    const session = this.getSession(conversationId);
+    if (!session.pending || session.pending.assistantMessageId !== messageId) {
+      throw new Error('Only the most recent response can be edited');
+    }
+    const trimmed = content.trim();
+    if (!trimmed) {
+      throw new Error('Message cannot be empty');
+    }
+
+    // A message from before redo support has no variant of its own yet -- back one out of its
+    // current content first, same as regenerate does, or adding the edit below would lose the
+    // original generation for good.
+    if (this.conversations.getVariants(messageId).length === 0) {
+      const current = this.conversations.getMessage(messageId);
+      if (current) this.conversations.addVariant(messageId, current.content);
+    }
+
+    // No model attached -- this content didn't come from a generation, and null already means
+    // "not attributable to a model" elsewhere (the same pre-redo-support backfill above).
+    // pending.model is deliberately left alone: a later redo with no explicit model should
+    // still resample the last *generated* variant's model, not "null".
+    const variant = this.conversations.addVariant(messageId, trimmed);
+    return this.conversations.selectVariant(messageId, variant.id);
   }
 
   /** Switches which variant of the pending message is shown -- cheap and immediate, no model
@@ -592,7 +787,11 @@ export class ChatSessionManager {
     const message = this.conversations.getMessage(pending.assistantMessageId);
     const finalContent = message?.content ?? '';
 
-    session.history.push({ role: 'user', content: pending.userMessage });
+    // A continuation turn (see continueAsCharacter) has no new user message to push -- the
+    // character just added another line of its own onto the existing history.
+    if (pending.userMessage !== null) {
+      session.history.push({ role: 'user', content: pending.userMessage });
+    }
     session.history.push({ role: 'assistant', content: finalContent });
     if (session.history.length > historyLimit) {
       session.history = session.history.slice(-historyLimit);
@@ -606,7 +805,7 @@ export class ChatSessionManager {
         {
           conversationId: session.conversationId,
           model: pending.model,
-          userMessage: pending.userMessage,
+          userMessage: pending.userMessage ?? '',
           messageId: pending.assistantMessageId,
         },
         pending.systemPrompt,

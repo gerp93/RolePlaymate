@@ -6,6 +6,8 @@ import { CharacterImage } from '../../shared/types/characterImage';
 import FieldEditor from '../components/FieldEditor';
 import PersonalHistoryPanel from '../components/lore/PersonalHistoryPanel';
 import { toImageUrl } from '../utils/imageUrl';
+import { useSecurity } from '../context/SecurityContext';
+import LockedPlaceholder from '../components/LockedPlaceholder';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
@@ -17,6 +19,7 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
 export default function CharacterDetail() {
   const { characterId } = useParams<{ characterId: string }>();
   const navigate = useNavigate();
+  const { hiddenUnlocked } = useSecurity();
   const [character, setCharacter] = useState<Character | null>(null);
   const [fields, setFields] = useState<CharacterField[]>([]);
   const [images, setImages] = useState<CharacterImage[]>([]);
@@ -25,9 +28,12 @@ export default function CharacterDetail() {
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
 
+  // hiddenUnlocked: a character/its fields already fetched under the previous lock state hold
+  // ciphertext when hidden -- re-fetch on every lock/unlock so content updates immediately
+  // instead of only after a manual reload.
   useEffect(() => {
     if (characterId) load(characterId);
-  }, [characterId]);
+  }, [characterId, hiddenUnlocked]);
 
   async function load(id: string, preferImageId?: string) {
     const [c, fieldList, imageList] = await Promise.all([
@@ -110,6 +116,7 @@ export default function CharacterDetail() {
   }
 
   if (!character) return <div className="text-muted">Loading…</div>;
+  if (character.isHidden && !hiddenUnlocked) return <LockedPlaceholder label="This character" />;
 
   const fieldsByType = new Map(fields.map((f) => [f.fieldType, f]));
   const currentImage = images[imageIndex];
@@ -150,7 +157,16 @@ export default function CharacterDetail() {
         {FIELD_TYPES.map((fieldType) => {
           const field = fieldsByType.get(fieldType);
           if (!field) return null;
-          return <FieldEditor key={field.id} field={field} placeholder={FIELD_PLACEHOLDERS[fieldType]} />;
+          // Keyed on hiddenUnlocked too -- FieldEditor fetches its own version history once per
+          // mount, so it needs to remount (and re-fetch) on lock/unlock the same as this page's
+          // own load() above, or its already-fetched content would stay stale ciphertext.
+          return (
+            <FieldEditor
+              key={`${field.id}-${hiddenUnlocked}`}
+              field={field}
+              placeholder={FIELD_PLACEHOLDERS[fieldType]}
+            />
+          );
         })}
 
         {/* Private history belongs on the character, not beside the shared world books --
