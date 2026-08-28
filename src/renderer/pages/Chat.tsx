@@ -18,6 +18,11 @@ import StartScreenPicker from '../components/chat/StartScreenPicker';
 import { buildModelPickerOptions, buildPersonaPickerOptions } from '../utils/chatPickerOptions';
 import { ChatDebugInfo } from '../../shared/types/chat';
 import { setLastConversationId, clearLastConversationId, getLastConversationId } from '../utils/lastConversation';
+import {
+  clearSessionActiveConversationId,
+  getSessionActiveConversationId,
+  setSessionActiveConversationId,
+} from '../utils/chatSession';
 import { CHAT_FONT_SIZES, ChatFontSize, getStoredChatFontSize, saveChatFontSize } from '../utils/chatFontSize';
 import { resolveMarginImage } from '../utils/avatarImage';
 import { toImageUrl } from '../utils/imageUrl';
@@ -37,6 +42,16 @@ function formatConversationListDate(iso: string): string {
     options.year = 'numeric';
   }
   return date.toLocaleDateString(undefined, options);
+}
+
+function CastDescription({ text }: { text: string | null | undefined }) {
+  const trimmed = text?.trim();
+  if (!trimmed) return null;
+  return (
+    <span className="chat-cast-subtext text-muted" title={trimmed}>
+      {trimmed}
+    </span>
+  );
 }
 
 /** Sidebar only lists conversations past the greeting-only draft stage. */
@@ -172,7 +187,10 @@ export default function Chat() {
 
   const openNewChat = useCallback(() => {
     if (conversationId) void discardDraftConversation(conversationId);
+    clearSessionActiveConversationId();
     resetStartScreenSelections();
+    setSidebarCollapsed(true);
+    saveBoolean(SIDEBAR_COLLAPSED_KEY, true);
     navigate('/chat');
   }, [conversationId, discardDraftConversation, resetStartScreenSelections, navigate]);
 
@@ -184,6 +202,42 @@ export default function Chat() {
       void discardDraftConversation(previous);
     }
   }, [conversationId, discardDraftConversation]);
+
+  // Start screen only on first Chat visit this session. After any conversation has been
+  // opened, returning to /chat (e.g. via the nav tab) resumes that conversation instead.
+  useEffect(() => {
+    if (conversationId) {
+      setSessionActiveConversationId(conversationId);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const sessionId = getSessionActiveConversationId();
+      if (sessionId) {
+        const conversation = await window.electronAPI.conversations.getById(sessionId);
+        if (cancelled) return;
+        if (conversation) {
+          navigate(`/chat/${sessionId}`, { replace: true });
+          return;
+        }
+        clearSessionActiveConversationId();
+      }
+
+      setSidebarCollapsed(true);
+      saveBoolean(SIDEBAR_COLLAPSED_KEY, true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, navigate]);
+
+  useEffect(() => {
+    if (!conversationId && model && disabledModels.has(model)) {
+      setModel('');
+    }
+  }, [conversationId, model, disabledModels]);
 
   useEffect(() => {
     void (async () => {
@@ -225,6 +279,9 @@ export default function Chat() {
     void (async () => {
       const conversation = await window.electronAPI.conversations.getById(conversationId);
       if (!conversation) {
+        if (getSessionActiveConversationId() === conversationId) {
+          clearSessionActiveConversationId();
+        }
         navigate('/chat');
         return;
       }
@@ -432,7 +489,10 @@ export default function Chat() {
     async (id: string) => {
       await window.electronAPI.conversations.delete(id);
       await refreshConversations();
-      if (id === conversationId) navigate('/chat');
+      if (id === conversationId) {
+        clearSessionActiveConversationId();
+        navigate('/chat');
+      }
     },
     [conversationId, navigate, refreshConversations]
   );
@@ -522,18 +582,32 @@ export default function Chat() {
   // reaching a hidden conversation's URL directly while already locked.
   useEffect(() => {
     if (!hiddenUnlocked && conversationId && (character?.isHidden || persona?.isHidden)) {
+      clearSessionActiveConversationId();
       navigate('/chat');
     }
   }, [hiddenUnlocked, conversationId, character, persona, navigate]);
 
-  const canChat = Boolean(conversationId && characterId && model);
-  // Excludes models unchecked from "In Chat" on the Model Tuning page -- except the one
-  // already selected, so a conversation that started on a model since disabled doesn't lose
-  // its own entry from the dropdown.
+  const installedModels = useMemo(
+    () => (modelState.status === 'ready' ? modelState.models : []),
+    [modelState]
+  );
+
+  // Excludes models unchecked from "In Chat" on the Model Tuning page. Mid-conversation, the
+  // active model stays listed even if since disabled so the picker doesn't lose the selection.
   const modelOptions = useMemo(() => {
     if (modelState.status !== 'ready') return [];
-    return modelState.models.filter((m) => m.name === model || !disabledModels.has(m.name));
-  }, [modelState, disabledModels, model]);
+    if (!conversationId) {
+      return installedModels.filter((m) => !disabledModels.has(m.name));
+    }
+    return installedModels.filter((m) => m.name === model || !disabledModels.has(m.name));
+  }, [installedModels, disabledModels, model, conversationId, modelState.status]);
+
+  const modelPickerOptions = useMemo(
+    () => buildModelPickerOptions(modelOptions, installedModels),
+    [modelOptions, installedModels]
+  );
+
+  const canChat = Boolean(conversationId && characterId && model);
 
   const handleShowPortraitsChange = useCallback((value: boolean) => {
     setShowPortraits(value);
@@ -601,7 +675,6 @@ export default function Chat() {
     () => buildPersonaPickerOptions(visiblePersonas, startPersonaCoverUrls),
     [visiblePersonas, startPersonaCoverUrls]
   );
-  const modelPickerOptions = useMemo(() => buildModelPickerOptions(modelOptions), [modelOptions]);
 
   return (
     <div
@@ -701,7 +774,7 @@ export default function Chat() {
             characters={visibleCharacters}
             personas={visiblePersonas}
             scenarios={visibleScenarios}
-            modelOptions={modelOptions}
+            modelPickerOptions={modelPickerOptions}
             modelsReady={modelState.status === 'ready'}
             characterId={characterId}
             personaId={personaId}
@@ -737,6 +810,7 @@ export default function Chat() {
                 // would just offer a choice that can't actually be made. Plain text instead.
                 <div className="chat-header-static">
                   <span className="chat-header-static-value">{character?.name ?? '—'}</span>
+                  <CastDescription text={character?.description} />
                 </div>
               ) : (
                 <label>
@@ -755,6 +829,7 @@ export default function Chat() {
                       </option>
                     ))}
                   </select>
+                  <CastDescription text={character?.description} />
                 </label>
               )}
             </div>
@@ -784,7 +859,12 @@ export default function Chat() {
             className={`chat-column chat-column-center${portraitsActive ? ' chat-column-center-capped' : ''}`}
           >
             {selectedScenario && (
-              <header className="chat-scenario-header">{selectedScenario.name}</header>
+              <header
+                className={`chat-scenario-header${portraitsActive ? ' chat-scenario-header-cast' : ''}`}
+              >
+                <span className="chat-scenario-header-title">{selectedScenario.name}</span>
+                <CastDescription text={selectedScenario.description} />
+              </header>
             )}
             {session.error && (
               <div className="chat-banner chat-banner-error">
@@ -970,6 +1050,7 @@ export default function Chat() {
               {selectionLocked ? (
                 <div className="chat-header-static">
                   <span className="chat-header-static-value">{persona?.name ?? 'None'}</span>
+                  <CastDescription text={persona?.description} />
                 </div>
               ) : (
                 <div className="chat-settings-persona-picker">

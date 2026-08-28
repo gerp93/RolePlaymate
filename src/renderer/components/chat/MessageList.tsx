@@ -168,8 +168,9 @@ export default function MessageList({
                     className="chat-variant-btn chat-message-edit"
                     onClick={(e) => startEdit(e, message)}
                     title={i === lastIndex ? 'Edit this response' : 'Edit this message and regenerate the reply to it'}
+                    aria-label={i === lastIndex ? 'Edit this response' : 'Edit this message and regenerate the reply to it'}
                   >
-                    ✏️ Edit
+                    ✏️
                   </button>
                 )}
                 {i === lastIndex && !isGreeting && (
@@ -178,8 +179,9 @@ export default function MessageList({
                     className="chat-variant-btn chat-message-delete"
                     onClick={onDeleteLast}
                     title="Delete this message"
+                    aria-label="Delete this message"
                   >
-                    🗑️ Delete
+                    🗑️
                   </button>
                 )}
               </div>
@@ -258,8 +260,14 @@ function VariantNav({
           </button>
         </>
       )}
-      <button type="button" className="chat-variant-btn chat-variant-redo" onClick={onRegenerate} title="Redo response">
-        ↻ Redo
+      <button
+        type="button"
+        className="chat-variant-btn chat-variant-redo"
+        onClick={onRegenerate}
+        title="Redo response"
+        aria-label="Redo response"
+      >
+        ↻
       </button>
     </div>
   );

@@ -323,8 +323,7 @@
   gap: 8px;
   flex-wrap: nowrap;
   margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
 }
 
 /* Model + Memories + Debug + More share the row evenly; message count stays fixed at the end. */
@@ -512,12 +511,24 @@
 }
 
 /* Replaces the Character/Persona <select> once a conversation has real turns in it -- see
-   Chat.tsx's selectionLocked. No "Character"/"Persona" label needed once it's not a control
-   to operate -- the name alone, sized to read as this column's own heading. */
+   Chat.tsx's selectionLocked. */
 .chat-header-static {
   display: flex;
   flex-direction: column;
+  align-items: center;
   text-align: center;
+  gap: 4px;
+}
+
+.chat-cast-subtext {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .chat-header-static-value {
@@ -535,6 +546,76 @@
   line-height: 1.15;
   color: var(--color-text);
   padding: 8px 12px 12px;
+}
+
+/* Portrait layout: one cast row — scenario is the title, sides are supporting names. */
+.chat-columns:not(.chat-columns-no-margins) .chat-column-header {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  min-height: 4.5rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.chat-columns:not(.chat-columns-no-margins) .chat-header-static {
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  width: 100%;
+}
+
+.chat-columns:not(.chat-columns-no-margins) .chat-header-static-value {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  padding: 0;
+  color: var(--color-text);
+}
+
+.chat-columns:not(.chat-columns-no-margins) .chat-column-header > label,
+.chat-columns:not(.chat-columns-no-margins) .chat-settings-persona-picker {
+  width: 100%;
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  text-align: center;
+}
+
+.chat-columns:not(.chat-columns-no-margins) .chat-column-header > label select,
+.chat-columns:not(.chat-columns-no-margins) .chat-settings-persona-picker .start-picker-trigger {
+  text-align: center;
+}
+
+.chat-scenario-header-cast {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 4.5rem;
+  margin-bottom: 0;
+  padding: 0 12px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+}
+
+.chat-scenario-header-title {
+  display: block;
+  font-size: clamp(1.375rem, 2.4vw, 1.875rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  color: var(--color-accent-green);
+  text-shadow: 0 0 28px color-mix(in srgb, var(--color-accent-green) 30%, transparent);
+}
+
+.chat-scenario-header-cast .chat-cast-subtext {
+  -webkit-line-clamp: 3;
+  font-size: 0.8125rem;
+  max-width: 36rem;
+}
+
+.chat-scenario-header:not(.chat-scenario-header-cast) .chat-cast-subtext {
+  font-size: 0.875rem;
+  max-width: 40rem;
+  margin: 0 auto;
 }
 
 .chat-column select {
@@ -822,13 +903,6 @@
   justify-content: center;
 }
 
-.chat-start-btn {
-  font-size: 18px;
-  font-weight: 700;
-  padding: 14px 32px;
-  border-radius: var(--radius);
-}
-
 /* --- bubble: a fixed-size avatar tile fused into the bubble's corner ----------------------
    Not stretched to the bubble's height (that fought the text layout and clipped it) -- a
    constant-size rounded-square tile, sized independently of however tall the message turns
@@ -890,8 +964,18 @@ img.chat-bubble-avatar-panel {
 .chat-bubble-name-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+}
+
+/* Persona (user): copy pinned to the inner edge (left), name toward the avatar. Character
+   (assistant): name toward the avatar, copy pinned to the inner edge (right). */
+.chat-bubble-user .chat-bubble-name-row {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+
+.chat-bubble-assistant .chat-bubble-name-row {
+  justify-content: space-between;
 }
 
 .chat-bubble-name {
@@ -1066,9 +1150,14 @@ img.chat-bubble-avatar-panel {
   border-radius: var(--radius);
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
-  padding: 3px 7px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-variant-btn:hover {
@@ -2248,23 +2337,91 @@ img.chat-bubble-avatar-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-shrink: 0;
   position: relative;
   z-index: 5;
+  margin-top: 8px;
+  padding-bottom: 8px;
 }
 
 .chat-start-btn {
-  font-size: 18px;
-  font-weight: 700;
-  padding: 14px 40px;
-  border-radius: var(--radius);
-  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65em;
+  font-size: clamp(1.35rem, 4vw, 1.75rem);
+  font-weight: 800;
+  padding: 1.1rem 3.25rem;
+  min-width: min(340px, 90vw);
+  border-radius: 999px;
+  border-width: 3px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-primary-action) 35%, white),
+    0 6px 28px color-mix(in srgb, var(--color-primary-action) 50%, transparent),
+    0 0 56px color-mix(in srgb, var(--color-primary-action) 28%, transparent);
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+
+.chat-start-btn-icon {
+  font-size: 0.85em;
+  line-height: 1;
+  transform: translateY(-0.04em);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, currentColor 40%, transparent));
+}
+
+.chat-start-btn:not(:disabled) {
+  animation: chat-start-btn-glow 2.4s ease-in-out infinite;
+}
+
+.chat-start-btn:not(:disabled):hover {
+  animation: none;
+  transform: translateY(-4px) scale(1.05);
+  filter: brightness(1.1);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--color-primary-action) 45%, white),
+    0 10px 36px color-mix(in srgb, var(--color-primary-action) 60%, transparent),
+    0 0 72px color-mix(in srgb, var(--color-primary-action) 40%, transparent);
+}
+
+.chat-start-btn:not(:disabled):active {
+  transform: translateY(-1px) scale(1.02);
+  filter: brightness(0.98);
 }
 
 .chat-start-btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 14px 28px;
+  min-width: 0;
+  border-width: 1px;
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes chat-start-btn-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-primary-action) 35%, white),
+      0 6px 28px color-mix(in srgb, var(--color-primary-action) 50%, transparent),
+      0 0 56px color-mix(in srgb, var(--color-primary-action) 28%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--color-primary-action) 50%, white),
+      0 8px 36px color-mix(in srgb, var(--color-primary-action) 65%, transparent),
+      0 0 80px color-mix(in srgb, var(--color-primary-action) 42%, transparent);
+  }
 }
 
 @media (max-width: 520px) {

@@ -75,8 +75,12 @@ function modelCapabilityBadges(info: OllamaModelInfo) {
   );
 }
 
-export function buildModelPickerOptions(modelOptions: OllamaModelInfo[]): StartPickerOption[] {
-  const modelTiers = assignModelTiers(modelOptions);
+export function buildModelPickerOptions(
+  modelOptions: OllamaModelInfo[],
+  /** Rank tiers against every installed model so labels match the Model Tuning table. */
+  tierRankModels?: OllamaModelInfo[]
+): StartPickerOption[] {
+  const modelTiers = assignModelTiers(tierRankModels ?? modelOptions);
   return modelOptions.map((m) => {
     const tier = modelTiers[m.name];
     return {

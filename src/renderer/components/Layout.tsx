@@ -1,25 +1,20 @@
 import { ReactNode, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { getLastConversationId } from '../utils/lastConversation';
 import { useSecurity } from '../context/SecurityContext';
 import PinModal from './PinModal';
 import './Layout.css';
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Characters', end: true },
   { to: '/chat', label: 'Chat', end: false },
-  { to: '/world-books', label: 'World Books', end: false },
+  { to: '/', label: 'Characters', end: true },
   { to: '/personas', label: 'Personas', end: false },
+  { to: '/world-books', label: 'World Books', end: false },
   { to: '/prompt-tuning', label: 'Prompt Tuning', end: false },
   { to: '/model-tuning', label: 'Model Tuning', end: false },
   { to: '/settings', label: 'Settings', end: false },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
-  // Re-read on every render (Layout re-renders on every navigation, since `children` changes
-  // reference), so switching away from Chat and back always points at whichever conversation
-  // was open most recently, not just whichever was open when Layout first mounted.
-  const lastConversationId = getLastConversationId();
   const { hiddenUnlocked, lock } = useSecurity();
   const [pinModalOpen, setPinModalOpen] = useState(false);
   // Chat's own conversation sidebar wants to sit almost flush against the window edge --
@@ -27,10 +22,6 @@ export default function Layout({ children }: { children: ReactNode }) {
   // here which relies on that padding for breathing room around a centered form/table.
   const { pathname } = useLocation();
   const isChatRoute = pathname.startsWith('/chat');
-
-  const navItems = NAV_ITEMS.map((item) =>
-    item.to === '/chat' && lastConversationId ? { ...item, to: `/chat/${lastConversationId}` } : item
-  );
 
   return (
     <div className="app-root">
@@ -45,7 +36,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           RolePlaymate
         </div>
         <ul>
-          {navItems.map((item) => (
+          {NAV_ITEMS.map((item) => (
             <li key={item.label}>
               <NavLink to={item.to} end={item.end} className={({ isActive }) => (isActive ? 'active' : '')}>
                 {item.label}

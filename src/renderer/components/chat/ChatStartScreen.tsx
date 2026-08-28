@@ -2,13 +2,12 @@ import type { ReactNode } from 'react';
 import { Character } from '../../../shared/types/character';
 import { UserPersona } from '../../../shared/types/userPersona';
 import { Scenario } from '../../../shared/types/scenario';
-import { OllamaModelInfo } from '../../../shared/types/ollama';
 import {
   buildCharacterPickerOptions,
-  buildModelPickerOptions,
   buildPersonaPickerOptions,
   buildScenarioPickerOptions,
 } from '../../utils/chatPickerOptions';
+import { StartPickerOption } from './StartScreenPicker';
 import { toImageUrl } from '../../utils/imageUrl';
 import StartScreenPicker from './StartScreenPicker';
 /** SVG viewBox coords — keep in sync with bubble positions/sizes in Chat.css. */
@@ -44,7 +43,7 @@ interface Props {
   characters: Character[];
   personas: UserPersona[];
   scenarios: Scenario[];
-  modelOptions: OllamaModelInfo[];
+  modelPickerOptions: StartPickerOption[];
   modelsReady: boolean;
   characterId: string;
   personaId: string;
@@ -142,7 +141,7 @@ export default function ChatStartScreen({
   characters,
   personas,
   scenarios,
-  modelOptions,
+  modelPickerOptions,
   modelsReady,
   characterId,
   personaId,
@@ -179,7 +178,6 @@ export default function ChatStartScreen({
   const characterOptions = buildCharacterPickerOptions(characters, characterCoverUrls);
   const personaOptions = buildPersonaPickerOptions(personas, personaCoverUrls);
   const scenarioOptions = buildScenarioPickerOptions(scenarios, scenarioCoverUrls);
-  const modelPickerOptions = buildModelPickerOptions(modelOptions);
 
   return (
     <div className={`chat-start-screen${ready ? ' chat-start-screen-ready' : ''}`}>
@@ -339,7 +337,16 @@ export default function ChatStartScreen({
           disabled={!ready}
           onClick={onStart}
         >
-          {ready ? 'Begin' : 'Choose character, persona & model'}
+          {ready ? (
+            <>
+              <span className="chat-start-btn-icon" aria-hidden>
+                ▶
+              </span>
+              Begin
+            </>
+          ) : (
+            'Choose character, persona & model'
+          )}
         </button>
       </div>
     </div>
