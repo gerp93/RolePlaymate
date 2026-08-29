@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Message, MessageVariant } from '../../shared/types/message';
-import { ChatDebugInfo, ChatStreamEvent, SamplerParams } from '../../shared/types/chat';
+import { ChatDebugHistoryEntry, ChatDebugInfo, ChatStreamEvent, SamplerParams } from '../../shared/types/chat';
 
 /**
  * Owns one conversation's live state: the persisted transcript, the reply currently
@@ -23,6 +23,12 @@ export interface UseChatSession {
   /** Set on a failed turn. Never persisted -- see the note on error handling in chatSession. */
   error: string | null;
   debug: ChatDebugInfo | null;
+  /** Every turn's logged prompt for this conversation, oldest first -- backs the Prompt
+   * Debugging pane's history list. Refetched (not incrementally patched) whenever a turn
+   * finishes, since a redo replaces its entry's content without adding a new message. */
+  debugHistory: ChatDebugHistoryEntry[];
+  /** True while the persisted prompt history is being loaded from the database. */
+  debugHistoryLoading: boolean;
   /** Redo candidates for the last message, when it's an assistant turn. Empty for everything
    * else, including a message that predates redo support. */
   variants: MessageVariant[];
@@ -76,12 +82,19 @@ export function useChatSession(conversationId: string | null): UseChatSession {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [debug, setDebug] = useState<ChatDebugInfo | null>(null);
+  const [debugHistory, setDebugHistory] = useState<ChatDebugHistoryEntry[]>([]);
+  const [debugHistoryLoading, setDebugHistoryLoading] = useState(false);
   const [variants, setVariants] = useState<MessageVariant[]>([]);
   const [memoryCount, setMemoryCount] = useState(0);
 
   // The stream we're currently listening for. Events for any other stream are ignored, so a
   // stale reply from a conversation the user just switched away from can't bleed in.
   const activeStreamId = useRef<string | null>(null);
+
+  // The onStream effect below subscribes once (empty deps) and outlives conversation switches,
+  // so it reads refreshDebugHistory through a ref rather than closing over a version tied to
+  // whichever conversationId was active when it first mounted.
+  const refreshDebugHistoryRef = useRef<() => Promise<void>>(async () => {});
 
   const reload = useCallback(async () => {
     if (!conversationId) {
@@ -99,6 +112,24 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     setMemoryCount(await window.electronAPI.memories.count(conversationId));
   }, [conversationId]);
 
+  const refreshDebugHistory = useCallback(async () => {
+    if (!conversationId) {
+      setDebugHistory([]);
+      setDebugHistoryLoading(false);
+      return;
+    }
+    setDebugHistoryLoading(true);
+    try {
+      setDebugHistory(await window.electronAPI.chat.getDebugHistory(conversationId));
+    } finally {
+      setDebugHistoryLoading(false);
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
+    refreshDebugHistoryRef.current = refreshDebugHistory;
+  }, [refreshDebugHistory]);
+
   useEffect(() => {
     void refreshMemoryCount();
   }, [refreshMemoryCount]);
@@ -114,13 +145,16 @@ export function useChatSession(conversationId: string | null): UseChatSession {
 
   useEffect(() => {
     void reload();
+    setDebugHistory([]);
+    setDebugHistoryLoading(!!conversationId);
+    void refreshDebugHistory();
     setStreamingText('');
     setError(null);
     setDebug(null);
     setVariants([]);
     setIsRegenerating(false);
     activeStreamId.current = null;
-  }, [conversationId, reload]);
+  }, [conversationId, reload, refreshDebugHistory]);
 
   // Redo candidates exist only for the last message, and only when it's a real (persisted)
   // assistant turn -- an optimistic user row or a mid-stream reply has no id to look up yet.
@@ -158,6 +192,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
           setStreamingText('');
           setIsGenerating(false);
           activeStreamId.current = null;
+          void refreshDebugHistoryRef.current();
           break;
         case 'variantDone':
           setMessages((current) => {
@@ -173,6 +208,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
           setIsGenerating(false);
           setIsRegenerating(false);
           activeStreamId.current = null;
+          void refreshDebugHistoryRef.current();
           break;
         case 'error':
           setError(event.message);
@@ -361,10 +397,11 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     await window.electronAPI.chat.deleteMessage(conversationId, last.id);
     await reload();
     setDebug(null);
+    void refreshDebugHistory();
     // Deleting a message cascades to any memories it produced -- the badge count is stale
     // until this refreshes, the same as after extraction adds one.
     void refreshMemoryCount();
-  }, [conversationId, isGenerating, messages, reload, refreshMemoryCount]);
+  }, [conversationId, isGenerating, messages, reload, refreshMemoryCount, refreshDebugHistory]);
 
   const cancel = useCallback(async () => {
     if (!conversationId) return;
@@ -380,6 +417,8 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     isRegenerating,
     error,
     debug,
+    debugHistory,
+    debugHistoryLoading,
     variants,
     memoryCount,
     refreshMemoryCount,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, MenuItem, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
@@ -10,12 +10,23 @@ import {
   setDbPath,
   resetToDefaultDbPath,
   revealDbInFileManager,
+  enforceDevDatabaseIsolation,
+  isPackagedDatabasePath,
   getEffectiveOllamaHost,
   isUsingDefaultOllamaHost,
   setOllamaHost,
   resetOllamaHost,
+  getStoredZoomLevel,
+  setStoredZoomLevel,
+  isEmbeddingModelPromptSuppressed,
+  setEmbeddingModelPromptSuppressed,
+  getConfiguredMemoryEmbeddingModel,
+  isUsingDefaultMemoryEmbeddingModel,
+  setConfiguredMemoryEmbeddingModel,
+  resetMemoryEmbeddingModel,
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
+import { migrateImagePathsToCanonicalDir } from './imagePathMigration';
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
@@ -34,6 +45,7 @@ import { PromptFieldVersionService } from './database/promptFieldVersionService'
 import { DEFAULT_STOP_PHRASES } from './chat/promptTemplates';
 import { PromptTemplates, StopPhraseSettings, TEMPLATE_FIELD_KEYS } from '../shared/types/promptTemplates';
 import { OllamaClient, DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
+import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
   chooseCharacterImage,
@@ -91,6 +103,9 @@ import * as fs from 'fs';
 // uses package.json "name" -- pin packaged to roleplaymate for a stable folder name. Dev uses
 // roleplaymate-dev with its own app-config.json and default db; nothing is copied from release.
 app.setName(app.isPackaged ? 'roleplaymate' : 'roleplaymate-dev');
+
+const REPO_URL = 'https://github.com/gerp93/RolePlaymate';
+const ISSUES_URL = `${REPO_URL}/issues`;
 
 // Portrait <img> tags load through this instead of a raw `file://` src. Electron refuses to
 // load `file://` subresources from a page whose own origin isn't `file:` -- true of the dev
@@ -224,6 +239,202 @@ let chatSessions: ChatSessionManager;
 let lorebookService: LorebookService;
 let securityService: SecurityService;
 
+/** Skip persisting zoom while applying the stored level on load. */
+let applyingStoredZoom = false;
+
+function focusedWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? mainWindow;
+}
+
+function zoomIn(): void {
+  const win = focusedWindow();
+  if (!win) return;
+  win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+}
+
+function zoomOut(): void {
+  const win = focusedWindow();
+  if (!win) return;
+  win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+}
+
+function resetZoom(): void {
+  const win = focusedWindow();
+  if (!win) return;
+  win.webContents.setZoomLevel(0);
+}
+
+function navigateToAbout(): void {
+  const win = focusedWindow();
+  if (!win) return;
+  void win.webContents.executeJavaScript("window.location.hash = '#/about'");
+  win.focus();
+}
+
+function openExternalUrl(url: string): void {
+  void shell.openExternal(url);
+}
+
+/** Electron's zoomIn role binds CmdOrCtrl+= only; Ctrl++ (Shift+=) needs its own accelerator. */
+const ZOOM_IN_ITEMS: Electron.MenuItemConstructorOptions[] = [
+  { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => zoomIn() },
+  { label: 'Zoom In', accelerator: 'CmdOrCtrl+Shift+=', visible: false, click: () => zoomIn() },
+  { label: 'Zoom In', accelerator: 'CmdOrCtrl+numadd', visible: false, click: () => zoomIn() },
+];
+
+function setupApplicationMenu(): void {
+  const isMac = process.platform === 'darwin';
+
+  const viewMenu: Electron.MenuItemConstructorOptions = {
+    label: 'View',
+    submenu: [
+      ...(!app.isPackaged
+        ? [
+            { role: 'reload' as const },
+            { role: 'forceReload' as const },
+            { role: 'toggleDevTools' as const },
+            { type: 'separator' as const },
+          ]
+        : []),
+      ...ZOOM_IN_ITEMS,
+      { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomOut() },
+      {
+        label: 'Zoom Out',
+        accelerator: 'CmdOrCtrl+numsub',
+        visible: false,
+        click: () => zoomOut(),
+      },
+      { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => resetZoom() },
+      { type: 'separator' as const },
+      { role: 'togglefullscreen' as const },
+    ],
+  };
+
+  const helpMenu: Electron.MenuItemConstructorOptions = {
+    label: 'Help',
+    role: 'help',
+    submenu: [
+      {
+        label: 'Guides & FAQ',
+        click: () => navigateToAbout(),
+      },
+      { type: 'separator' as const },
+      {
+        label: 'GitHub Repository',
+        click: () => openExternalUrl(REPO_URL),
+      },
+      {
+        label: 'Report an Issue',
+        click: () => openExternalUrl(ISSUES_URL),
+      },
+      { type: 'separator' as const },
+      {
+        label: `Version ${app.getVersion()}`,
+        enabled: false,
+      },
+    ],
+  };
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          },
+        ]
+      : []),
+    viewMenu,
+    helpMenu,
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function attachContextMenu(win: BrowserWindow): void {
+  win.webContents.on('context-menu', (_event, params) => {
+    const menu = new Menu();
+
+    for (const suggestion of params.dictionarySuggestions) {
+      menu.append(
+        new MenuItem({
+          label: suggestion,
+          click: () => win.webContents.replaceMisspelling(suggestion),
+        })
+      );
+    }
+
+    if (params.misspelledWord) {
+      menu.append(
+        new MenuItem({
+          label: 'Add to dictionary',
+          click: () => {
+            win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord!);
+          },
+        })
+      );
+    }
+
+    if (params.dictionarySuggestions.length > 0 || params.misspelledWord) {
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+
+    if (params.isEditable) {
+      if (params.editFlags.canCut) {
+        menu.append(new MenuItem({ role: 'cut' }));
+      }
+      if (params.editFlags.canCopy) {
+        menu.append(new MenuItem({ role: 'copy' }));
+      }
+      if (params.editFlags.canPaste) {
+        menu.append(new MenuItem({ role: 'paste' }));
+      }
+      if (params.editFlags.canSelectAll) {
+        menu.append(new MenuItem({ role: 'selectAll' }));
+      }
+    }
+
+    if (menu.items.length === 0) return;
+    menu.popup({ window: win });
+  });
+}
+
+function attachZoomPersistence(win: BrowserWindow): void {
+  win.webContents.on('zoom-changed', () => {
+    if (applyingStoredZoom) return;
+    setStoredZoomLevel(win.webContents.getZoomLevel());
+  });
+
+  // Menu accelerators miss Ctrl+Shift+= (the + key) on some Windows layouts.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || !input.shift) return;
+
+    const isPlusKey = input.key === '+' || input.key === '=' || input.code === 'Equal';
+    if (!isPlusKey) return;
+
+    event.preventDefault();
+    win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+  });
+
+  win.webContents.once('did-finish-load', () => {
+    const level = getStoredZoomLevel();
+    if (level === 0) return;
+    applyingStoredZoom = true;
+    win.webContents.setZoomLevel(level);
+    applyingStoredZoom = false;
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1300,
@@ -235,10 +446,14 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      spellcheck: true,
     },
     titleBarStyle: 'default',
     backgroundColor: '#f5f5f5',
   });
+
+  attachZoomPersistence(mainWindow);
+  attachContextMenu(mainWindow);
 
   if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
@@ -329,6 +544,8 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setSpellCheckerLanguages(['en-US']);
+  enforceDevDatabaseIsolation();
   // The path is the whole opaque, percent-encoded remainder after `rpimage://` (see toImageUrl
   // in the renderer) -- resolved and re-checked against the images directory rather than
   // trusted outright, since the request still originates from renderer-controlled code.
@@ -343,6 +560,19 @@ app.whenReady().then(() => {
   });
 
   db = openDatabaseWithRecovery();
+  const imageMigration = migrateImagePathsToCanonicalDir(db);
+  if (!app.isPackaged && imageMigration.missing > 0) {
+    dialog.showMessageBoxSync({
+      type: 'warning',
+      title: 'Dev portraits missing',
+      message: `${imageMigration.missing} portrait file(s) are not in your dev images folder.`,
+      detail:
+        `Dev only loads images from:\n${getImagesDir()}\n\n` +
+        'Copy your dev-only images there (same filenames as in the database). ' +
+        'Dev never reads from the packaged app.',
+      buttons: ['OK'],
+    });
+  }
   // SecurityService first -- CharacterService, FieldVersionService, ConversationService, and
   // LorebookService all depend on it for hidden-content encryption/decryption.
   securityService = new SecurityService(db);
@@ -381,6 +611,7 @@ app.whenReady().then(() => {
 
   registerIPCHandlers();
 
+  setupApplicationMenu();
   createWindow();
   setupAutoUpdater();
 
@@ -744,6 +975,12 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('dbLocation:set', (_, newPath: string) => {
+    if (!app.isPackaged && isPackagedDatabasePath(newPath)) {
+      return {
+        success: false as const,
+        message: 'Dev cannot use the packaged app database. Choose a different file.',
+      };
+    }
     // Must close before setDbPath copies the file: under WAL the most recent commits can
     // still be sitting in the `-wal` sidecar, and a clean close() checkpoints them in.
     closeDatabase();
@@ -784,6 +1021,15 @@ function registerIPCHandlers() {
 
   ipcMain.handle('ollamaHost:resetToDefault', () => {
     resetOllamaHost();
+    return { success: true };
+  });
+
+  ipcMain.handle('embeddingModelPrompt:getSuppressed', () => ({
+    suppressed: isEmbeddingModelPromptSuppressed(),
+  }));
+
+  ipcMain.handle('embeddingModelPrompt:setSuppressed', (_, suppressed: boolean) => {
+    setEmbeddingModelPromptSuppressed(suppressed);
     return { success: true };
   });
 
@@ -958,6 +1204,40 @@ function registerIPCHandlers() {
     } catch (error) {
       return { available: false as const, models: [], message: (error as Error).message };
     }
+  });
+
+  ipcMain.handle('ollama:getEmbeddingModelStatus', async () => {
+    const model = getConfiguredMemoryEmbeddingModel();
+    try {
+      const installed = await ollamaClient.isModelAvailable(model);
+      return { ollamaReachable: true as const, model, installed };
+    } catch (error) {
+      return {
+        ollamaReachable: false as const,
+        model,
+        installed: false as const,
+        message: (error as Error).message,
+      };
+    }
+  });
+
+  ipcMain.handle('memoryEmbeddingModel:get', () => ({
+    model: getConfiguredMemoryEmbeddingModel(),
+    isDefault: isUsingDefaultMemoryEmbeddingModel(),
+    defaultModel: DEFAULT_EMBEDDING_MODEL,
+  }));
+  ipcMain.handle('memoryEmbeddingModel:set', (_, model: string) => {
+    const trimmed = String(model ?? '').trim();
+    if (!trimmed) throw new Error('Embedding model name is required');
+    if (!isEmbeddingModel(trimmed)) {
+      throw new Error(`${trimmed} does not look like an embedding model`);
+    }
+    setConfiguredMemoryEmbeddingModel(trimmed);
+    return { success: true as const };
+  });
+  ipcMain.handle('memoryEmbeddingModel:resetToDefault', () => {
+    resetMemoryEmbeddingModel();
+    return { success: true as const };
   });
 
   // Model Tuning settings page -- per-model sampler defaults, layered under a chat-level
@@ -1573,6 +1853,11 @@ function registerChatHandlers() {
     conversationService.getVariantDebug(messageId)
   );
 
+  // Prompt Debugging pane's history list -- every turn's logged prompt for this conversation.
+  ipcMain.handle('chat:getDebugHistory', (_, conversationId: string) =>
+    conversationService.getDebugHistory(conversationId)
+  );
+
   // A draft for the composer, not a real turn -- never persisted, never touches the model
   // context. See ChatSessionManager.suggestReply.
   ipcMain.handle(
@@ -1637,6 +1922,10 @@ function registerChatHandlers() {
   ipcMain.handle('memories:update', (_, id: string, content: string) => {
     guardMemory(content);
     return conversationService.updateMemory(id, content);
+  });
+
+  ipcMain.handle('memories:setPinned', (_, id: string, pinned: boolean) => {
+    return conversationService.setMemorySource(id, pinned ? 'manual' : 'auto');
   });
 
   ipcMain.handle('memories:delete', (_, id: string) => {

@@ -3,6 +3,7 @@ import { PromptTemplates, StopPhraseSettings, TEMPLATE_TAGS, TEMPLATE_FIELD_KEYS
 import PromptFieldEditor from '../components/PromptFieldEditor';
 import LimitedTextarea from '../components/LimitedTextarea';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import OllamaRequiredGate from '../components/chat/OllamaRequiredGate';
 
 type TemplateField = keyof PromptTemplates;
 
@@ -92,6 +93,14 @@ Aria should seem nervous about the reactor readings, but try to hide it.
 [/CURRENT SCENE INSTRUCTIONS]`;
 
 export default function PromptSettings() {
+  return (
+    <OllamaRequiredGate>
+      <PromptSettingsPage />
+    </OllamaRequiredGate>
+  );
+}
+
+function PromptSettingsPage() {
   const [stopPhrases, setStopPhrases] = useState<StopPhraseSettings | null>(null);
   const [overriddenFields, setOverriddenFields] = useState<string[]>([]);
   const [stopPhrasesDraft, setStopPhrasesDraft] = useState('');

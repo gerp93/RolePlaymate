@@ -66,6 +66,14 @@ export interface ChatDebugInfo {
   error?: string;
 }
 
+/** One historical turn's logged prompt, as shown in the Prompt Debugging pane's history list --
+ * every assistant message in the conversation that has a debug record, oldest first. */
+export interface ChatDebugHistoryEntry {
+  messageId: string;
+  createdAt: string;
+  debug: ChatDebugInfo;
+}
+
 /** The assembled prompt for one turn, returned across IPC so the renderer (and the debug
  * console) can show what would be sent without the main process having to re-derive it. */
 export interface BuiltPrompt {

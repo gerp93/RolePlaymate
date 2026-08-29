@@ -1,5 +1,5 @@
-import { ChatDebugInfo } from '../../../shared/types/chat';
-import DebugConsole from './DebugConsole';
+import { ChatDebugHistoryEntry, ChatDebugInfo } from '../../../shared/types/chat';
+import PromptDebugHistory from './PromptDebugHistory';
 import MemoriesPanel from './MemoriesPanel';
 
 export type RightSidebarTab = 'memories' | 'debug';
@@ -10,7 +10,12 @@ interface Props {
   onClose: () => void;
   conversationId: string;
   memoryCount: number;
-  debug: ChatDebugInfo | null;
+  debugHistory: ChatDebugHistoryEntry[];
+  debugHistoryLoading: boolean;
+  liveDebug: ChatDebugInfo | null;
+  liveMessageId: string | null;
+  liveCreatedAt: string | null;
+  isGenerating: boolean;
   onMemoriesChanged: () => void;
 }
 
@@ -21,7 +26,12 @@ export default function ChatRightSidebar({
   onClose,
   conversationId,
   memoryCount,
-  debug,
+  debugHistory,
+  debugHistoryLoading,
+  liveDebug,
+  liveMessageId,
+  liveCreatedAt,
+  isGenerating,
   onMemoriesChanged,
 }: Props) {
   return (
@@ -49,7 +59,7 @@ export default function ChatRightSidebar({
             className={`chat-right-sidebar-tab${tab === 'debug' ? ' active' : ''}`}
             onClick={() => onTabChange('debug')}
           >
-            🐛 Debug
+            🐛 Prompt Debugging
           </button>
         </div>
         <button
@@ -79,7 +89,15 @@ export default function ChatRightSidebar({
             aria-labelledby="chat-right-tab-debug"
             className="chat-right-sidebar-panel chat-right-sidebar-panel-debug"
           >
-            <DebugConsole debug={debug} />
+            <PromptDebugHistory
+              conversationId={conversationId}
+              history={debugHistory}
+              historyLoading={debugHistoryLoading}
+              liveDebug={liveDebug}
+              liveMessageId={liveMessageId}
+              liveCreatedAt={liveCreatedAt}
+              isGenerating={isGenerating}
+            />
           </div>
         )}
       </div>

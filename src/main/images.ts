@@ -1,15 +1,17 @@
-import { app, dialog, BrowserWindow } from 'electron';
+import { dialog, BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { getEffectiveDbPath } from './dbLocation';
 
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
+/** Portraits live beside the active database so dev and packaged installs never share a folder. */
 export function getImagesDir(): string {
-  return path.join(app.getPath('userData'), 'images');
+  return path.join(path.dirname(getEffectiveDbPath()), 'images');
 }
 
-/** Copies one file into userData/images under a fresh uuid name, so it survives independent of
+/** Copies one file into the db-adjacent images folder under a fresh uuid name, so it survives
  * wherever the user originally had it. Throws for anything outside the allowed extensions. */
 function copyImageIntoLibrary(sourcePath: string): string {
   const ext = path.extname(sourcePath).toLowerCase().replace('.', '') || 'png';
@@ -26,7 +28,7 @@ function copyImageIntoLibrary(sourcePath: string): string {
 }
 
 /** Opens a native file picker for a single image (a persona avatar, a world book cover -- the
- * two places that only ever hold one), copies the chosen file into userData, and returns the
+ * two places that only ever hold one), copies the chosen file into the images library, and returns the
  * new absolute path. Returns null if the user cancels. */
 export async function chooseCharacterImage(window: BrowserWindow | null): Promise<string | null> {
   if (!window) return null;
@@ -58,7 +60,7 @@ export async function chooseCharacterImages(window: BrowserWindow | null): Promi
   return result.filePaths.map(copyImageIntoLibrary);
 }
 
-/** Copies an existing portrait file to a new uuid-named file in userData/images, so a cloned
+/** Copies an existing portrait file to a new uuid-named file in the images library, so a cloned
  * character's image has its own independent lifecycle (deleting one character's image can't
  * orphan another's). Returns null if the source file is missing or unreadable. */
 export function cloneCharacterImage(imagePath: string): string | null {

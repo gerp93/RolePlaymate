@@ -1,0 +1,26 @@
+.copyable-terminal-command {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.copyable-terminal-command-pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow-x: auto;
+}
+
+.copyable-terminal-command-pre code {
+  font-size: 13px;
+}
+
+.copyable-terminal-command-copy {
+  flex-shrink: 0;
+  align-self: center;
+}

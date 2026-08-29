@@ -21,12 +21,45 @@
   height: 24px;
 }
 
-.topbar ul {
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.topbar-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-section + .topbar-section {
+  padding-left: 20px;
+  border-left: 1px solid var(--color-border);
+}
+
+.topbar-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.topbar-section ul,
+.topbar-trailing {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   gap: 4px;
+}
+
+.topbar-trailing {
+  padding-left: 20px;
+  border-left: 1px solid var(--color-border);
 }
 
 .topbar a {
@@ -84,6 +117,79 @@
   display: flex;
   gap: 8px;
   margin-top: 12px;
+}
+
+.settings-subsection {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-subsection-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.settings-subsection-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.settings-embedding-status {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.settings-embedding-status[data-installed='true'] {
+  color: var(--color-accent-green);
+}
+
+.settings-embedding-status[data-installed='false'] {
+  color: var(--color-accent-red);
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-subsection-actions {
+  margin-top: 12px;
+}
+
+.settings-subsection-notice {
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.model-tuning-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.model-tuning-tab {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.model-tuning-tab.active {
+  border-color: var(--color-primary-action);
+  background: color-mix(in srgb, var(--color-primary-action) 12%, transparent);
+  font-weight: 600;
+}
+
+.embedding-model-missing-backdrop {
+  z-index: 60;
 }
 
 .lightbox-image {

@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
 import { OllamaModelInfo } from '../../shared/types/ollama';
+import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddingModel';
 import { detectModelFamily } from '../../shared/utils/modelFamily';
 import { displayModelName, assignModelTiers, modelCompositeScore, MODEL_TIER_COLORS, ModelTier } from '../utils/modelPresentation';
+import OllamaRequiredGate from '../components/chat/OllamaRequiredGate';
 
 interface FieldSpec {
   key: keyof SamplerParams;
@@ -87,12 +90,24 @@ const CAPABILITY_LABELS: Record<string, string> = {
   tools: 'Tool/function calling',
   vision: 'Image input',
   thinking: 'Thinking',
+  embed: 'Text embeddings',
 };
 
+type TuningTab = 'chat' | 'embedding';
+
 export default function ModelTuning() {
-  const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
-  const [ollamaMessage, setOllamaMessage] = useState('');
+  return (
+    <OllamaRequiredGate>
+      <ModelTuningPage />
+    </OllamaRequiredGate>
+  );
+}
+
+function ModelTuningPage() {
+  const [tab, setTab] = useState<TuningTab>('chat');
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
+  const [embeddingModels, setEmbeddingModels] = useState<OllamaModelInfo[]>([]);
+  const [activeEmbeddingModel, setActiveEmbeddingModel] = useState(DEFAULT_EMBEDDING_MODEL);
   const [tiers, setTiers] = useState<Record<string, ModelTier>>({});
   const [customRows, setCustomRows] = useState<Record<string, ModelSamplerDefaults>>({});
   const [recommended, setRecommended] = useState<Record<string, SamplerParams>>({});
@@ -100,34 +115,36 @@ export default function ModelTuning() {
   const [busyModel, setBusyModel] = useState<string | null>(null);
 
   async function load() {
-    const [modelsResult, rows] = await Promise.all([
+    const [modelsResult, rows, embeddingConfig] = await Promise.all([
       window.electronAPI.ollama.listModelsDetailed(),
       window.electronAPI.modelTuning.getAll(),
+      window.electronAPI.memoryEmbeddingModel.get(),
     ]);
 
-    setOllamaAvailable(modelsResult.available);
-    setOllamaMessage(modelsResult.available ? '' : modelsResult.message);
+    setActiveEmbeddingModel(embeddingConfig.model);
 
     const rowsByModel: Record<string, ModelSamplerDefaults> = {};
     for (const row of rows) rowsByModel[row.model] = row;
     setCustomRows(rowsByModel);
 
-    // A model that's been tuned but is no longer installed still gets a (bare) row, rather
-    // than its override silently vanishing from the page -- same reasoning as before, just
-    // without the real metadata an uninstalled model has none of.
     const installedNames = new Set(modelsResult.models.map((m) => m.name));
+    const chatModels = modelsResult.models.filter((m) => !isEmbeddingModel(m));
+    const embedding = modelsResult.models
+      .filter((m) => isEmbeddingModel(m))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    setEmbeddingModels(embedding);
     const orphaned: OllamaModelInfo[] = rows
-      .filter((r) => !installedNames.has(r.model))
+      .filter((r) => !installedNames.has(r.model) && !isEmbeddingModel(r.model))
       .map((r) => ({ name: r.model, sizeBytes: 0, family: '', parameterSize: '', quantization: '', contextLength: null, capabilities: [] }));
 
     // Ranked best-to-worst for this app's purposes (see compositeScore/assignTiers) rather
     // than alphabetically -- the list had no inherent order otherwise. Disabled models group
     // together below every enabled one, ranked among themselves the same way, so turning a
     // model off moves it out of the way without losing where it'd otherwise rank.
-    const tiersByModel = assignModelTiers(modelsResult.models);
+    const tiersByModel = assignModelTiers(chatModels);
     setTiers(tiersByModel);
     const enabled = (m: OllamaModelInfo) => rowsByModel[m.name]?.enabled ?? true;
-    const allModels = [...modelsResult.models, ...orphaned].sort((a, b) => {
+    const allModels = [...chatModels, ...orphaned].sort((a, b) => {
       const enabledDiff = Number(enabled(b)) - Number(enabled(a));
       if (enabledDiff !== 0) return enabledDiff;
       return modelCompositeScore(b) - modelCompositeScore(a) || a.name.localeCompare(b.name);
@@ -151,6 +168,22 @@ export default function ModelTuning() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'embedding') return;
+    void window.electronAPI.memoryEmbeddingModel.get().then((config) => {
+      setActiveEmbeddingModel(config.model);
+    });
+    void window.electronAPI.ollama.listModelsDetailed().then((modelsResult) => {
+      if (modelsResult.available) {
+        setEmbeddingModels(
+          modelsResult.models
+            .filter((m) => isEmbeddingModel(m))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      }
+    });
+  }, [tab]);
 
   function displayValue(model: string, field: FieldSpec): string {
     const draft = drafts[model]?.[field.key];
@@ -273,6 +306,29 @@ export default function ModelTuning() {
         <h1>Model Tuning</h1>
       </div>
 
+      <div className="model-tuning-tabs" role="tablist" aria-label="Model tuning views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'chat'}
+          className={`model-tuning-tab${tab === 'chat' ? ' active' : ''}`}
+          onClick={() => setTab('chat')}
+        >
+          Chat models
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'embedding'}
+          className={`model-tuning-tab${tab === 'embedding' ? ' active' : ''}`}
+          onClick={() => setTab('embedding')}
+        >
+          Embedding models
+        </button>
+      </div>
+
+      {tab === 'chat' && (
+        <>
       <p className="text-muted">
         App default sampler values per Ollama model can be tuned here.
       </p>
@@ -283,17 +339,8 @@ export default function ModelTuning() {
         not correlate with suitability or tuning for roleplay specifically.
       </p>
 
-      {ollamaAvailable === false && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <p className="text-muted" style={{ margin: 0 }}>
-            Ollama isn&apos;t reachable ({ollamaMessage || 'not running'}) -- can&apos;t list installed models to
-            tune right now.
-          </p>
-        </div>
-      )}
-
-      {ollamaAvailable && models.length === 0 && (
-        <div className="text-muted">No models installed yet.</div>
+      {models.length === 0 && (
+        <div className="text-muted">No chat models installed yet.</div>
       )}
 
       {models.length > 0 && (
@@ -671,6 +718,108 @@ export default function ModelTuning() {
             ))}
           </div>
         </div>
+      )}
+        </>
+      )}
+
+      {tab === 'embedding' && (
+        <>
+          <p className="text-muted">
+            Embedding models power semantic memory retrieval. Choose which one is active in{' '}
+            <Link to="/settings">Settings</Link> under Memory embedding model.
+          </p>
+          <p className="text-muted" style={{ fontSize: 12 }}>
+            Per-model tuning options for embeddings will appear here as they&apos;re added. For now,
+            install models with Ollama and switch between them in Settings.
+          </p>
+
+          {embeddingModels.length === 0 && (
+            <div className="text-muted">No embedding models installed yet.</div>
+          )}
+
+          {embeddingModels.length > 0 && (
+            <div className="card" style={{ overflowX: 'auto' }}>
+              <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '6px 10px 6px 0' }}>Model</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Params</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Quant</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Context</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Size</th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Capabilities</th>
+                    <th
+                      style={{ textAlign: 'left', padding: '6px 10px' }}
+                      title="The model Settings uses for semantic memory retrieval"
+                    >
+                      Active
+                    </th>
+                    <th style={{ textAlign: 'left', padding: '6px 10px' }}>Tuning</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {embeddingModels.map((info) => {
+                    const isActive = info.name === activeEmbeddingModel;
+                    return (
+                      <tr key={info.name} style={{ borderTop: '1px solid var(--color-border)' }}>
+                        <td style={{ padding: '8px 10px 8px 0', whiteSpace: 'nowrap' }}>
+                          {info.family && (
+                            <div style={{ fontWeight: 600 }}>{displayModelName(info)}</div>
+                          )}
+                          <div
+                            className={info.family ? 'text-muted' : undefined}
+                            style={{ fontFamily: 'monospace', fontSize: 12 }}
+                          >
+                            {info.name}
+                          </div>
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {info.parameterSize || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {info.quantization || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {formatContext(info.contextLength) || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {formatBytes(info.sizeBytes) || '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {(() => {
+                            const extra = info.capabilities.filter((c) => c !== 'completion');
+                            if (extra.length === 0) {
+                              return <span className="text-muted">Embeddings</span>;
+                            }
+                            return (
+                              <span style={{ display: 'inline-flex', gap: 6 }}>
+                                {extra.map((c) => (
+                                  <span key={c} title={CAPABILITY_LABELS[c] ?? c}>
+                                    {CAPABILITY_ICONS[c] ?? c}
+                                  </span>
+                                ))}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          {isActive ? (
+                            <span style={{ fontWeight: 600, color: 'var(--color-accent-green)' }}>Active</span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="text-muted" style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                          —
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

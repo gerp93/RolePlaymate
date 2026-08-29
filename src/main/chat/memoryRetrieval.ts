@@ -4,6 +4,7 @@ import {
   MemoryRetrievalResult,
   ScoredMemory,
 } from '../../shared/types/conversationMemory';
+import { DEFAULT_EMBEDDING_MODEL } from '../../shared/embeddingModel';
 
 /**
  * Picks which of a conversation's stored memories to inject this turn.
@@ -32,7 +33,7 @@ export const DEFAULT_MEMORY_OPTIONS: Required<Omit<MemoryRetrievalOptions, 'embe
   topK: 10,
   minScore: 0.25,
   tokenBudget: 400,
-  embeddingModel: 'nomic-embed-text',
+  embeddingModel: DEFAULT_EMBEDDING_MODEL,
 };
 
 /** Same ~4-chars-per-token estimate the lore budget uses. */

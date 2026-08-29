@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ConversationMemory } from '../../../shared/types/conversationMemory';
 import LimitedInput from '../LimitedInput';
 import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
+import { OLLAMA_MEMORIES_STEP_INDEX } from '../../guides/ollamaSetupTrack';
 
 interface Props {
   conversationId: string;
@@ -22,6 +24,8 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
+  const [embeddingMissing, setEmbeddingMissing] = useState(false);
+  const [embeddingModelName, setEmbeddingModelName] = useState('nomic-embed-text');
 
   const load = useCallback(async () => {
     setMemories(await window.electronAPI.memories.getAll(conversationId));
@@ -30,6 +34,19 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.ollama.getEmbeddingModelStatus().then((status) => {
+      if (!cancelled) {
+        setEmbeddingModelName(status.model);
+        setEmbeddingMissing(status.ollamaReachable && !status.installed);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.chat.onMemoriesUpdated((payload) => {
@@ -59,15 +76,60 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
     await afterChange();
   };
 
+  const togglePin = async (memory: ConversationMemory) => {
+    await window.electronAPI.memories.setPinned(memory.id, memory.source !== 'manual');
+    await afterChange();
+  };
+
   const autoCount = memories.filter((m) => m.source === 'auto').length;
 
   return (
     <div className="memories-panel">
-      <p className="memories-summary text-muted">
-        {memories.length === 0
-          ? 'Nothing remembered yet'
-          : `${memories.length - autoCount} pinned · ${autoCount} extracted`}
-      </p>
+      {embeddingMissing && (
+        <p className="memories-embedding-notice">
+          The {embeddingModelName} embedding model is missing from Ollama, so extracted
+          memories below aren&apos;t matched by meaning. Pin the ones you always want included.{' '}
+          <Link
+            to="/about"
+            state={{ trackId: 'ollama-setup', stepIndex: OLLAMA_MEMORIES_STEP_INDEX }}
+            className="memories-embedding-notice-link"
+          >
+            Learn more
+          </Link>
+        </p>
+      )}
+
+      <div className="memories-header">
+        <p className="memories-summary text-muted">
+          {memories.length === 0
+            ? 'Nothing remembered yet'
+            : `${memories.length - autoCount} pinned · ${autoCount} extracted`}
+        </p>
+        {memories.length > 0 &&
+          (confirmClear ? (
+            <div className="memories-clear-confirm">
+              <span>Delete all {memories.length}?</span>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={async () => {
+                  await window.electronAPI.memories.deleteAll(conversationId);
+                  setConfirmClear(false);
+                  await afterChange();
+                }}
+              >
+                Delete all
+              </button>
+              <button type="button" className="btn" onClick={() => setConfirmClear(false)}>
+                Keep them
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)}>
+              Delete all memories
+            </button>
+          ))}
+      </div>
 
       <p className="memories-note text-muted">
         Facts carried into later turns without resending the whole transcript. Pinned ones are
@@ -79,7 +141,7 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
           value={draft}
           limit={FIELD_LIMITS.memory}
           compactCount
-          placeholder="Add something the character should always remember"
+          placeholder="Add a character memory for this chat instance"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void add();
@@ -127,57 +189,42 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
                   <span className="memory-text">{memory.content}</span>
                   <button
                     type="button"
-                    className="btn"
+                    className="btn memory-icon-btn"
+                    title={memory.source === 'manual' ? 'Unpin' : 'Pin'}
+                    aria-label={memory.source === 'manual' ? 'Unpin' : 'Pin'}
+                    onClick={() => void togglePin(memory)}
+                  >
+                    📌
+                  </button>
+                  <button
+                    type="button"
+                    className="btn memory-icon-btn"
+                    title="Edit"
+                    aria-label="Edit"
                     onClick={() => {
                       setEditingId(memory.id);
                       setEditText(memory.content);
                     }}
                   >
-                    Edit
+                    ✏️
                   </button>
                   <button
                     type="button"
-                    className="btn btn-danger"
+                    className="btn btn-danger memory-icon-btn"
+                    title="Delete"
+                    aria-label="Delete"
                     onClick={async () => {
                       await window.electronAPI.memories.delete(memory.id);
                       await afterChange();
                     }}
                   >
-                    Delete
+                    🗑️
                   </button>
                 </>
               )}
             </li>
           ))}
         </ul>
-      )}
-
-      {memories.length > 0 && (
-        <footer className="memories-footer">
-          {confirmClear ? (
-            <>
-              <span>Delete all {memories.length}? This can&apos;t be undone.</span>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={async () => {
-                  await window.electronAPI.memories.deleteAll(conversationId);
-                  setConfirmClear(false);
-                  await afterChange();
-                }}
-              >
-                Delete all
-              </button>
-              <button type="button" className="btn" onClick={() => setConfirmClear(false)}>
-                Keep them
-              </button>
-            </>
-          ) : (
-            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)}>
-              Delete all memories
-            </button>
-          )}
-        </footer>
       )}
     </div>
   );

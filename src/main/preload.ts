@@ -91,6 +91,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('ollamaHost:resetToDefault'),
   },
 
+  embeddingModelPrompt: {
+    getSuppressed: () => ipcRenderer.invoke('embeddingModelPrompt:getSuppressed'),
+    setSuppressed: (suppressed: boolean) =>
+      ipcRenderer.invoke('embeddingModelPrompt:setSuppressed', suppressed),
+  },
+
+  memoryEmbeddingModel: {
+    get: () => ipcRenderer.invoke('memoryEmbeddingModel:get'),
+    set: (model: string) => ipcRenderer.invoke('memoryEmbeddingModel:set', model),
+    resetToDefault: () => ipcRenderer.invoke('memoryEmbeddingModel:resetToDefault'),
+  },
+
   chat: {
     previewSystemPrompt: (
       characterId: string,
@@ -102,6 +114,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     continue: (request: unknown) => ipcRenderer.invoke('chat:continue', request),
     getVariants: (messageId: string) => ipcRenderer.invoke('chat:getVariants', messageId),
     getMessageDebug: (messageId: string) => ipcRenderer.invoke('chat:getMessageDebug', messageId),
+    getDebugHistory: (conversationId: string) =>
+      ipcRenderer.invoke('chat:getDebugHistory', conversationId),
     suggestReply: (request: unknown) => ipcRenderer.invoke('chat:suggestReply', request),
     selectVariant: (conversationId: string, messageId: string, variantId: string) =>
       ipcRenderer.invoke('chat:selectVariant', conversationId, messageId, variantId),
@@ -136,6 +150,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     add: (conversationId: string, content: string) =>
       ipcRenderer.invoke('memories:add', conversationId, content),
     update: (id: string, content: string) => ipcRenderer.invoke('memories:update', id, content),
+    setPinned: (id: string, pinned: boolean) => ipcRenderer.invoke('memories:setPinned', id, pinned),
     delete: (id: string) => ipcRenderer.invoke('memories:delete', id),
     deleteAll: (conversationId: string) =>
       ipcRenderer.invoke('memories:deleteAll', conversationId),
@@ -205,6 +220,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ollama: {
     listModels: () => ipcRenderer.invoke('ollama:listModels'),
     listModelsDetailed: () => ipcRenderer.invoke('ollama:listModelsDetailed'),
+    getEmbeddingModelStatus: () => ipcRenderer.invoke('ollama:getEmbeddingModelStatus'),
   },
 
   modelTuning: {

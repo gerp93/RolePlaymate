@@ -27,6 +27,10 @@ import { CHAT_FONT_SIZES, ChatFontSize, getStoredChatFontSize, saveChatFontSize 
 import { resolveMarginImage } from '../utils/avatarImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { OllamaModelInfo } from '../../shared/types/ollama';
+import { isEmbeddingModel } from '../../shared/embeddingModel';
+import ChatOllamaSetup from '../components/chat/ChatOllamaSetup';
+import EmbeddingModelMissingPrompt from '../components/chat/EmbeddingModelMissingPrompt';
+import OllamaSetupLoading from '../components/chat/OllamaSetupLoading';
 import '../components/chat/Chat.css';
 
 type ModelState =
@@ -120,6 +124,7 @@ export default function Chat() {
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [promptDialogDebug, setPromptDialogDebug] = useState<ChatDebugInfo | null>(null);
+  const [promptDialogLoading, setPromptDialogLoading] = useState(false);
   // Owned here rather than inside Composer so switching personas mid-conversation can
   // prepopulate a stock scene note without reaching into the composer's internals.
   const [directions, setDirections] = useState('');
@@ -148,10 +153,25 @@ export default function Chat() {
   const handleViewPrompt = useCallback(async (messageId: string) => {
     setPromptDialogOpen(true);
     setPromptDialogDebug(null);
-    setPromptDialogDebug(await window.electronAPI.chat.getMessageDebug(messageId));
+    setPromptDialogLoading(true);
+    try {
+      setPromptDialogDebug(await window.electronAPI.chat.getMessageDebug(messageId));
+    } finally {
+      setPromptDialogLoading(false);
+    }
   }, []);
 
   const session = useChatSession(conversationId ?? null);
+
+  const latestAssistantMessage = useMemo(() => {
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const message = session.messages[i];
+      if (message.role === 'assistant' && !message.id.startsWith('pending-')) {
+        return message;
+      }
+    }
+    return null;
+  }, [session.messages]);
 
   // Greeting-only drafts stay out of the sidebar and off the Chat tab's return target.
   useEffect(() => {
@@ -239,6 +259,22 @@ export default function Chat() {
     }
   }, [conversationId, model, disabledModels]);
 
+  const checkOllamaConnection = useCallback(async () => {
+    const [result, tuningRows] = await Promise.all([
+      window.electronAPI.ollama.listModelsDetailed(),
+      window.electronAPI.modelTuning.getAll(),
+    ]);
+    const disabled = new Set(tuningRows.filter((r) => !r.enabled).map((r) => r.model));
+    setDisabledModels(disabled);
+    if (result.available) {
+      setModelState({ status: 'ready', models: result.models });
+      const firstEnabled = result.models.find((m) => !isEmbeddingModel(m) && !disabled.has(m.name));
+      setModel((current) => current || firstEnabled?.name || result.models.find((m) => !isEmbeddingModel(m))?.name || '');
+    } else {
+      setModelState({ status: 'unavailable', message: result.message });
+    }
+  }, []);
+
   useEffect(() => {
     void (async () => {
       await window.electronAPI.conversations.purgeDrafts(conversationId ?? undefined);
@@ -249,29 +285,20 @@ export default function Chat() {
       setCharacters(chars);
       setPersonas(people);
       await refreshConversations();
-
-      // The library must stay usable with no Ollama server, so an unreachable server is a
-      // state to render, not an error to throw at the user. listModelsDetailed rather than
-      // listModels for the same real Ollama metadata (params/family) the Model Tuning page
-      // shows, so the picker can label options with more than a raw tag.
-      const [result, tuningRows] = await Promise.all([
-        window.electronAPI.ollama.listModelsDetailed(),
-        window.electronAPI.modelTuning.getAll(),
-      ]);
-      const disabled = new Set(tuningRows.filter((r) => !r.enabled).map((r) => r.model));
-      setDisabledModels(disabled);
-      if (result.available) {
-        setModelState({ status: 'ready', models: result.models });
-        const firstEnabled = result.models.find((m) => !disabled.has(m.name));
-        setModel((current) => current || firstEnabled?.name || result.models[0]?.name || '');
-      } else {
-        setModelState({ status: 'unavailable', message: result.message });
-      }
+      await checkOllamaConnection();
     })();
     // hiddenUnlocked: characters/personas/conversations already fetched under the previous
     // lock state hold ciphertext for anything hidden -- re-fetch on every lock/unlock so
     // content updates immediately instead of only after a manual reload.
-  }, [refreshConversations, hiddenUnlocked]);
+  }, [refreshConversations, hiddenUnlocked, checkOllamaConnection, conversationId]);
+
+  useEffect(() => {
+    if (modelState.status !== 'unavailable') return;
+    const interval = window.setInterval(() => {
+      void checkOllamaConnection();
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [modelState.status, checkOllamaConnection]);
 
   // Opening an existing conversation adopts its character, persona, model, and avatar mode.
   useEffect(() => {
@@ -592,14 +619,18 @@ export default function Chat() {
     [modelState]
   );
 
-  // Excludes models unchecked from "In Chat" on the Model Tuning page. Mid-conversation, the
-  // active model stays listed even if since disabled so the picker doesn't lose the selection.
+  // Excludes embedding models (memory-only) and models unchecked from "In Chat" on Model
+  // Tuning. Mid-conversation, the active model stays listed even if since disabled so the
+  // picker doesn't lose the selection.
   const modelOptions = useMemo(() => {
     if (modelState.status !== 'ready') return [];
+    const isChatModel = (m: OllamaModelInfo) => !isEmbeddingModel(m);
     if (!conversationId) {
-      return installedModels.filter((m) => !disabledModels.has(m.name));
+      return installedModels.filter((m) => isChatModel(m) && !disabledModels.has(m.name));
     }
-    return installedModels.filter((m) => m.name === model || !disabledModels.has(m.name));
+    return installedModels.filter(
+      (m) => isChatModel(m) && (m.name === model || !disabledModels.has(m.name))
+    );
   }, [installedModels, disabledModels, model, conversationId, modelState.status]);
 
   const modelPickerOptions = useMemo(
@@ -676,10 +707,20 @@ export default function Chat() {
     [visiblePersonas, startPersonaCoverUrls]
   );
 
+  if (modelState.status === 'loading') {
+    return <OllamaSetupLoading />;
+  }
+
+  if (modelState.status === 'unavailable') {
+    return <ChatOllamaSetup detail={modelState.message} />;
+  }
+
   return (
-    <div
-      className={`chat-page${sidebarCollapsed ? ' sidebar-collapsed' : ''}${rightSidebarOpen ? ' right-sidebar-open' : ''}`}
-    >
+    <>
+      <EmbeddingModelMissingPrompt enabled />
+      <div
+        className={`chat-page${sidebarCollapsed ? ' sidebar-collapsed' : ''}${rightSidebarOpen ? ' right-sidebar-open' : ''}`}
+      >
       {sidebarCollapsed && (
         <button
           type="button"
@@ -761,13 +802,6 @@ export default function Chat() {
       )}
 
       <section className={`chat-main${showStartScreen ? ' chat-main-start' : ''}`}>
-        {modelState.status === 'unavailable' && (
-          <div className="chat-banner chat-banner-warning">
-            <strong>Ollama isn&apos;t reachable.</strong> {modelState.message}
-            <br />
-            The character library works without it — start <code>ollama serve</code> to chat.
-          </div>
-        )}
 
         {showStartScreen ? (
           <ChatStartScreen
@@ -1086,7 +1120,11 @@ export default function Chat() {
         </div>
 
         {promptDialogOpen && (
-          <MessagePromptDialog debug={promptDialogDebug} onClose={() => setPromptDialogOpen(false)} />
+          <MessagePromptDialog
+            debug={promptDialogDebug}
+            loading={promptDialogLoading}
+            onClose={() => setPromptDialogOpen(false)}
+          />
         )}
 
           </>
@@ -1100,10 +1138,16 @@ export default function Chat() {
           onClose={() => setRightSidebarOpen(false)}
           conversationId={conversationId}
           memoryCount={session.memoryCount}
-          debug={session.debug}
+          debugHistory={session.debugHistory}
+          debugHistoryLoading={session.debugHistoryLoading}
+          liveDebug={session.debug}
+          liveMessageId={latestAssistantMessage?.id ?? null}
+          liveCreatedAt={latestAssistantMessage?.createdAt ?? null}
+          isGenerating={session.isGenerating}
           onMemoriesChanged={() => void session.refreshMemoryCount()}
         />
       )}
     </div>
+    </>
   );
 }

@@ -9,6 +9,7 @@ import PersonaList from './pages/PersonaList';
 import PersonaDetail from './pages/PersonaDetail';
 import WorldBookList from './pages/WorldBookList';
 import WorldBookDetail from './pages/WorldBookDetail';
+import About from './pages/About';
 import Layout from './components/Layout';
 import { ThemeProvider } from './context/ThemeContext';
 import { SecurityProvider } from './context/SecurityContext';
@@ -31,6 +32,7 @@ function App() {
               <Route path="/world-books" element={<WorldBookList />} />
               <Route path="/world-books/:lorebookId" element={<WorldBookDetail />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/about" element={<About />} />
               <Route path="/prompt-tuning" element={<PromptSettings />} />
               <Route path="/model-tuning" element={<ModelTuning />} />
             </Routes>

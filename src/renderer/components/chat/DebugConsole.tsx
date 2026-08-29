@@ -20,13 +20,23 @@ import { MemoryRetrievalResult } from '../../../shared/types/conversationMemory'
  * "— (empty)" row. Being able to see at a glance what was *not* sent is most of the value,
  * so empty sections are never filtered out.
  */
-export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null }) {
+export default function DebugConsole({
+  debug,
+  showHeader = true,
+}: {
+  debug: ChatDebugInfo | null;
+  /** When false, omits the title/copy row — use when a parent (dialog header, history
+   *  summary) already provides those controls. */
+  showHeader?: boolean;
+}) {
   if (!debug) {
     return (
       <div className="debug-console">
-        <div className="debug-console-header">
-          <span className="debug-console-title">🔍 Prompt Debug Console</span>
-        </div>
+        {showHeader && (
+          <div className="debug-console-header">
+            <span className="debug-console-title">🔍 Prompt Debug Console</span>
+          </div>
+        )}
         <p className="debug-console-placeholder">
           Send a message to see the prompt debug info here.
         </p>
@@ -43,10 +53,12 @@ export default function DebugConsole({ debug }: { debug: ChatDebugInfo | null })
 
   return (
     <div className="debug-console">
-      <div className="debug-console-header">
-        <span className="debug-console-title">🔍 Prompt Debug Console</span>
-        <CopyButton value={debug.fullPrompt} label="Copy full prompt" />
-      </div>
+      {showHeader && (
+        <div className="debug-console-header">
+          <span className="debug-console-title">🔍 Prompt Debug Console</span>
+          <CopyButton value={debug.fullPrompt} label="Copy full prompt" />
+        </div>
+      )}
 
       <ul className="debug-colour-key">
         <li><span className="key-swatch seg-system" /> System</li>
@@ -358,7 +370,9 @@ function SegmentedBody({ segments }: { segments: Segment[] }) {
   );
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+/** Exported for reuse by PromptDebugHistory's "copy entire history" button -- same look, same
+ * click-outside-a-<summary> guard. */
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button

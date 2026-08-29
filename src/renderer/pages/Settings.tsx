@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import { THEME_LABELS, Theme } from '../utils/themes';
-import { CHAT_FONT_SIZES, ChatFontSize, getStoredChatFontSize, saveChatFontSize } from '../utils/chatFontSize';
 import LimitedInput from '../components/LimitedInput';
+import CopyableTerminalCommand from '../components/CopyableTerminalCommand';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddingModel';
 
 export default function Settings() {
   const { currentTheme, setTheme, availableThemes } = useTheme();
-  const [chatFontSize, setChatFontSize] = useState<ChatFontSize>(() => getStoredChatFontSize());
 
   const [dbLocation, setDbLocation] = useState<{ path: string; isDefault: boolean; defaultPath: string } | null>(
     null
@@ -34,6 +35,15 @@ export default function Settings() {
   >('idle');
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
 
+  const [embeddingInstalled, setEmbeddingInstalled] = useState<boolean | null>(null);
+  const [configuredEmbeddingModel, setConfiguredEmbeddingModel] = useState<string | null>(null);
+  const [embeddingModelIsDefault, setEmbeddingModelIsDefault] = useState(true);
+  const [installedEmbeddingModels, setInstalledEmbeddingModels] = useState<string[]>([]);
+  const [embeddingModelBusy, setEmbeddingModelBusy] = useState(false);
+  const [remindWhenEmbeddingMissing, setRemindWhenEmbeddingMissing] = useState(true);
+  const [embeddingChecking, setEmbeddingChecking] = useState(false);
+  const [embeddingNotice, setEmbeddingNotice] = useState<string | null>(null);
+
   useEffect(() => {
     window.electronAPI.dbLocation.get().then(setDbLocation);
     window.electronAPI.app.getVersion().then(setAppVersion);
@@ -41,7 +51,90 @@ export default function Settings() {
       setOllamaHostState(result);
       setOllamaHostDraft(result.host);
     });
+    void refreshEmbeddingSettings();
   }, []);
+
+  useEffect(() => {
+    function onFocus() {
+      void refreshEmbeddingSettings();
+    }
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
+
+  async function refreshEmbeddingSettings() {
+    const [status, prompt, config, modelsResult] = await Promise.all([
+      window.electronAPI.ollama.getEmbeddingModelStatus(),
+      window.electronAPI.embeddingModelPrompt.getSuppressed(),
+      window.electronAPI.memoryEmbeddingModel.get(),
+      window.electronAPI.ollama.listModelsDetailed(),
+    ]);
+    setConfiguredEmbeddingModel(config.model);
+    setEmbeddingModelIsDefault(config.isDefault);
+    setEmbeddingInstalled(status.ollamaReachable && status.installed);
+    setRemindWhenEmbeddingMissing(!prompt.suppressed);
+    if (modelsResult.available) {
+      setInstalledEmbeddingModels(
+        modelsResult.models.filter((m) => isEmbeddingModel(m)).map((m) => m.name)
+      );
+    } else {
+      setInstalledEmbeddingModels([]);
+    }
+  }
+
+  const activeEmbeddingModel = configuredEmbeddingModel ?? DEFAULT_EMBEDDING_MODEL;
+  const embeddingPullCommand = `ollama pull ${activeEmbeddingModel}`;
+  const embeddingModelOptions = [
+    ...new Set([activeEmbeddingModel, ...installedEmbeddingModels]),
+  ].sort((a, b) => a.localeCompare(b));
+
+  async function handleEmbeddingModelChange(model: string) {
+    if (model === activeEmbeddingModel) return;
+    setEmbeddingModelBusy(true);
+    setEmbeddingNotice(null);
+    try {
+      await window.electronAPI.memoryEmbeddingModel.set(model);
+      await refreshEmbeddingSettings();
+    } catch (err) {
+      setEmbeddingNotice(err instanceof Error ? err.message : 'Could not save embedding model.');
+    } finally {
+      setEmbeddingModelBusy(false);
+    }
+  }
+
+  async function handleResetEmbeddingModel() {
+    setEmbeddingModelBusy(true);
+    setEmbeddingNotice(null);
+    try {
+      await window.electronAPI.memoryEmbeddingModel.resetToDefault();
+      await refreshEmbeddingSettings();
+    } catch (err) {
+      setEmbeddingNotice(err instanceof Error ? err.message : 'Could not reset embedding model.');
+    } finally {
+      setEmbeddingModelBusy(false);
+    }
+  }
+
+  async function handleEmbeddingCheck() {
+    setEmbeddingChecking(true);
+    setEmbeddingNotice(null);
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
+      const status = await window.electronAPI.ollama.getEmbeddingModelStatus();
+      const installed = status.ollamaReachable && status.installed;
+      setEmbeddingInstalled(installed);
+      if (!installed) {
+        setEmbeddingNotice(`The ${status.model} model is not installed in Ollama yet.`);
+      }
+    } finally {
+      setEmbeddingChecking(false);
+    }
+  }
+
+  async function handleRemindWhenEmbeddingMissingChange(checked: boolean) {
+    setRemindWhenEmbeddingMissing(checked);
+    await window.electronAPI.embeddingModelPrompt.setSuppressed(!checked);
+  }
 
   async function handleCheckForUpdates() {
     setUpdateStatus('checking');
@@ -208,31 +301,6 @@ export default function Settings() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: 15, marginTop: 0 }}>Chat Text Size</h2>
-        <p className="text-muted" style={{ marginTop: -8, fontSize: 13 }}>
-          Size for message text in chat. Can also be changed from the Chat page itself.
-        </p>
-        <div className="field">
-          <label>Default Text Size</label>
-          <select
-            value={chatFontSize}
-            onChange={(e) => {
-              const size = Number(e.target.value) as ChatFontSize;
-              setChatFontSize(size);
-              saveChatFontSize(size);
-            }}
-            style={{ maxWidth: 200 }}
-          >
-            {CHAT_FONT_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size}px
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: 15, marginTop: 0 }}>Hidden Items PIN</h2>
         <p className="text-muted" style={{ marginTop: -8, fontSize: 13 }}>
           Hidden characters, personas, and world books (and conversations that use them) stay
@@ -377,6 +445,72 @@ export default function Settings() {
             )}
           </>
         )}
+
+        <section className="settings-subsection">
+          <h3 className="settings-subsection-title">Memory embedding model</h3>
+          <p className="text-muted settings-subsection-lead">
+            Unpinned memories are matched by meaning through the selected Ollama embedding model.
+            This model is not required for chat, but without it characters are more likely to forget
+            earlier parts of a conversation as it grows — only pinned memories are always included.
+          </p>
+          <div className="field">
+            <label>Active model{embeddingModelIsDefault ? ' (default)' : ''}</label>
+            <select
+              value={activeEmbeddingModel}
+              disabled={embeddingModelBusy || embeddingModelOptions.length === 0}
+              onChange={(e) => void handleEmbeddingModelChange(e.target.value)}
+              style={{ maxWidth: 360, fontFamily: 'monospace', fontSize: 12 }}
+            >
+              {embeddingModelOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+              Pull additional embedding models with Ollama, then choose them here. See{' '}
+              <Link to="/model-tuning">Model Tuning</Link> for installed embedding models.
+            </p>
+          </div>
+          {!embeddingModelIsDefault && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                className="btn"
+                disabled={embeddingModelBusy}
+                onClick={() => void handleResetEmbeddingModel()}
+              >
+                Reset to Default ({DEFAULT_EMBEDDING_MODEL})
+              </button>
+            </div>
+          )}
+          {embeddingInstalled !== null && (
+            <p
+              className="settings-embedding-status"
+              data-installed={embeddingInstalled ? 'true' : 'false'}
+            >
+            {embeddingInstalled
+              ? `The ${activeEmbeddingModel} model is installed.`
+              : `The ${activeEmbeddingModel} model is not installed.`}
+            </p>
+          )}
+          {embeddingInstalled === false && (
+            <CopyableTerminalCommand command={embeddingPullCommand} />
+          )}
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={remindWhenEmbeddingMissing}
+              onChange={(e) => void handleRemindWhenEmbeddingMissingChange(e.target.checked)}
+            />
+            Remind me on the Chat page when the embedding model is missing
+          </label>
+          <div className="settings-subsection-actions">
+            <button className="btn" disabled={embeddingChecking} onClick={() => void handleEmbeddingCheck()}>
+              {embeddingChecking ? 'Checking…' : 'Check again'}
+            </button>
+          </div>
+          {embeddingNotice && <p className="text-muted settings-subsection-notice">{embeddingNotice}</p>}
+        </section>
       </div>
     </div>
   );

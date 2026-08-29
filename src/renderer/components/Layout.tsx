@@ -4,14 +4,39 @@ import { useSecurity } from '../context/SecurityContext';
 import PinModal from './PinModal';
 import './Layout.css';
 
-const NAV_ITEMS = [
-  { to: '/chat', label: 'Chat', end: false },
-  { to: '/characters', label: 'Characters', end: true },
-  { to: '/personas', label: 'Personas', end: false },
-  { to: '/world-books', label: 'World Books', end: false },
-  { to: '/prompt-tuning', label: 'Prompt Tuning', end: false },
-  { to: '/model-tuning', label: 'Model Tuning', end: false },
-  { to: '/settings', label: 'Settings', end: false },
+interface NavItem {
+  to: string;
+  label: string;
+  end?: boolean;
+}
+
+interface NavSection {
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: 'Chat',
+    items: [
+      { to: '/chat', label: 'Chat' },
+      { to: '/prompt-tuning', label: 'Prompt Tuning' },
+      { to: '/model-tuning', label: 'Model Tuning' },
+    ],
+  },
+  {
+    label: 'Library',
+    items: [
+      { to: '/characters', label: 'Characters', end: true },
+      { to: '/personas', label: 'Personas' },
+      { to: '/world-books', label: 'World Books' },
+    ],
+  },
+];
+
+const NAV_TRAILING: NavItem[] = [
+  { to: '/about', label: 'About', end: true },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -35,15 +60,39 @@ export default function Layout({ children }: { children: ReactNode }) {
           />
           RolePlaymate
         </div>
-        <ul>
-          {NAV_ITEMS.map((item) => (
-            <li key={item.label}>
-              <NavLink to={item.to} end={item.end} className={({ isActive }) => (isActive ? 'active' : '')}>
-                {item.label}
-              </NavLink>
-            </li>
+        <nav className="topbar-nav" aria-label="Main">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.label} className="topbar-section">
+              <span className="topbar-section-label">{section.label}</span>
+              <ul>
+                {section.items.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) => (isActive ? 'active' : '')}
+                    >
+                      {item.label}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+          <ul className="topbar-trailing">
+            {NAV_TRAILING.map((item) => (
+              <li key={item.to}>
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) => (isActive ? 'active' : '')}
+                >
+                  {item.label}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
         <span className="topbar-spacer" />
         <button
           type="button"

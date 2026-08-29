@@ -3,6 +3,7 @@ import { CharacterField } from '../shared/types/characterField';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
+import { EmbeddingModelStatus } from '../shared/embeddingModel';
 import { PersonaImage } from '../shared/types/personaImage';
 import {
   BuiltPrompt,
@@ -11,6 +12,7 @@ import {
   ChatRegenerateRequest,
   ChatEditPriorMessageRequest,
   ChatDebugInfo,
+  ChatDebugHistoryEntry,
   SamplerParams,
   ModelSamplerDefaults,
 } from '../shared/types/chat';
@@ -117,6 +119,15 @@ declare global {
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
       };
+      embeddingModelPrompt: {
+        getSuppressed: () => Promise<{ suppressed: boolean }>;
+        setSuppressed: (suppressed: boolean) => Promise<{ success: boolean }>;
+      };
+      memoryEmbeddingModel: {
+        get: () => Promise<{ model: string; isDefault: boolean; defaultModel: string }>;
+        set: (model: string) => Promise<{ success: true }>;
+        resetToDefault: () => Promise<{ success: true }>;
+      };
       chat: {
         previewSystemPrompt: (
           characterId: string,
@@ -139,6 +150,7 @@ declare global {
         }) => Promise<{ streamId: string }>;
         getVariants: (messageId: string) => Promise<MessageVariant[]>;
         getMessageDebug: (messageId: string) => Promise<ChatDebugInfo | null>;
+        getDebugHistory: (conversationId: string) => Promise<ChatDebugHistoryEntry[]>;
         suggestReply: (request: {
           conversationId: string;
           characterId: string;
@@ -167,6 +179,7 @@ declare global {
         /** Added memories are 'manual', i.e. pinned: always injected. */
         add: (conversationId: string, content: string) => Promise<ConversationMemory>;
         update: (id: string, content: string) => Promise<ConversationMemory>;
+        setPinned: (id: string, pinned: boolean) => Promise<ConversationMemory>;
         delete: (id: string) => Promise<{ success: true }>;
         deleteAll: (conversationId: string) => Promise<{ success: true }>;
       };
@@ -241,6 +254,7 @@ declare global {
           | { available: true; models: OllamaModelInfo[] }
           | { available: false; models: OllamaModelInfo[]; message: string }
         >;
+        getEmbeddingModelStatus: () => Promise<EmbeddingModelStatus>;
       };
       modelTuning: {
         getGlobalDefaults: () => Promise<SamplerParams>;

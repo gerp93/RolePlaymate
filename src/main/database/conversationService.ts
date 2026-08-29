@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
 import { Message, MessageRole, MessageVariant } from '../../shared/types/message';
-import { ChatDebugInfo } from '../../shared/types/chat';
+import { ChatDebugInfo, ChatDebugHistoryEntry } from '../../shared/types/chat';
 import {
   ConversationMemory,
   CreateMemoryInput,
@@ -570,6 +570,30 @@ export class ConversationService {
     return JSON.parse(row.debug) as ChatDebugInfo;
   }
 
+  /**
+   * Every assistant turn's logged prompt for this conversation, oldest first -- backs the
+   * Prompt Debugging pane's history list (and its "copy entire history" export), as opposed
+   * to getVariantDebug's single message. Reads the *selected* variant's debug only: a redone
+   * turn's earlier, unselected attempts aren't part of "what actually happened" in this
+   * conversation's history.
+   */
+  getDebugHistory(conversationId: string): ChatDebugHistoryEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.id as messageId, m.created_at as createdAt, v.debug as debug
+         FROM messages m
+         JOIN message_variants v ON v.id = m.selected_variant_id
+         WHERE m.conversation_id = ? AND m.role = 'assistant' AND v.debug IS NOT NULL
+         ORDER BY m.seq`
+      )
+      .all(conversationId) as unknown as { messageId: string; createdAt: string; debug: string }[];
+    return rows.map((row) => ({
+      messageId: row.messageId,
+      createdAt: row.createdAt,
+      debug: JSON.parse(row.debug) as ChatDebugInfo,
+    }));
+  }
+
   /** Records a new redo candidate without changing which one is currently shown -- the caller
    * (chatSession.regenerate) selects it separately once generation succeeds, so a failed or
    * cancelled redo never disturbs what's on screen. */
@@ -649,6 +673,17 @@ export class ConversationService {
         `UPDATE conversation_memories SET content = ?, embedding = NULL, embedding_model = NULL WHERE id = ?`
       )
       .run(content, id);
+    const row = this.db
+      .prepare(`SELECT ${MEMORY_COLUMNS} FROM conversation_memories WHERE id = ?`)
+      .get(id);
+    if (!row) throw new Error(`Memory with id ${id} not found`);
+    return rowToMemory(row);
+  }
+
+  /** Toggles pinned status. Pinning an extracted memory (source 'auto' -> 'manual') makes it
+   * always injected, same as one added by hand; unpinning returns it to similarity-gated. */
+  setMemorySource(id: string, source: MemorySource): ConversationMemory {
+    this.db.prepare(`UPDATE conversation_memories SET source = ? WHERE id = ?`).run(source, id);
     const row = this.db
       .prepare(`SELECT ${MEMORY_COLUMNS} FROM conversation_memories WHERE id = ?`)
       .get(id);

@@ -17,6 +17,7 @@ import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
+import { getConfiguredMemoryEmbeddingModel } from '../dbLocation';
 
 /**
  * A generated reply that hasn't been folded into the model's context or mined for memories
@@ -1029,7 +1030,10 @@ export class ChatSessionManager {
       embeddingModel: row.embeddingModel,
     }));
 
-    const outcome = await retrieveMemories(this.ollama, query, candidates, options);
+    const outcome = await retrieveMemories(this.ollama, query, candidates, {
+      ...options,
+      embeddingModel: options?.embeddingModel ?? getConfiguredMemoryEmbeddingModel(),
+    });
 
     // Write freshly computed vectors back so the next turn only embeds the query.
     if (outcome.computed.length > 0) {
