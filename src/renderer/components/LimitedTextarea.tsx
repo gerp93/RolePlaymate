@@ -17,7 +17,14 @@ const LimitedTextarea = forwardRef<HTMLTextAreaElement, Props>(function LimitedT
 
   return (
     <div className={fieldClass}>
-      <textarea ref={ref} className={className} maxLength={limit} value={value} {...rest} />
+      <textarea
+        ref={ref}
+        className={className}
+        maxLength={limit}
+        value={value}
+        spellCheck
+        {...rest}
+      />
       {showCount && <CharCount current={len} limit={limit} compact={compactCount} />}
     </div>
   );

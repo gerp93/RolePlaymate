@@ -17,7 +17,7 @@ const LimitedInput = forwardRef<HTMLInputElement, Props>(function LimitedInput(
 
   return (
     <div className={fieldClass}>
-      <input ref={ref} className={className} maxLength={limit} value={value} {...rest} />
+      <input ref={ref} className={className} maxLength={limit} value={value} spellCheck {...rest} />
       {showCount && <CharCount current={len} limit={limit} compact={compactCount} />}
     </div>
   );
