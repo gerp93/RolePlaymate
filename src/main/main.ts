@@ -156,7 +156,8 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
 
 /** macOS bundle extensions that `open` (and so shell.openPath) *launches* rather than reveals.
  * A bundle is a directory, so an isDirectory() check alone does not tell a folder apart from an
- * application. Extensions only -- the check below is on the path's last component. */
+ * application (or from a .pkg/.mpkg that Installer opens). Extensions only -- the check below
+ * is on the path's last component. */
 const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
   '.app',
   '.command',
@@ -166,20 +167,25 @@ const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
   '.appex',
   '.service',
   '.wdgt',
+  '.pkg',
+  '.mpkg',
 ]);
 
 /** True only for a path that exists, is a real directory (a symlink to one counts, since
- * statSync follows it), and is not a macOS bundle that opening would execute. Used to keep
+ * realpathSync follows it), and is not a macOS bundle that opening would execute. Used to keep
  * server-supplied paths away from shell.openPath's "hand it to the OS default handler"
  * behaviour -- on a Mac that includes launching a .app, which is a directory like any other.
  *
  * Takes the already-resolved path: the extension test is on the last path component, so
  * "/Applications/Evil.app/." would otherwise read as having no extension while still opening
- * the bundle. Callers resolve first and open that same resolved path. */
+ * the bundle. The same check runs on the realpath so a symlink whose own name is not
+ * denylisted cannot alias a bundle. Callers resolve first and open that same resolved path. */
 function isOpenableDirectory(resolved: string): boolean {
   if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return false;
   try {
-    return fs.statSync(resolved).isDirectory();
+    const real = fs.realpathSync(resolved);
+    if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(real).toLowerCase())) return false;
+    return fs.statSync(real).isDirectory();
   } catch {
     return false;
   }
