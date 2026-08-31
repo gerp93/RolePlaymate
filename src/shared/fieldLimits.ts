@@ -12,7 +12,7 @@
  * - loreText: lore entry body text
  * - chatMessage / directions / memory: live chat and continuity
  * - stopPhrases: multiline stop-phrase list
- * - url: Ollama host string
+ * - url: Ollama / Chatterbox host string
  * - conversationTitle: renamed chat threads
  */
 export const FIELD_LIMITS = {
@@ -26,7 +26,7 @@ export const FIELD_LIMITS = {
   directions: 2_000,
   memory: 2_000,
   stopPhrases: 4_000,
-  url: 2_048,
+  url: 2_048, // Ollama / Chatterbox host strings
   conversationTitle: 200,
 } as const;
 

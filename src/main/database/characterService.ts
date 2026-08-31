@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Character, CreateCharacterInput, UpdateCharacterInput } from '../../shared/types/character';
+import { parseTtsVoice } from '../../shared/types/tts';
 import { transaction } from './schema';
 import { SecurityService } from './securityService';
 import { FieldVersionService } from './fieldVersionService';
@@ -18,10 +19,15 @@ export class CharacterService {
   private rowToCharacter(row: Record<string, unknown>): Character {
     const isHidden = !!row.isHidden;
     const description = row.description as string | null;
+    const ttsVoice = parseTtsVoice(
+      ((row.ttsVoiceMode ?? row.tts_voice_mode) as string | null | undefined) ?? null,
+      ((row.ttsVoiceId ?? row.tts_voice_id) as string | null | undefined) ?? null
+    );
     return {
       id: row.id as string,
       name: this.security.decryptIfHidden(row.name as string, isHidden),
       description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
+      ttsVoice,
       isHidden,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
@@ -32,6 +38,8 @@ export class CharacterService {
     id,
     name,
     description,
+    tts_voice_mode as ttsVoiceMode,
+    tts_voice_id as ttsVoiceId,
     is_hidden as isHidden,
     created_at as createdAt,
     updated_at as updatedAt
@@ -71,12 +79,19 @@ export class CharacterService {
 
     const name = input.name ?? existing.name;
     const description = input.description ?? existing.description;
+    const ttsVoice = Object.prototype.hasOwnProperty.call(input, 'ttsVoice')
+      ? (input.ttsVoice ?? null)
+      : existing.ttsVoice;
     const now = new Date().toISOString();
     this.db
-      .prepare(`UPDATE characters SET name = ?, description = ?, updated_at = ? WHERE id = ?`)
+      .prepare(
+        `UPDATE characters SET name = ?, description = ?, tts_voice_mode = ?, tts_voice_id = ?, updated_at = ? WHERE id = ?`
+      )
       .run(
         this.security.encryptIfHidden(name, existing.isHidden),
         description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
+        ttsVoice?.mode ?? null,
+        ttsVoice?.id ?? null,
         now,
         id
       );
@@ -170,5 +185,16 @@ export class CharacterService {
       this.db.prepare(`DELETE FROM conversations WHERE character_id = ?`).run(id);
       this.db.prepare(`DELETE FROM characters WHERE id = ?`).run(id);
     });
+  }
+
+  /** Drops clone-voice assignments that point at a clip just deleted from Chatterbox, so
+   * pickers don't keep a "missing on server" ghost. Stock/predefined voices are untouched. */
+  clearCloneVoice(filename: string): void {
+    this.db
+      .prepare(
+        `UPDATE characters SET tts_voice_mode = NULL, tts_voice_id = NULL, updated_at = ?
+         WHERE tts_voice_mode = 'clone' AND tts_voice_id = ?`
+      )
+      .run(new Date().toISOString(), filename);
   }
 }

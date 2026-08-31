@@ -189,9 +189,10 @@ export default function ChatStartScreen({
         </p>
       </header>
 
-      <div
-        className={`chat-start-constellation${hasScenarioSlot ? ' chat-start-constellation-has-scenario' : ''}`}
-      >
+      <div className={`chat-start-stage${hasScenarioSlot ? ' chat-start-stage-has-scenario' : ''}`}>
+        <div
+          className={`chat-start-constellation${hasScenarioSlot ? ' chat-start-constellation-has-scenario' : ''}`}
+        >
         <svg className="chat-start-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
           <defs>
             <marker
@@ -328,6 +329,7 @@ export default function ChatStartScreen({
         >
           <ModelBubble />
         </StartNode>
+        </div>
       </div>
 
       <div className="chat-start-actions">

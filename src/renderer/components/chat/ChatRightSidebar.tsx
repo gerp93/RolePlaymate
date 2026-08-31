@@ -1,8 +1,9 @@
+import { ReactNode } from 'react';
 import { ChatDebugHistoryEntry, ChatDebugInfo } from '../../../shared/types/chat';
 import PromptDebugHistory from './PromptDebugHistory';
 import MemoriesPanel from './MemoriesPanel';
 
-export type RightSidebarTab = 'memories' | 'debug';
+export type RightSidebarTab = 'settings' | 'memories' | 'debug';
 
 interface Props {
   tab: RightSidebarTab;
@@ -17,9 +18,10 @@ interface Props {
   liveCreatedAt: string | null;
   isGenerating: boolean;
   onMemoriesChanged: () => void;
+  settingsPanel: ReactNode;
 }
 
-/** Right-hand sidebar: Memories and Prompt Debug share one opener and one column. */
+/** Right-hand sidebar: Chat Settings, Memories, and Prompt Debug share one column. */
 export default function ChatRightSidebar({
   tab,
   onTabChange,
@@ -33,11 +35,23 @@ export default function ChatRightSidebar({
   liveCreatedAt,
   isGenerating,
   onMemoriesChanged,
+  settingsPanel,
 }: Props) {
   return (
     <aside className="chat-right-sidebar" aria-label="Conversation tools">
       <div className="chat-right-sidebar-header">
         <div className="chat-right-sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+          <button
+            type="button"
+            role="tab"
+            id="chat-right-tab-settings"
+            aria-selected={tab === 'settings'}
+            aria-controls="chat-right-panel-settings"
+            className={`chat-right-sidebar-tab${tab === 'settings' ? ' active' : ''}`}
+            onClick={() => onTabChange('settings')}
+          >
+            ⚙ Settings
+          </button>
           <button
             type="button"
             role="tab"
@@ -59,7 +73,7 @@ export default function ChatRightSidebar({
             className={`chat-right-sidebar-tab${tab === 'debug' ? ' active' : ''}`}
             onClick={() => onTabChange('debug')}
           >
-            🐛 Prompt Debugging
+            🐛 Debug
           </button>
         </div>
         <button
@@ -73,7 +87,17 @@ export default function ChatRightSidebar({
       </div>
 
       <div className="chat-right-sidebar-body">
-        {tab === 'memories' ? (
+        {tab === 'settings' && (
+          <div
+            role="tabpanel"
+            id="chat-right-panel-settings"
+            aria-labelledby="chat-right-tab-settings"
+            className="chat-right-sidebar-panel"
+          >
+            {settingsPanel}
+          </div>
+        )}
+        {tab === 'memories' && (
           <div
             role="tabpanel"
             id="chat-right-panel-memories"
@@ -82,7 +106,8 @@ export default function ChatRightSidebar({
           >
             <MemoriesPanel conversationId={conversationId} onChanged={onMemoriesChanged} />
           </div>
-        ) : (
+        )}
+        {tab === 'debug' && (
           <div
             role="tabpanel"
             id="chat-right-panel-debug"

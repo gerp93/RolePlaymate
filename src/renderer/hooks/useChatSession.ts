@@ -58,6 +58,9 @@ export interface UseChatSession {
   /** Deletes the conversation's last message (LIFO -- see conversationService.deleteMessage).
    * Any memories extracted from it go with it. */
   deleteLastMessage: () => Promise<void>;
+  /** Patches a stored spoken-audio path onto a message, and onto the matching redo
+   * variant when given. A late save from an older variant must not land on a newer one. */
+  patchTtsAudio: (messageId: string, path: string | null, variantId?: string | null) => void;
   cancel: () => Promise<void>;
   dismissError: () => void;
   reload: () => Promise<void>;
@@ -75,7 +78,14 @@ export interface SendInput {
 /** Same shape as SendInput minus `message` -- see UseChatSession.continueAsCharacter. */
 export type ContinueInput = Omit<SendInput, 'message'>;
 
-export function useChatSession(conversationId: string | null): UseChatSession {
+export function useChatSession(
+  conversationId: string | null,
+  options?: {
+    onReplyFinished?: (message: Message) => void;
+    onUserMessage?: (message: Message) => void;
+    onUserPersisted?: (message: Message, optimisticId: string) => void;
+  }
+): UseChatSession {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -95,6 +105,13 @@ export function useChatSession(conversationId: string | null): UseChatSession {
   // so it reads refreshDebugHistory through a ref rather than closing over a version tied to
   // whichever conversationId was active when it first mounted.
   const refreshDebugHistoryRef = useRef<() => Promise<void>>(async () => {});
+  const onReplyFinishedRef = useRef(options?.onReplyFinished);
+  onReplyFinishedRef.current = options?.onReplyFinished;
+  const onUserMessageRef = useRef(options?.onUserMessage);
+  onUserMessageRef.current = options?.onUserMessage;
+  const onUserPersistedRef = useRef(options?.onUserPersisted);
+  onUserPersistedRef.current = options?.onUserPersisted;
+  const pendingUserOptimisticIdRef = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!conversationId) {
@@ -158,14 +175,21 @@ export function useChatSession(conversationId: string | null): UseChatSession {
 
   // Redo candidates exist only for the last message, and only when it's a real (persisted)
   // assistant turn -- an optimistic user row or a mid-stream reply has no id to look up yet.
+  // Keyed on selected variant, not the whole messages array: a TTS path patch must not
+  // refetch and clobber the variant list we just updated.
+  const lastMessage = messages[messages.length - 1];
   useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (last?.role === 'assistant' && !last.id.startsWith('pending-')) {
-      void window.electronAPI.chat.getVariants(last.id).then(setVariants);
-    } else {
-      setVariants([]);
+    if (lastMessage?.role === 'assistant' && !lastMessage.id.startsWith('pending-')) {
+      let cancelled = false;
+      void window.electronAPI.chat.getVariants(lastMessage.id).then((next) => {
+        if (!cancelled) setVariants(next);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [messages]);
+    setVariants([]);
+  }, [lastMessage?.id, lastMessage?.role, lastMessage?.selectedVariantId]);
 
   useEffect(() => {
     // onStream hands back an unsubscribe closure; returning it from the effect is what stops
@@ -184,7 +208,14 @@ export function useChatSession(conversationId: string | null): UseChatSession {
             // full reload, which breaks anything that needs to address this message by id
             // (e.g. editing it later).
             const withRealUser = event.userMessage
-              ? current.map((m) => (m.id.startsWith('pending-') ? event.userMessage! : m))
+              ? current.map((m) =>
+                  m.id.startsWith('pending-')
+                    ? {
+                        ...event.userMessage!,
+                        ttsAudioPath: m.ttsAudioPath ?? event.userMessage!.ttsAudioPath,
+                      }
+                    : m
+                )
               : current;
             return [...withRealUser, event.message];
           });
@@ -193,12 +224,22 @@ export function useChatSession(conversationId: string | null): UseChatSession {
           setIsGenerating(false);
           activeStreamId.current = null;
           void refreshDebugHistoryRef.current();
+          if (event.userMessage && pendingUserOptimisticIdRef.current) {
+            onUserPersistedRef.current?.(event.userMessage, pendingUserOptimisticIdRef.current);
+            pendingUserOptimisticIdRef.current = null;
+          }
+          onReplyFinishedRef.current?.(event.message);
           break;
         case 'variantDone':
           setMessages((current) => {
             const withRealUser = event.userMessage
               ? current.map((m) =>
-                  m.id === event.userMessage!.id || m.id.startsWith('pending-') ? event.userMessage! : m
+                  m.id === event.userMessage!.id || m.id.startsWith('pending-')
+                    ? {
+                        ...event.userMessage!,
+                        ttsAudioPath: m.ttsAudioPath ?? event.userMessage!.ttsAudioPath,
+                      }
+                    : m
                 )
               : current;
             return withRealUser.map((m) => (m.id === event.message.id ? event.message : m));
@@ -209,6 +250,11 @@ export function useChatSession(conversationId: string | null): UseChatSession {
           setIsRegenerating(false);
           activeStreamId.current = null;
           void refreshDebugHistoryRef.current();
+          if (event.userMessage && pendingUserOptimisticIdRef.current) {
+            onUserPersistedRef.current?.(event.userMessage, pendingUserOptimisticIdRef.current);
+            pendingUserOptimisticIdRef.current = null;
+          }
+          onReplyFinishedRef.current?.(event.message);
           break;
         case 'error':
           setError(event.message);
@@ -247,10 +293,13 @@ export function useChatSession(conversationId: string | null): UseChatSession {
         content: input.message,
         selectedVariantId: null,
         model: null,
+        ttsAudioPath: null,
         seq: Number.MAX_SAFE_INTEGER,
         createdAt: new Date().toISOString(),
       };
       setMessages((current) => [...current, optimistic]);
+      pendingUserOptimisticIdRef.current = optimistic.id;
+      onUserMessageRef.current?.(optimistic);
 
       try {
         const { streamId } = await window.electronAPI.chat.send({
@@ -365,7 +414,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
       // Show the new wording immediately, same optimistic-update convention `send` uses --
       // the 'variantDone' handler reconciles this with the trimmed, persisted version once it
       // lands.
-      setMessages((current) => current.map((m) => (m.id === messageId ? { ...m, content } : m)));
+      setMessages((current) => current.map((m) => (m.id === messageId ? { ...m, content, ttsAudioPath: null } : m)));
 
       try {
         const { streamId } = await window.electronAPI.chat.editPriorMessage({
@@ -410,6 +459,21 @@ export function useChatSession(conversationId: string | null): UseChatSession {
 
   const dismissError = useCallback(() => setError(null), []);
 
+  const patchTtsAudio = useCallback((messageId: string, path: string | null, variantId?: string | null) => {
+    setMessages((current) =>
+      current.map((m) => {
+        if (m.id !== messageId) return m;
+        if (m.role === 'assistant' && variantId && m.selectedVariantId && m.selectedVariantId !== variantId) {
+          return m;
+        }
+        return { ...m, ttsAudioPath: path };
+      })
+    );
+    if (variantId) {
+      setVariants((current) => current.map((v) => (v.id === variantId ? { ...v, ttsAudioPath: path } : v)));
+    }
+  }, []);
+
   return {
     messages,
     streamingText,
@@ -429,6 +493,7 @@ export function useChatSession(conversationId: string | null): UseChatSession {
     editLastMessage,
     editPriorMessage,
     deleteLastMessage,
+    patchTtsAudio,
     cancel,
     dismissError,
     reload,

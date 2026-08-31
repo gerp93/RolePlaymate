@@ -106,14 +106,14 @@ export const OLLAMA_SETUP_STEPS: AboutStep[] = [
           items={[
             <>Once Ollama is running, return to Chat — this page detects the server automatically.</>,
             <>
-              For Ollama on another machine or port, set <strong>Settings → Ollama Server</strong>. Changes apply
+              For Ollama on another machine or port, set <strong>Settings → Chat Dependencies</strong>. Changes apply
               immediately.
             </>,
           ]}
         />
       </>
     ),
-    pageLink: { to: '/settings', label: 'Settings' },
+    pageLink: { to: '/settings?tab=servers', label: 'Settings' },
   },
   {
     kicker: 'Memories',

@@ -109,14 +109,13 @@ export default function PersonaHistoryPanel({ personaId }: { personaId: string }
           >
             Add
           </button>
+          <LorebookJsonImport
+            importing={importing}
+            onImport={() => void importJson()}
+            sample={LOREBOOK_ENTRIES_IMPORT_SAMPLE}
+          />
         </div>
       </div>
-
-      <LorebookJsonImport
-        importing={importing}
-        onImport={() => void importJson()}
-        sample={LOREBOOK_ENTRIES_IMPORT_SAMPLE}
-      />
 
       <ul className="lore-entry-list">
         {entries.length === 0 && (

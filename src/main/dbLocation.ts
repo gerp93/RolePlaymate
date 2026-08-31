@@ -2,21 +2,37 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, shell, dialog } from 'electron';
 import { DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
+import { DEFAULT_CHATTERBOX_HOST } from './chat/chatterboxClient';
 import { DEFAULT_EMBEDDING_MODEL } from '../shared/embeddingModel';
+import { CharacterTtsVoice } from '../shared/types/tts';
+import {
+  ChatRetentionRule,
+  ChatRetentionState,
+  parseRetentionRules,
+} from '../shared/retention';
 
 // Despite the filename (kept for the db-path exports below, the original reason this file
 // exists), this is also the app's one general-purpose accessor for app-config.json -- the
-// Ollama host override lives in the same file for the same reason the db path does: a small,
-// user-editable setting that isn't worth its own config file or a database row.
+// Ollama and Chatterbox host overrides live in the same file for the same reason the db path
+// does: a small, user-editable setting that isn't worth its own config file or a database row.
 interface AppConfig {
   dbPath?: string;
   ollamaHost?: string;
+  chatterboxHost?: string;
+  /** Fallback TTS voice when a character has none. Same shape as Character.ttsVoice. */
+  narratorVoice?: CharacterTtsVoice;
+  /** Friendly names for Chatterbox clone clips, keyed by filename. */
+  cloneVoiceNames?: Record<string, string>;
   /** webContents zoom level; 0 is default. Persisted across sessions. */
   zoomLevel?: number;
   /** When true, Chat no longer prompts to install the memory embedding model. */
   suppressEmbeddingModelPrompt?: boolean;
   /** Ollama model name used for semantic memory retrieval. Falls back to the app default when unset. */
   memoryEmbeddingModel?: string;
+  /** 0–N chat deletion rules. Missing or empty means keep forever. */
+  chatRetentionRules?: unknown;
+  chatRetentionLastRunAt?: string;
+  chatRetentionLastDeletedCount?: number;
 }
 
 function getConfigPath(): string {
@@ -91,11 +107,16 @@ export function getDefaultDbPath(): string {
   return path.join(app.getPath('userData'), 'roleplaymate.db');
 }
 
-function copyImagesBesideDatabase(fromDbPath: string, toDbPath: string): void {
-  const fromImages = path.join(path.dirname(fromDbPath), 'images');
-  const toImages = path.join(path.dirname(toDbPath), 'images');
-  if (!fs.existsSync(fromImages) || fs.existsSync(toImages)) return;
-  fs.cpSync(fromImages, toImages, { recursive: true });
+function copySiblingDirBesideDatabase(fromDbPath: string, toDbPath: string, dirname: string): void {
+  const fromDir = path.join(path.dirname(fromDbPath), dirname);
+  const toDir = path.join(path.dirname(toDbPath), dirname);
+  if (!fs.existsSync(fromDir) || fs.existsSync(toDir)) return;
+  fs.cpSync(fromDir, toDir, { recursive: true });
+}
+
+function copyLibraryBesideDatabase(fromDbPath: string, toDbPath: string): void {
+  copySiblingDirBesideDatabase(fromDbPath, toDbPath, 'images');
+  copySiblingDirBesideDatabase(fromDbPath, toDbPath, 'tts');
 }
 
 /** The database file the app will actually load on startup: a user-chosen location, or the default. */
@@ -128,7 +149,7 @@ export function setDbPath(newPath: string): void {
   if (!fs.existsSync(newPath) && fs.existsSync(currentPath)) {
     fs.mkdirSync(path.dirname(newPath), { recursive: true });
     fs.copyFileSync(currentPath, newPath);
-    copyImagesBesideDatabase(currentPath, newPath);
+    copyLibraryBesideDatabase(currentPath, newPath);
     // Defensive: a stale sidecar left beside the destination by some earlier crash would be
     // replayed against our freshly copied file and corrupt it. The copy is already complete
     // on its own, so anything sitting there is garbage.
@@ -250,5 +271,114 @@ export function setConfiguredMemoryEmbeddingModel(model: string): void {
 export function resetMemoryEmbeddingModel(): void {
   const config = readConfig();
   delete config.memoryEmbeddingModel;
+  writeConfig(config);
+}
+
+export function getEffectiveChatterboxHost(): string {
+  const configured = readConfig().chatterboxHost;
+  return configured && configured.trim() !== '' ? configured.trim() : DEFAULT_CHATTERBOX_HOST;
+}
+
+export function isUsingDefaultChatterboxHost(): boolean {
+  return !readConfig().chatterboxHost;
+}
+
+/** Points the app at a different Chatterbox TTS server -- a different port, or a box on the
+ * LAN. No validation that anything is listening; spoken replies stay silent when it isn't. */
+export function setChatterboxHost(host: string): void {
+  writeConfig({ ...readConfig(), chatterboxHost: host.trim() });
+}
+
+export function resetChatterboxHost(): void {
+  const config = readConfig();
+  delete config.chatterboxHost;
+  writeConfig(config);
+}
+
+function parseStoredNarratorVoice(raw: unknown): CharacterTtsVoice | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as { mode?: unknown; id?: unknown };
+  if ((row.mode !== 'predefined' && row.mode !== 'clone') || typeof row.id !== 'string') return null;
+  const id = row.id.trim();
+  if (!id || id.includes('/') || id.includes('\\') || id.includes('..')) return null;
+  return { mode: row.mode, id };
+}
+
+export function getNarratorVoice(): CharacterTtsVoice | null {
+  return parseStoredNarratorVoice(readConfig().narratorVoice);
+}
+
+export function setNarratorVoice(voice: CharacterTtsVoice | null): void {
+  const config = readConfig();
+  if (!voice) {
+    delete config.narratorVoice;
+  } else {
+    config.narratorVoice = { mode: voice.mode, id: voice.id };
+  }
+  writeConfig(config);
+}
+
+export function getCloneVoiceNames(): Record<string, string> {
+  const raw = readConfig().cloneVoiceNames;
+  if (!raw || typeof raw !== 'object') return {};
+  const names: Record<string, string> = {};
+  for (const [filename, name] of Object.entries(raw)) {
+    if (typeof name === 'string' && name.trim()) names[filename] = name.trim();
+  }
+  return names;
+}
+
+export function setCloneVoiceName(filename: string, displayName: string): void {
+  const trimmed = displayName.trim();
+  if (!trimmed) return;
+  const config = readConfig();
+  config.cloneVoiceNames = { ...getCloneVoiceNames(), [filename]: trimmed };
+  writeConfig(config);
+}
+
+export function removeCloneVoiceName(filename: string): void {
+  const names = getCloneVoiceNames();
+  if (!(filename in names)) return;
+  delete names[filename];
+  const config = readConfig();
+  if (Object.keys(names).length === 0) delete config.cloneVoiceNames;
+  else config.cloneVoiceNames = names;
+  writeConfig(config);
+}
+
+export function getChatRetentionState(): ChatRetentionState {
+  const config = readConfig() as AppConfig & { chatRetentionAutoRun?: boolean };
+  let rules = parseRetentionRules(config.chatRetentionRules);
+  // One-shot: the schedule used to be a global flag. Copy it onto each rule, then drop it.
+  if (config.chatRetentionAutoRun === true && rules.some((rule) => !rule.autoRun)) {
+    rules = rules.map((rule) => ({ ...rule, autoRun: true }));
+    config.chatRetentionRules = rules;
+  }
+  if ('chatRetentionAutoRun' in config) {
+    delete config.chatRetentionAutoRun;
+    writeConfig(config);
+  }
+  const lastDeleted = config.chatRetentionLastDeletedCount;
+  return {
+    rules,
+    lastRunAt: typeof config.chatRetentionLastRunAt === 'string' ? config.chatRetentionLastRunAt : null,
+    lastDeletedCount: typeof lastDeleted === 'number' && Number.isFinite(lastDeleted) ? lastDeleted : 0,
+  };
+}
+
+export function setChatRetentionRules(rules: unknown): ChatRetentionRule[] {
+  const parsed = parseRetentionRules(rules);
+  const config = readConfig() as AppConfig & { chatRetentionAutoRun?: boolean };
+  if (parsed.length === 0) delete config.chatRetentionRules;
+  else config.chatRetentionRules = parsed;
+  delete config.chatRetentionAutoRun;
+  writeConfig(config);
+  return parsed;
+}
+
+export function recordChatRetentionRun(deletedCount: number): void {
+  const config = readConfig();
+  config.chatRetentionLastRunAt = new Date().toISOString();
+  config.chatRetentionLastDeletedCount = deletedCount;
   writeConfig(config);
 }

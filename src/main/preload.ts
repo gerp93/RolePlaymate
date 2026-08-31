@@ -91,6 +91,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('ollamaHost:resetToDefault'),
   },
 
+  chatterboxHost: {
+    get: () => ipcRenderer.invoke('chatterboxHost:get'),
+    set: (host: string) => ipcRenderer.invoke('chatterboxHost:set', host),
+    resetToDefault: () => ipcRenderer.invoke('chatterboxHost:resetToDefault'),
+  },
+
+  narratorVoice: {
+    get: () => ipcRenderer.invoke('narratorVoice:get'),
+    set: (voice: unknown) => ipcRenderer.invoke('narratorVoice:set', voice),
+  },
+
+  tts: {
+    status: () => ipcRenderer.invoke('tts:status'),
+    speak: (request: unknown) => ipcRenderer.invoke('tts:speak', request),
+    cancel: () => ipcRenderer.invoke('tts:cancel'),
+    storeAudio: (request: unknown) => ipcRenderer.invoke('tts:storeAudio', request),
+    attachAudio: (request: unknown) => ipcRenderer.invoke('tts:attachAudio', request),
+        importClone: (displayName: string) => ipcRenderer.invoke('tts:importClone', displayName),
+        deleteClone: (filename: string) => ipcRenderer.invoke('tts:deleteClone', filename),
+        revealCloneFolder: () => ipcRenderer.invoke('tts:revealCloneFolder'),
+  },
+
   embeddingModelPrompt: {
     getSuppressed: () => ipcRenderer.invoke('embeddingModelPrompt:getSuppressed'),
     setSuppressed: (suppressed: boolean) =>
@@ -211,10 +233,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('conversations:setPersona', id, userPersonaId),
     setScenario: (id: string, scenarioId: string | null) =>
       ipcRenderer.invoke('conversations:setScenario', id, scenarioId),
+    setKeepForever: (id: string, keepForever: boolean) =>
+      ipcRenderer.invoke('conversations:setKeepForever', id, keepForever),
     setImageMode: (id: string, input: unknown) => ipcRenderer.invoke('conversations:setImageMode', id, input),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
     deleteDraft: (id: string) => ipcRenderer.invoke('conversations:deleteDraft', id),
     purgeDrafts: (exceptId?: string) => ipcRenderer.invoke('conversations:purgeDrafts', exceptId),
+  },
+
+  retention: {
+    get: () => ipcRenderer.invoke('retention:get'),
+    setRules: (rules: unknown) => ipcRenderer.invoke('retention:setRules', rules),
+    runNow: (ruleId?: string) => ipcRenderer.invoke('retention:runNow', ruleId),
+    preview: (rules: unknown) => ipcRenderer.invoke('retention:preview', rules),
+    setActiveConversation: (id: string | null) =>
+      ipcRenderer.invoke('retention:setActiveConversation', id),
+    onCleaned: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('conversations:retention-cleaned', handler);
+      return () => ipcRenderer.removeListener('conversations:retention-cleaned', handler);
+    },
   },
 
   ollama: {
@@ -254,6 +292,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  },
+
+  hardware: {
+    getSnapshot: () => ipcRenderer.invoke('hardware:getSnapshot'),
   },
 
   updates: {

@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
+import { HardwareSnapshot, ModelSpeedRating } from '../../shared/types/hardware';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddingModel';
 import { detectModelFamily } from '../../shared/utils/modelFamily';
+import {
+  formatGib,
+  hardwareSpeedUnavailableReason,
+  primaryGpu,
+  rateModelOnHardware,
+  SPEED_TIER_COLORS,
+} from '../../shared/utils/hardwareFit';
 import { displayModelName, assignModelTiers, modelCompositeScore, MODEL_TIER_COLORS, ModelTier } from '../utils/modelPresentation';
 import OllamaRequiredGate from '../components/chat/OllamaRequiredGate';
 
@@ -97,9 +105,142 @@ type TuningTab = 'chat' | 'embedding';
 
 export default function ModelTuning() {
   return (
-    <OllamaRequiredGate>
-      <ModelTuningPage />
-    </OllamaRequiredGate>
+    <div>
+      <div className="page-header">
+        <h1>Model Tuning</h1>
+      </div>
+      <HardwareSummary />
+      <OllamaRequiredGate>
+        <ModelTuningPage />
+      </OllamaRequiredGate>
+    </div>
+  );
+}
+
+function HardwareSummary() {
+  const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    void window.electronAPI.hardware
+      .getSnapshot()
+      .then(setHardware)
+      .catch(() => setFailed(true));
+  }, []);
+
+  if (failed) {
+    return (
+      <div className="card hardware-summary">
+        <p className="text-muted" style={{ margin: 0 }}>
+          Couldn&apos;t read this computer&apos;s hardware. Speed ratings below will be unavailable.
+        </p>
+      </div>
+    );
+  }
+
+  if (!hardware) {
+    return (
+      <div className="card hardware-summary">
+        <p className="text-muted" style={{ margin: 0 }}>
+          Reading this computer&apos;s hardware…
+        </p>
+      </div>
+    );
+  }
+
+  const gpu = primaryGpu(hardware);
+  const extraGpus = hardware.gpus.filter((g) => g !== gpu);
+
+  return (
+    <div className="card hardware-summary">
+      <h2 className="hardware-summary-title">This computer</h2>
+      <div className="hardware-grid">
+        <div>
+          <div className="hardware-label">OS</div>
+          <div>{hardware.osLabel}</div>
+          <div className="text-muted">{hardware.arch}</div>
+        </div>
+        <div>
+          <div className="hardware-label">CPU</div>
+          <div>{hardware.cpu.model || 'CPU not reported'}</div>
+          <div className="text-muted">
+            {hardware.cpu.cores} {hardware.cpu.cores === 1 ? 'core' : 'cores'}
+            {hardware.cpu.speedMHz > 0
+              ? ` · ${(hardware.cpu.speedMHz / 1000).toFixed(1)} GHz`
+              : ' · clock not reported'}
+          </div>
+        </div>
+        <div>
+          <div className="hardware-label">Memory</div>
+          <div>{formatGib(hardware.ramBytes)} RAM</div>
+          {hardware.unifiedMemory && <div className="text-muted">Unified with GPU</div>}
+        </div>
+        <div>
+          <div className="hardware-label">GPU</div>
+          {gpu ? (
+            <>
+              <div>{gpu.name}</div>
+              <div className="text-muted">
+                {gpu.vramBytes != null
+                  ? `${formatGib(gpu.vramBytes)} ${hardware.unifiedMemory ? 'unified' : 'VRAM'}`
+                  : 'VRAM not reported'}
+                {gpu.discrete || hardware.unifiedMemory ? '' : ' · integrated'}
+              </div>
+            </>
+          ) : (
+            <div className="text-muted">GPU not found — CPU inference only</div>
+          )}
+        </div>
+      </div>
+      {extraGpus.length > 0 && (
+        <ul className="hardware-extra-gpus">
+          {extraGpus.map((g) => (
+            <li key={g.name} className="text-muted">
+              Also: {g.name}
+              {g.vramBytes != null ? ` · ${formatGib(g.vramBytes)} VRAM` : ' · VRAM not reported'}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-muted hardware-summary-note">
+        Speed on each model below is a heuristic from this hardware against that model&apos;s file
+        size — not a benchmark, and not the same as Tier (how capable the model is at writing).
+      </p>
+    </div>
+  );
+}
+
+function SpeedCell({
+  speed,
+  sweetSpot,
+  hardware,
+}: {
+  speed: ModelSpeedRating | null | undefined;
+  sweetSpot: boolean;
+  hardware: HardwareSnapshot | null;
+}) {
+  if (speed === undefined) {
+    return <span className="text-muted">…</span>;
+  }
+  if (!speed) {
+    const missing = hardware ? hardwareSpeedUnavailableReason(hardware) : null;
+    return (
+      <span
+        className="text-muted"
+        title={missing ?? 'Need a reported file size to guess speed on this hardware'}
+      >
+        {missing ? 'VRAM not reported' : '—'}
+      </span>
+    );
+  }
+  const title = sweetSpot
+    ? `${speed.summary} Sweet spot: strong writing and expected to stay usable on this machine.`
+    : speed.summary;
+  return (
+    <span title={title} style={{ fontWeight: 600, color: SPEED_TIER_COLORS[speed.tier] }}>
+      {sweetSpot ? '★ ' : ''}
+      {speed.tier}
+    </span>
   );
 }
 
@@ -109,6 +250,8 @@ function ModelTuningPage() {
   const [embeddingModels, setEmbeddingModels] = useState<OllamaModelInfo[]>([]);
   const [activeEmbeddingModel, setActiveEmbeddingModel] = useState(DEFAULT_EMBEDDING_MODEL);
   const [tiers, setTiers] = useState<Record<string, ModelTier>>({});
+  const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
+  const [hardwareReady, setHardwareReady] = useState(false);
   const [customRows, setCustomRows] = useState<Record<string, ModelSamplerDefaults>>({});
   const [recommended, setRecommended] = useState<Record<string, SamplerParams>>({});
   const [drafts, setDrafts] = useState<Record<string, Partial<Record<keyof SamplerParams, string>>>>({});
@@ -167,6 +310,14 @@ function ModelTuningPage() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    void window.electronAPI.hardware
+      .getSnapshot()
+      .then(setHardware)
+      .catch(() => setHardware(null))
+      .finally(() => setHardwareReady(true));
   }, []);
 
   useEffect(() => {
@@ -302,10 +453,6 @@ function ModelTuningPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Model Tuning</h1>
-      </div>
-
       <div className="model-tuning-tabs" role="tablist" aria-label="Model tuning views">
         <button
           type="button"
@@ -334,9 +481,11 @@ function ModelTuningPage() {
       </p>
 
       <p className="text-muted" style={{ fontSize: 12 }}>
-        Params/Quant/Context/Size/Capabilities are reported directly by Ollama. Tier is computed
-        from those values, so it&apos;s a general indicator of how capable a model is -- it may
-        not correlate with suitability or tuning for roleplay specifically.
+        Params/Quant/Context/Size/Capabilities are reported directly by Ollama.{' '}
+        <strong>Tier</strong> is how capable the model is as a writer (relative to the other models
+        installed). <strong>On this PC</strong> is how quickly it&apos;s expected to reply on the
+        hardware above — Fast on a 7B can be Slow on a 70B even when Tier says Best. The overlap
+        (strong Tier, Fast or OK here, marked ★) is the usual sweet spot.
       </p>
 
       {models.length === 0 && (
@@ -354,6 +503,12 @@ function ModelTuningPage() {
                   title="RolePlaymate's ranking -- computed automatically from parameter count, quantization, and context window (all reported by Ollama), not a curated per-model judgment. Sets the row order above."
                 >
                   Tier
+                </th>
+                <th
+                  style={{ textAlign: 'left', padding: '6px 10px' }}
+                  title="Heuristic for how quickly this model is expected to generate on the hardware listed above -- independent of Tier. Fast means it should fit in GPU memory; Slow means heavy CPU offload or not enough RAM."
+                >
+                  On this PC
                 </th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Params</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Quant</th>
@@ -389,6 +544,15 @@ function ModelTuningPage() {
                   opacity: enabled ? 1 : 0.45,
                 };
                 const tier = tiers[info.name];
+                const speed = hardwareReady
+                  ? hardware
+                    ? rateModelOnHardware(info, hardware)
+                    : null
+                  : undefined;
+                const sweetSpot =
+                  speed &&
+                  (speed.tier === 'Fast' || speed.tier === 'OK') &&
+                  (tier === 'Best' || tier === 'Better');
                 return (
                 <tr key={info.name} style={rowStyle}>
                   <td style={{ padding: '8px 10px 8px 0', whiteSpace: 'nowrap' }}>
@@ -405,6 +569,9 @@ function ModelTuningPage() {
                     ) : (
                       <span className="text-muted">—</span>
                     )}
+                  </td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                    <SpeedCell speed={speed} sweetSpot={!!sweetSpot} hardware={hardware} />
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }} title={info.parameterSize ? undefined : 'Not reported by Ollama'}>
                     {info.parameterSize || '—'}
@@ -516,7 +683,7 @@ function ModelTuningPage() {
         <div className="card" style={{ marginTop: 20 }}>
           <h2 style={{ fontSize: 15, marginTop: 0 }}>Model Terminology</h2>
           <p className="text-muted" style={{ marginTop: -8, fontSize: 12 }}>
-            What Params/Quant/Context/Size mean and why they matter for picking a model.
+            What Params/Quant/Context/Size and On this PC mean, and why they matter for picking a model.
           </p>
           <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
@@ -529,6 +696,19 @@ function ModelTuningPage() {
                   better reasoning, richer writing, and fewer dumb mistakes, at the cost of needing
                   more RAM/VRAM and running slower. Example: a 7B model is small and fast; a 32B
                   model is noticeably smarter but needs a lot more hardware to run comfortably.
+                </td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px 6px 0', whiteSpace: 'nowrap', verticalAlign: 'top', fontWeight: 600 }}>
+                  On this PC
+                </td>
+                <td className="text-muted" style={{ padding: '6px 0' }}>
+                  Expected generation speed on the hardware at the top of this page, not a
+                  quality judgment. Fast: should fit in GPU memory (or unified memory on Apple
+                  Silicon) and reply quickly. OK: some CPU offload, or a large model that still
+                  fits — usable, but you&apos;ll wait. Slow: mostly CPU or more memory than this
+                  machine has, so replies will drag. Hover the label for the specific guess. This
+                  is a heuristic from file size vs VRAM/RAM, not a timed benchmark.
                 </td>
               </tr>
               <tr>
@@ -726,7 +906,7 @@ function ModelTuningPage() {
         <>
           <p className="text-muted">
             Embedding models power semantic memory retrieval. Choose which one is active in{' '}
-            <Link to="/settings">Settings</Link> under Memory embedding model.
+            <Link to="/settings?tab=servers">Settings → Chat Dependencies</Link> under Memory embedding model.
           </p>
           <p className="text-muted" style={{ fontSize: 12 }}>
             Per-model tuning options for embeddings will appear here as they&apos;re added. For now,

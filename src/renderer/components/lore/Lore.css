@@ -68,7 +68,13 @@
 .lore-new-book,
 .lore-new-entry {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Unwrap so Import sits on the Add row and Sample JSON wraps under the whole row. */
+.lore-new-entry .lorebook-json-import {
+  display: contents;
 }
 
 .lore-new-book-stacked {

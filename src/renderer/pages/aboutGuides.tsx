@@ -11,10 +11,10 @@ export const ABOUT_TRACKS: AboutTrack[] = [
   {
     id: 'app-settings',
     title: 'App Settings',
-    subtitle: 'Where your data lives and app appearance',
+    subtitle: 'General, chat dependencies, data, and security',
     icon: '🗄',
     level: 'Core',
-    blurb: 'Database location, theme, and the hidden-content PIN.',
+    blurb: 'Theme and updates, Ollama and Chatterbox, database location, chat retention, and the hidden-content PIN.',
     steps: [
       {
         kicker: 'Your data',
@@ -25,21 +25,34 @@ export const ABOUT_TRACKS: AboutTrack[] = [
               items={[
                 <>
                   All library and chat data is stored in one <strong>SQLite database file</strong>. The default
-                  location is in your app data folder.
+                  location is in your app data folder. Spoken audio lives in a <code>tts/</code> folder beside
+                  that file.
                 </>,
                 <>
-                  <strong>Settings → Database Location</strong> can point at a file in OneDrive, Dropbox, or any
-                  other folder.
+                  <strong>Settings → Data → Database Location</strong> can point at a file in
+                  OneDrive, Dropbox, or any other folder.
                 </>,
                 <>
-                  <strong>Theme</strong> and <strong>chat text size</strong> are also in Settings.{' '}
+                  <strong>Settings → Data → Data Retention</strong> can delete old chats (and their
+                  audio). Rules are saved without deleting until you click Clean up now, or enable
+                  automatic cleanup on a rule (next app open and local midnight). The library items
+                  filter is empty by default, so a rule deletes every chat that matches its age and
+                  message filters. Add characters (and their scenarios), personas, or world books to
+                  narrow it — match any selected item, or require every type you added. With no
+                  rules, chats are
+                  kept forever. Mark a conversation <strong>Keep</strong> in Chat Settings to exempt
+                  it. Characters, personas, scenarios, and lore are never auto-deleted.
+                </>,
+                <>
+                  <strong>Theme</strong> is under <strong>Settings → General</strong>. Chat text size is in Chat
+                  Settings.{' '}
                   <strong>Show in Explorer</strong> opens the folder containing the database file.
                 </>,
               ]}
             />
           </>
         ),
-        pageLink: { to: '/settings', label: 'Settings' },
+        pageLink: { to: '/settings?tab=data', label: 'Settings' },
       },
       {
         kicker: 'Optional',
@@ -52,13 +65,13 @@ export const ABOUT_TRACKS: AboutTrack[] = [
             </AboutLead>
             <AboutList
               items={[
-                <>Default PIN: <code>1234</code> until changed in Settings.</>,
+                <>Default PIN: <code>1234</code> until changed in Settings → Security.</>,
                 <>A forgotten PIN cannot be recovered; hidden content would be permanently inaccessible.</>,
               ]}
             />
           </>
         ),
-        pageLink: { to: '/settings', label: 'Settings' },
+        pageLink: { to: '/settings?tab=security', label: 'Settings' },
       },
     ],
   },
@@ -110,7 +123,7 @@ export const ABOUT_TRACKS: AboutTrack[] = [
                 </>,
                 <>
                   During the conversation you can change <strong>model</strong>, switch <strong>persona</strong>{' '}
-                  (<strong>More</strong> menu), swap portraits, and adjust temperature and max tokens.
+                  (right sidebar <strong>Settings</strong>), swap portraits, and adjust temperature and max tokens.
                 </>,
               ]}
             />
@@ -200,7 +213,7 @@ export const ABOUT_TRACKS: AboutTrack[] = [
                   With both name and background set, the model addresses you by name and can reference your
                   backstory. Without a persona, you appear as &quot;User.&quot;
                 </>,
-                <>Personas can be switched mid-conversation from the <strong>More</strong> menu.</>,
+                <>Personas can be switched mid-conversation from the right sidebar <strong>Settings</strong> tab.</>,
                 <>
                   Each persona may have a <strong>personal history</strong> lorebook — private facts only that
                   persona knows.
@@ -331,6 +344,11 @@ export const ABOUT_TRACKS: AboutTrack[] = [
                   to control which appear in the chat dropdown.
                 </>,
                 <>
+                  <strong>Tier</strong> is writing capability relative to your other installed models.{' '}
+                  <strong>On this PC</strong> is expected reply speed on this machine&apos;s CPU, RAM, and
+                  GPU. The overlap — a high Tier that is still Fast or OK here — is the usual sweet spot.
+                </>,
+                <>
                   <strong>Temperature</strong> controls randomness (lower = more predictable).{' '}
                   <strong>Max tokens</strong> caps reply length.
                 </>,
@@ -348,15 +366,23 @@ export const ABOUT_TRACKS: AboutTrack[] = [
           <>
             <AboutList
               items={[
-                <>Toolbar: <strong>model</strong> selection.</>,
+                <>Toolbar: <strong>model</strong> selection and <strong>Send</strong>.</>,
                 <>
-                  <strong>More</strong> menu: persona, text size, temperature, max tokens, portrait visibility.
+                  Right sidebar <strong>Settings</strong>: persona, chat text size, temperature, max tokens,
+                  portrait visibility, and spoken-reply options.
                 </>,
                 <>
-                  <strong>Directions</strong> (composer): a note included for the next reply only.
+                  <strong>Directions</strong> (above the composer, right side): a note included for the next
+                  reply only. In Queue speech mode, <strong>Skip dialogue</strong> sits beside it and
+                  advances past the clip that's playing.
                 </>,
                 <>
-                  <strong>Suggest</strong>: drafts a user message you can edit before sending.
+                  <strong>Suggest</strong> (inside the message box): drafts a user line. <strong>Use this</strong>{' '}
+                  sends it; <strong>Edit</strong> changes it in that card first.
+                </>,
+                <>
+                  <strong>Continue as …</strong> under the last character reply: the character takes another
+                  turn without a message from you.
                 </>,
                 <>Portrait images affect display only; they are not sent to the model.</>,
               ]}

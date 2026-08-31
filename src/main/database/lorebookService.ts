@@ -868,4 +868,45 @@ export class LorebookService {
       };
     });
   }
+
+  /**
+   * World-book attachments plus personal books, keyed by the character or persona that
+   * brings them into a conversation. Used by chat retention to match lore filters.
+   */
+  listLorebookIdsByOwner(): { byCharacterId: Record<string, string[]>; byPersonaId: Record<string, string[]> } {
+    const byCharacterId: Record<string, string[]> = {};
+    const byPersonaId: Record<string, string[]> = {};
+    const add = (map: Record<string, string[]>, ownerId: string, lorebookId: string) => {
+      const list = map[ownerId] ?? (map[ownerId] = []);
+      if (!list.includes(lorebookId)) list.push(lorebookId);
+    };
+
+    const characterWorld = this.db
+      .prepare(`SELECT character_id as ownerId, lorebook_id as lorebookId FROM character_lorebooks`)
+      .all() as { ownerId: string; lorebookId: string }[];
+    for (const row of characterWorld) add(byCharacterId, row.ownerId, row.lorebookId);
+
+    const personaWorld = this.db
+      .prepare(`SELECT persona_id as ownerId, lorebook_id as lorebookId FROM persona_lorebooks`)
+      .all() as { ownerId: string; lorebookId: string }[];
+    for (const row of personaWorld) add(byPersonaId, row.ownerId, row.lorebookId);
+
+    const characterPersonal = this.db
+      .prepare(
+        `SELECT owner_character_id as ownerId, id as lorebookId
+         FROM lorebooks WHERE scope = 'personal' AND owner_character_id IS NOT NULL`
+      )
+      .all() as { ownerId: string; lorebookId: string }[];
+    for (const row of characterPersonal) add(byCharacterId, row.ownerId, row.lorebookId);
+
+    const personaPersonal = this.db
+      .prepare(
+        `SELECT owner_persona_id as ownerId, id as lorebookId
+         FROM lorebooks WHERE scope = 'personal' AND owner_persona_id IS NOT NULL`
+      )
+      .all() as { ownerId: string; lorebookId: string }[];
+    for (const row of personaPersonal) add(byPersonaId, row.ownerId, row.lorebookId);
+
+    return { byCharacterId, byPersonaId };
+  }
 }
