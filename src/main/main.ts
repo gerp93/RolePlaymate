@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, MenuItem, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { initDatabase, closeDatabase, transaction } from './database/schema';
 import {
   getEffectiveDbPath,
@@ -140,6 +140,7 @@ import * as fs from 'fs';
 // roleplaymate-dev with its own app-config.json and default db; nothing is copied from release.
 app.setName(app.isPackaged ? 'roleplaymate' : 'roleplaymate-dev');
 
+const DEV_SERVER_URL = 'http://localhost:5173';
 const REPO_URL = 'https://github.com/gerp93/RolePlaymate';
 const ISSUES_URL = `${REPO_URL}/issues`;
 const CLONE_VOICE_MAX_BYTES = 20 * 1024 * 1024;
@@ -151,6 +152,17 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
   const stem = stemFromVoiceName(voiceName);
   if (!stem) throw new Error('Voice name must contain letters or numbers.');
   return `${stem}${sourceExt}`;
+}
+
+/** True only for a path that exists and is a real directory -- a symlink to one counts, since
+ * statSync follows it. Used to keep server-supplied paths away from shell.openPath's
+ * "open a file with its default handler" behaviour. */
+function isExistingDirectory(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function chatterboxCloneErrorMessage(error: unknown, kind: 'import' | 'delete'): string {
@@ -342,6 +354,7 @@ function navigateToAbout(): void {
 }
 
 function openExternalUrl(url: string): void {
+  if (!isSafeExternalUrl(url)) return;
   void shell.openExternal(url);
 }
 
@@ -505,6 +518,69 @@ function attachZoomPersistence(win: BrowserWindow): void {
   });
 }
 
+/** Only ever hand a plain web URL to the system browser. Without the scheme check, anything
+ * that reaches openExternalUrl -- including a `file:` or shell-handler URL -- would be opened
+ * by the OS with whatever application claims it. */
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a navigation target is still this app's own UI. In-app navigation is React Router's
+ * hash routing, so the dev server's origin (or, when packaged, the bundled renderer directory)
+ * is the whole allowed set. `file:` URLs all report an origin of "null", so they can't be
+ * compared by origin -- a packaged build has to check the path itself, or every file on disk
+ * would count as same-origin. */
+function isOwnAppUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (!app.isPackaged) return parsed.origin === new URL(DEV_SERVER_URL).origin;
+  if (parsed.protocol !== 'file:') return false;
+
+  const rendererDir = path.resolve(__dirname, '../../renderer');
+  let target: string;
+  try {
+    // fileURLToPath, not pathname: on Windows a file URL's pathname is "/C:/...", which
+    // path.resolve would read as a root-relative path on the current drive.
+    target = path.resolve(fileURLToPath(parsed));
+  } catch {
+    return false;
+  }
+  return target.startsWith(rendererDir + path.sep);
+}
+
+/**
+ * The two Electron navigation defaults this app does not want.
+ *
+ * `window.open`/`target="_blank"` defaults to opening a second in-app Chromium window on the
+ * target URL (the Chatterbox and repository links in Settings/About do exactly this today);
+ * external links belong in the user's own browser instead. And nothing normally stops the
+ * renderer from navigating the main window away from the app -- `will-navigate` keeps it on
+ * its own origin, so a stray link or injected href can't replace the UI with remote content
+ * that would then be sitting in a window with a preload bridge attached.
+ */
+function attachNavigationGuards(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isOwnAppUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1300,
@@ -524,9 +600,10 @@ function createWindow() {
 
   attachZoomPersistence(mainWindow);
   attachContextMenu(mainWindow);
+  attachNavigationGuards(mainWindow);
 
   if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
@@ -1252,7 +1329,12 @@ function registerIPCHandlers() {
             'Could not find Chatterbox\'s reference_audio folder. Restart Chatterbox after updating it, then try again.',
         };
       }
-      if (!fs.existsSync(dir)) {
+      // `dir` is whatever the Chatterbox server put in its JSON response, so it is untrusted
+      // input, not a path this app chose. shell.openPath on a *file* hands it to the OS default
+      // handler -- i.e. runs it -- so a hostile or spoofed server on the configured host could
+      // answer with an .exe/.desktop and get it launched by this button. Only ever open an
+      // absolute path that exists AND is a directory.
+      if (!path.isAbsolute(dir) || !isExistingDirectory(dir)) {
         return {
           status: 'error' as const,
           message: `That folder isn't on this computer (${dir}). Open it on the machine running Chatterbox.`,
