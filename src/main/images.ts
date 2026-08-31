@@ -11,13 +11,22 @@ export function getImagesDir(): string {
   return path.join(path.dirname(getEffectiveDbPath()), 'images');
 }
 
-/** Copies one file into the db-adjacent images folder under a fresh uuid name, so it survives
- * wherever the user originally had it. Throws for anything outside the allowed extensions. */
-function copyImageIntoLibrary(sourcePath: string): string {
+/** The extension the library will store this file under, rejecting anything that isn't an
+ * image type. Every path that writes into the images folder goes through this: the native
+ * picker already filters by extension, but the HTML importer's source is an `src` attribute
+ * from an untrusted page, so it has to be checked here rather than trusted. */
+function libraryExtension(sourcePath: string): string {
   const ext = path.extname(sourcePath).toLowerCase().replace('.', '') || 'png';
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
     throw new Error(`Unsupported image type: .${ext}`);
   }
+  return ext;
+}
+
+/** Copies one file into the db-adjacent images folder under a fresh uuid name, so it survives
+ * wherever the user originally had it. Throws for anything outside the allowed extensions. */
+function copyImageIntoLibrary(sourcePath: string): string {
+  const ext = libraryExtension(sourcePath);
 
   const imagesDir = getImagesDir();
   fs.mkdirSync(imagesDir, { recursive: true });
@@ -62,10 +71,12 @@ export async function chooseCharacterImages(window: BrowserWindow | null): Promi
 
 /** Copies an existing portrait file to a new uuid-named file in the images library, so a cloned
  * character's image has its own independent lifecycle (deleting one character's image can't
- * orphan another's). Returns null if the source file is missing or unreadable. */
+ * orphan another's). Returns null if the source file is missing, unreadable, or not an allowed
+ * image type -- the HTML importer reaches this with a path taken from the imported page, so the
+ * same extension allowlist the picker enforces has to hold here too. */
 export function cloneCharacterImage(imagePath: string): string | null {
   try {
-    const ext = path.extname(imagePath).toLowerCase().replace('.', '') || 'png';
+    const ext = libraryExtension(imagePath);
     const imagesDir = getImagesDir();
     fs.mkdirSync(imagesDir, { recursive: true });
     const destPath = path.join(imagesDir, `${uuidv4()}.${ext}`);

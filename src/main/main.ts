@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, net, Menu, MenuItem, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { initDatabase, closeDatabase, transaction } from './database/schema';
 import {
   getEffectiveDbPath,
@@ -140,6 +140,7 @@ import * as fs from 'fs';
 // roleplaymate-dev with its own app-config.json and default db; nothing is copied from release.
 app.setName(app.isPackaged ? 'roleplaymate' : 'roleplaymate-dev');
 
+const DEV_SERVER_URL = 'http://localhost:5173';
 const REPO_URL = 'https://github.com/gerp93/RolePlaymate';
 const ISSUES_URL = `${REPO_URL}/issues`;
 const CLONE_VOICE_MAX_BYTES = 20 * 1024 * 1024;
@@ -151,6 +152,58 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
   const stem = stemFromVoiceName(voiceName);
   if (!stem) throw new Error('Voice name must contain letters or numbers.');
   return `${stem}${sourceExt}`;
+}
+
+/** macOS bundle/package extensions that `open` (and so shell.openPath) acts on -- launching an
+ * application, or handing a .pkg to Installer -- rather than revealing in Finder. Every one of
+ * these is a *directory*, so an isDirectory() check alone cannot tell a folder apart from an
+ * application. This list is the fast, obvious half of the check; resolveOpenableDirectory below
+ * is the half that does not depend on knowing every extension Apple ships. */
+const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
+  '.app',
+  '.command',
+  '.workflow',
+  '.action',
+  '.prefpane',
+  '.appex',
+  '.service',
+  '.wdgt',
+  '.pkg',
+  '.mpkg',
+]);
+
+/** A bundle of any kind carries Contents/Info.plist. Checking for it catches bundle types the
+ * extension list above does not name (.scptd, .saver, .qlgenerator, and whatever ships next),
+ * so the guard does not depend on an exhaustive denylist. A plain folder of audio files has no
+ * such file. */
+function looksLikeBundle(dir: string): boolean {
+  return fs.existsSync(path.join(dir, 'Contents', 'Info.plist'));
+}
+
+/**
+ * The real, symlink-free directory `candidate` refers to, or null when it is not a directory
+ * this app should hand to shell.openPath.
+ *
+ * Returns the resolved path rather than a boolean because the caller must open *that* path:
+ * checking one path and opening another is what made the two previous versions of this guard
+ * bypassable. `fs.realpathSync` is the load-bearing call -- `statSync` follows symlinks while
+ * `path.extname` reads the lexical name, so a symlink innocently named "reference_audio"
+ * pointing at an .app satisfied both an extension denylist and an isDirectory() test, and then
+ * got launched. Resolving first means the extension and bundle-marker tests below see what will
+ * actually be opened.
+ */
+function resolveOpenableDirectory(candidate: string): string | null {
+  if (!path.isAbsolute(candidate)) return null;
+  let real: string;
+  try {
+    real = fs.realpathSync(candidate);
+    if (!fs.statSync(real).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
+  if (looksLikeBundle(real)) return null;
+  return real;
 }
 
 function chatterboxCloneErrorMessage(error: unknown, kind: 'import' | 'delete'): string {
@@ -342,6 +395,7 @@ function navigateToAbout(): void {
 }
 
 function openExternalUrl(url: string): void {
+  if (!isSafeExternalUrl(url)) return;
   void shell.openExternal(url);
 }
 
@@ -505,6 +559,69 @@ function attachZoomPersistence(win: BrowserWindow): void {
   });
 }
 
+/** Only ever hand a plain web URL to the system browser. Without the scheme check, anything
+ * that reaches openExternalUrl -- including a `file:` or shell-handler URL -- would be opened
+ * by the OS with whatever application claims it. */
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a navigation target is still this app's own UI. In-app navigation is React Router's
+ * hash routing, so the dev server's origin (or, when packaged, the bundled renderer directory)
+ * is the whole allowed set. `file:` URLs all report an origin of "null", so they can't be
+ * compared by origin -- a packaged build has to check the path itself, or every file on disk
+ * would count as same-origin. */
+function isOwnAppUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (!app.isPackaged) return parsed.origin === new URL(DEV_SERVER_URL).origin;
+  if (parsed.protocol !== 'file:') return false;
+
+  const rendererDir = path.resolve(__dirname, '../../renderer');
+  let target: string;
+  try {
+    // fileURLToPath, not pathname: on Windows a file URL's pathname is "/C:/...", which
+    // path.resolve would read as a root-relative path on the current drive.
+    target = path.resolve(fileURLToPath(parsed));
+  } catch {
+    return false;
+  }
+  return target.startsWith(rendererDir + path.sep);
+}
+
+/**
+ * The two Electron navigation defaults this app does not want.
+ *
+ * `window.open`/`target="_blank"` defaults to opening a second in-app Chromium window on the
+ * target URL (the Chatterbox and repository links in Settings/About do exactly this today);
+ * external links belong in the user's own browser instead. And nothing normally stops the
+ * renderer from navigating the main window away from the app -- `will-navigate` keeps it on
+ * its own origin, so a stray link or injected href can't replace the UI with remote content
+ * that would then be sitting in a window with a preload bridge attached.
+ */
+function attachNavigationGuards(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isOwnAppUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1300,
@@ -524,9 +641,10 @@ function createWindow() {
 
   attachZoomPersistence(mainWindow);
   attachContextMenu(mainWindow);
+  attachNavigationGuards(mainWindow);
 
   if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'));
@@ -1252,13 +1370,19 @@ function registerIPCHandlers() {
             'Could not find Chatterbox\'s reference_audio folder. Restart Chatterbox after updating it, then try again.',
         };
       }
-      if (!fs.existsSync(dir)) {
+      // `dir` is whatever the Chatterbox server put in its JSON response, so it is untrusted
+      // input, not a path this app chose. shell.openPath on a *file* hands it to the OS default
+      // handler -- i.e. runs it -- so a hostile or spoofed server on the configured host could
+      // answer with an .exe/.desktop/.app and get it launched by this button. Only ever open the
+      // fully resolved directory this vets, never the string the server sent.
+      const resolvedDir = resolveOpenableDirectory(dir);
+      if (!resolvedDir) {
         return {
           status: 'error' as const,
           message: `That folder isn't on this computer (${dir}). Open it on the machine running Chatterbox.`,
         };
       }
-      const err = await shell.openPath(dir);
+      const err = await shell.openPath(resolvedDir);
       if (err) return { status: 'error' as const, message: err };
       return { status: 'ok' as const };
     } catch (error) {

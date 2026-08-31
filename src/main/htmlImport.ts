@@ -259,12 +259,17 @@ function collapseWhitespace(text: string): string {
 /** Resolves a page-relative avatar `src` against the saved HTML file's own directory (where
  * "Save Page As... > Webpage, Complete" leaves a "_files" folder of cached assets). Returns
  * null for anything that isn't a local file that actually exists -- remote URLs are left alone
- * since this app doesn't make network calls. */
+ * since this app doesn't make network calls.
+ *
+ * The imported page is untrusted input, so the resolved path is confined to that directory:
+ * without the check, an `src` of "../../../.ssh/id_rsa" (or an absolute path, which
+ * path.resolve happily takes verbatim) would escape the saved page's folder entirely and get
+ * copied into the app's images library by the caller. */
 export function resolveLocalAvatarPath(htmlFilePath: string, avatarSrc: string | null): string | null {
   if (!avatarSrc) return null;
   if (/^(https?:)?\/\//i.test(avatarSrc) || avatarSrc.startsWith('data:')) return null;
 
-  const dir = path.dirname(htmlFilePath);
+  const dir = path.resolve(path.dirname(htmlFilePath));
   let decoded = avatarSrc;
   try {
     decoded = decodeURIComponent(avatarSrc);
@@ -273,6 +278,7 @@ export function resolveLocalAvatarPath(htmlFilePath: string, avatarSrc: string |
   }
 
   const candidate = path.resolve(dir, decoded);
+  if (candidate !== dir && !candidate.startsWith(dir + path.sep)) return null;
   return fs.existsSync(candidate) ? candidate : null;
 }
 
