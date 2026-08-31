@@ -154,15 +154,32 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
   return `${stem}${sourceExt}`;
 }
 
-/** True only for a path that exists and is a real directory -- a symlink to one counts, since
- * statSync follows it. Used to keep server-supplied paths away from shell.openPath's
- * "open a file with its default handler" behaviour. macOS .app bundles are directories
- * that Launch Services will execute, so they are rejected. */
-function isExistingDirectory(candidate: string): boolean {
+/** macOS bundle extensions that `open` (and so shell.openPath) *launches* rather than reveals.
+ * A bundle is a directory, so an isDirectory() check alone does not tell a folder apart from an
+ * application. Extensions only -- the check below is on the path's last component. */
+const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
+  '.app',
+  '.command',
+  '.workflow',
+  '.action',
+  '.prefpane',
+  '.appex',
+  '.service',
+  '.wdgt',
+]);
+
+/** True only for a path that exists, is a real directory (a symlink to one counts, since
+ * statSync follows it), and is not a macOS bundle that opening would execute. Used to keep
+ * server-supplied paths away from shell.openPath's "hand it to the OS default handler"
+ * behaviour -- on a Mac that includes launching a .app, which is a directory like any other.
+ *
+ * Takes the already-resolved path: the extension test is on the last path component, so
+ * "/Applications/Evil.app/." would otherwise read as having no extension while still opening
+ * the bundle. Callers resolve first and open that same resolved path. */
+function isOpenableDirectory(resolved: string): boolean {
+  if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return false;
   try {
-    if (!fs.statSync(candidate).isDirectory()) return false;
-    // .app bundles are directories; shell.openPath launches them via Launch Services.
-    return !path.basename(candidate).toLowerCase().endsWith('.app');
+    return fs.statSync(resolved).isDirectory();
   } catch {
     return false;
   }
@@ -1336,14 +1353,15 @@ function registerIPCHandlers() {
       // input, not a path this app chose. shell.openPath on a *file* hands it to the OS default
       // handler -- i.e. runs it -- so a hostile or spoofed server on the configured host could
       // answer with an .exe/.desktop/.app and get it launched by this button. Only ever open an
-      // absolute path that exists AND is a directory (not a macOS .app bundle).
-      if (!path.isAbsolute(dir) || !isExistingDirectory(dir)) {
+      // absolute path that exists AND is a directory the OS won't execute.
+      const resolvedDir = path.resolve(dir);
+      if (!path.isAbsolute(dir) || !isOpenableDirectory(resolvedDir)) {
         return {
           status: 'error' as const,
           message: `That folder isn't on this computer (${dir}). Open it on the machine running Chatterbox.`,
         };
       }
-      const err = await shell.openPath(dir);
+      const err = await shell.openPath(resolvedDir);
       if (err) return { status: 'error' as const, message: err };
       return { status: 'ok' as const };
     } catch (error) {
