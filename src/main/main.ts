@@ -156,10 +156,13 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
 
 /** True only for a path that exists and is a real directory -- a symlink to one counts, since
  * statSync follows it. Used to keep server-supplied paths away from shell.openPath's
- * "open a file with its default handler" behaviour. */
+ * "open a file with its default handler" behaviour. macOS .app bundles are directories
+ * that Launch Services will execute, so they are rejected. */
 function isExistingDirectory(candidate: string): boolean {
   try {
-    return fs.statSync(candidate).isDirectory();
+    if (!fs.statSync(candidate).isDirectory()) return false;
+    // .app bundles are directories; shell.openPath launches them via Launch Services.
+    return !path.basename(candidate).toLowerCase().endsWith('.app');
   } catch {
     return false;
   }
@@ -1332,8 +1335,8 @@ function registerIPCHandlers() {
       // `dir` is whatever the Chatterbox server put in its JSON response, so it is untrusted
       // input, not a path this app chose. shell.openPath on a *file* hands it to the OS default
       // handler -- i.e. runs it -- so a hostile or spoofed server on the configured host could
-      // answer with an .exe/.desktop and get it launched by this button. Only ever open an
-      // absolute path that exists AND is a directory.
+      // answer with an .exe/.desktop/.app and get it launched by this button. Only ever open an
+      // absolute path that exists AND is a directory (not a macOS .app bundle).
       if (!path.isAbsolute(dir) || !isExistingDirectory(dir)) {
         return {
           status: 'error' as const,
