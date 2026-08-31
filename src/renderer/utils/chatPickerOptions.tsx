@@ -16,7 +16,7 @@ import {
 /**
  * Shared between the pre-conversation start screen (ChatStartScreen) and any mid-conversation
  * control that wants the same rich, portrait-and-subtext {@link StartScreenPicker} instead of a
- * plain `<select>` -- e.g. Chat.tsx's More panel persona switcher and its model picker. One
+ * plain `<select>` -- e.g. Chat Settings' persona switcher and the composer's model picker. One
  * definition each keeps both surfaces showing identical option content instead of drifting.
  */
 

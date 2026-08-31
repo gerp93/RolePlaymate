@@ -1,5 +1,5 @@
 import { MouseEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { Message, MessageVariant } from '../../../shared/types/message';
+import { Message, MessageVariant, ttsPathForMessage } from '../../../shared/types/message';
 import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
 import { resolveCoverImage } from '../../utils/avatarImage';
@@ -8,6 +8,24 @@ import FormattedContent from '../FormattedContent';
 import ImageLightbox from '../ImageLightbox';
 import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
+import { TtsTrackMode } from '../../../shared/utils/ttsSegments';
+import MessageTtsControls from './TtsPlaybackBar';
+
+export interface MessageTtsProps {
+  characterTrack: TtsTrackMode;
+  personaTrack: TtsTrackMode;
+  characterAvailable: boolean;
+  personaAvailable: boolean;
+  activeMessageId: string | null;
+  activeVariantId: string | null;
+  generating: boolean;
+  playing: boolean;
+  paused: boolean;
+  analyser: AnalyserNode | null;
+  onPlay: (message: Message) => void;
+  onPause: () => void;
+  onGenerate: (message: Message) => void;
+}
 
 interface Props {
   messages: Message[];
@@ -17,18 +35,21 @@ interface Props {
   variants: MessageVariant[];
   onRegenerate: () => void;
   onSelectVariant: (variantId: string) => void;
-  /** Hand-edits the last (assistant) message's content -- see chatSession.editMessage. */
+  /** Commits an edit of the last assistant message -- Save only, never when the textarea opens. */
   onEditLast: (content: string) => void;
-  /** Rewrites the user message behind the pending reply and regenerates that reply against the
-   * new text -- see chatSession.editPriorUserMessage. Only offered on the one message right
-   * before the pending assistant reply. */
+  /** Commits an edit of the user turn behind the pending reply and regenerates that reply --
+   * Save only, never when the textarea opens. See chatSession.editPriorUserMessage. */
   onEditPrior: (messageId: string, content: string) => void;
   onDeleteLast: () => void;
   onViewPrompt: (messageId: string) => void;
+  /** Have the character take another turn with no new user message. Omitted when Continue
+   * isn't available (no conversation, generating, last line isn't theirs). */
+  onContinue?: () => void;
   characterName: string;
   personaName: string;
   characterImages: CharacterImage[];
   personaImages: PersonaImage[];
+  tts?: MessageTtsProps;
 }
 
 /**
@@ -50,10 +71,12 @@ export default function MessageList({
   onEditPrior,
   onDeleteLast,
   onViewPrompt,
+  onContinue,
   characterName,
   personaName,
   characterImages,
   personaImages,
+  tts,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   // Which message (if any) is showing an edit textarea in place of its formatted content, and
@@ -115,6 +138,8 @@ export default function MessageList({
   const canEditPriorUser =
     canActOnLast && lastIndex >= 1 && shown[lastIndex]?.role === 'assistant' && shown[lastIndex - 1]?.role === 'user';
 
+  // Local textarea only -- do not call onEditLast/onEditPrior here. Those are Save, and Chat
+  // stops conversation TTS on them. Opening the editor must leave audio playing.
   const startEdit = (e: MouseEvent<HTMLButtonElement>, message: Message) => {
     const bubble = e.currentTarget.closest('.chat-bubble') as HTMLElement | null;
     setEditWidth(bubble?.getBoundingClientRect().width ?? null);
@@ -127,6 +152,25 @@ export default function MessageList({
       {shown.map((message, i) => {
         const isEditableSlot = (canActOnLast && i === lastIndex) || (canEditPriorUser && i === lastIndex - 1);
         const isEditing = isEditableSlot && editingId === message.id;
+        const ttsTrack =
+          message.role === 'assistant'
+            ? tts?.characterAvailable
+              ? tts.characterTrack
+              : 'off'
+            : message.role === 'user'
+              ? tts?.personaAvailable
+                ? tts.personaTrack
+                : 'off'
+              : 'off';
+        const showTts = Boolean(tts && ttsTrack !== 'off' && editingId !== message.id);
+        const showVariantNav =
+          !isEditing && canActOnLast && i === lastIndex && message.role === 'assistant' && !isGreeting;
+        const showEdit =
+          !isEditing &&
+          ((canActOnLast && i === lastIndex && message.role === 'assistant' && !isGreeting) ||
+            (canEditPriorUser && i === lastIndex - 1));
+        const showDelete = !isEditing && canActOnLast && i === lastIndex && !isGreeting;
+        const showFooter = showTts || showVariantNav || showEdit || showDelete;
         return (
           <Bubble
             key={message.id}
@@ -151,9 +195,9 @@ export default function MessageList({
               setEditWidth(null);
             }}
           >
-            {isEditableSlot && editingId !== message.id && (
+            {showFooter && (
               <div className="chat-message-footer">
-                {i === lastIndex && message.role === 'assistant' && !isGreeting && (
+                {showVariantNav && (
                   <VariantNav
                     variants={variants}
                     selectedId={message.selectedVariantId}
@@ -161,8 +205,25 @@ export default function MessageList({
                     onRegenerate={onRegenerate}
                   />
                 )}
-                {((i === lastIndex && message.role === 'assistant' && !isGreeting) ||
-                  (canEditPriorUser && i === lastIndex - 1)) && (
+                {showTts && tts && (
+                  <MessageTtsControls
+                    trackMode={ttsTrack}
+                    hasAudio={Boolean(ttsPathForMessage(message, variants))}
+                    active={
+                      tts.activeMessageId === message.id &&
+                      tts.activeVariantId === (message.selectedVariantId ?? null)
+                    }
+                    generating={tts.generating}
+                    playing={tts.playing}
+                    paused={tts.paused}
+                    analyser={tts.analyser}
+                    speakerName={message.role === 'user' ? personaName : characterName}
+                    onPlay={() => tts.onPlay(message)}
+                    onPause={tts.onPause}
+                    onGenerate={() => tts.onGenerate(message)}
+                  />
+                )}
+                {showEdit && (
                   <button
                     type="button"
                     className="chat-variant-btn chat-message-edit"
@@ -173,7 +234,7 @@ export default function MessageList({
                     ✏️
                   </button>
                 )}
-                {i === lastIndex && !isGreeting && (
+                {showDelete && (
                   <button
                     type="button"
                     className="chat-variant-btn chat-message-delete"
@@ -194,6 +255,20 @@ export default function MessageList({
       ) : (
         isGenerating && <TypingIndicator name={characterName} avatarUrl={characterAvatarUrl} />
       )}
+      {onContinue &&
+        canActOnLast &&
+        shown[lastIndex]?.role === 'assistant' &&
+        !isGenerating &&
+        !streamingText && (
+          <button
+            type="button"
+            className="chat-continue-cta"
+            onClick={onContinue}
+            title="Have the character take another turn on its own, without a reply from you"
+          >
+            Continue as {characterName}
+          </button>
+        )}
       <div ref={bottom} />
     </div>
   );

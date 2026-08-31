@@ -75,7 +75,9 @@ export const CHAT_DDL = `
     character_id TEXT REFERENCES characters(id) ON DELETE SET NULL,
     user_persona_id TEXT REFERENCES user_personas(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Retention never deletes a kept conversation, regardless of age or message count.
+    keep_forever INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
@@ -96,7 +98,10 @@ export const CHAT_DDL = `
     selected_variant_id TEXT REFERENCES message_variants(id) ON DELETE SET NULL,
     -- Mirrors the selected variant's model, same convention as content -- lets the transcript
     -- show which model produced a reply without a join for every message in the list.
-    model TEXT
+    model TEXT,
+    -- Absolute path of a saved spoken WAV beside the database. User messages store it here;
+    -- assistant messages mirror the selected variant's path, same convention as content/model.
+    tts_audio_path TEXT
   );
 
   -- Doubles as the ordering index and as the guard against two messages claiming one slot.
@@ -119,6 +124,9 @@ export const CHAT_DDL = `
     -- own prompt and its own response; there is no single "the" prompt for a message that's
     -- been redone.
     debug TEXT,
+    -- Saved spoken WAV for this variant. Switching variants never reuses another variant's
+    -- clip -- a redo is different text, so it gets its own file or none.
+    tts_audio_path TEXT,
     created_at TEXT NOT NULL
   );
 

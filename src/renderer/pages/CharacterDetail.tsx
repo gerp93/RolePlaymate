@@ -10,7 +10,10 @@ import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
 import LimitedInput from '../components/LimitedInput';
+import CharacterVoicePicker from '../components/CharacterVoicePicker';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import { CharacterTtsVoice } from '../../shared/types/tts';
+import { useVoicePreview } from '../hooks/useVoicePreview';
 
 const FIELD_PLACEHOLDERS: Record<string, string> = {
   personality: 'Traits, speech patterns, quirks, values...',
@@ -28,6 +31,8 @@ export default function CharacterDetail() {
   const [nameDraft, setNameDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voicePreview = useVoicePreview();
 
   // hiddenUnlocked: a character/its fields already fetched under the previous lock state hold
   // ciphertext when hidden -- re-fetch on every lock/unlock so content updates immediately
@@ -69,6 +74,25 @@ export default function CharacterDetail() {
     if (descriptionDraft !== (character.description ?? '')) {
       await window.electronAPI.characters.update(characterId, { description: descriptionDraft });
       await load(characterId);
+    }
+  }
+
+  async function handleVoiceChange(voice: CharacterTtsVoice | null) {
+    if (!characterId || !character) return;
+    const previous = character;
+    setVoiceError(null);
+    setCharacter({ ...character, ttsVoice: voice });
+    try {
+      const updated = await window.electronAPI.characters.update(characterId, { ttsVoice: voice });
+      if (voice && !updated.ttsVoice) {
+        setCharacter(previous);
+        setVoiceError('Spoken voice did not save. Fully quit and restart RolePlaymate, then try again.');
+        return;
+      }
+      setCharacter(updated);
+    } catch (err) {
+      setCharacter(previous);
+      setVoiceError(err instanceof Error ? err.message : 'Could not save spoken voice.');
     }
   }
 
@@ -154,6 +178,17 @@ export default function CharacterDetail() {
             }}
           />
         </div>
+
+        <CharacterVoicePicker
+          value={character.ttsVoice}
+          onChange={(voice) => void handleVoiceChange(voice)}
+          preview={voicePreview}
+        />
+        {voiceError && (
+          <p className="field-error" style={{ marginTop: -8 }}>
+            {voiceError}
+          </p>
+        )}
 
         {FIELD_TYPES.map((fieldType) => {
           const field = fieldsByType.get(fieldType);

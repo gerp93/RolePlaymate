@@ -7,11 +7,16 @@ import { CharacterImage } from '../../shared/types/characterImage';
 import { PersonaImage } from '../../shared/types/personaImage';
 import { Scenario, ScenarioImage } from '../../shared/types/scenario';
 import { useChatSession } from '../hooks/useChatSession';
+import { Message, ttsPathForMessage } from '../../shared/types/message';
+import { unlockSpeechPlayback, useTtsPlayback } from '../hooks/useTtsPlayback';
+import { CharacterTtsVoice } from '../../shared/types/tts';
+import { voicesMatch } from '../../shared/utils/ttsSegments';
 import { useSecurity } from '../context/SecurityContext';
 import MessageList from '../components/chat/MessageList';
 import Composer from '../components/chat/Composer';
 import MessagePromptDialog from '../components/chat/MessagePromptDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
+import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ChatStartScreen, { startScreenPortraitUrl } from '../components/chat/ChatStartScreen';
 import StartScreenPicker from '../components/chat/StartScreenPicker';
@@ -23,7 +28,7 @@ import {
   getSessionActiveConversationId,
   setSessionActiveConversationId,
 } from '../utils/chatSession';
-import { CHAT_FONT_SIZES, ChatFontSize, getStoredChatFontSize, saveChatFontSize } from '../utils/chatFontSize';
+import { ChatFontSize, getStoredChatFontSize, saveChatFontSize } from '../utils/chatFontSize';
 import { resolveMarginImage } from '../utils/avatarImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { OllamaModelInfo } from '../../shared/types/ollama';
@@ -65,6 +70,31 @@ function isCommittedSidebarConversation(c: ConversationListItem): boolean {
 
 const SHOW_PORTRAITS_KEY = 'roleplaymate-chat-show-portraits';
 const SIDEBAR_COLLAPSED_KEY = 'roleplaymate-chat-sidebar-collapsed';
+/** Matches `@container chat-main (max-width: 1000px)` in Chat.css — below this the
+ *  side portrait columns don't fit. The Settings-tab Portraits dropdown stays visible but disabled. */
+const PORTRAITS_MIN_MAIN_WIDTH = 1000;
+
+function ConversationsRevealIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"
+      />
+    </svg>
+  );
+}
+
+function SettingsRevealIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.49.49 0 0 0-.6-.22l-2.39.96c-.5-.4-1.04-.72-1.62-.94l-.36-2.54a.49.49 0 0 0-.48-.42h-3.84a.49.49 0 0 0-.48.42l-.36 2.54c-.58.22-1.12.54-1.62.94l-2.39-.96a.49.49 0 0 0-.6.22L2.74 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.86 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.14.22.4.31.6.22l2.39-.96c.5.4 1.04.72 1.62.94l.36 2.54c.05.24.25.42.48.42h3.84c.24 0 .43-.18.48-.42l.36-2.54c.58-.22 1.12-.54 1.62-.94l2.39.96c.22.09.46 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+      />
+    </svg>
+  );
+}
 
 function getStoredBoolean(key: string): boolean {
   try {
@@ -113,6 +143,7 @@ export default function Chat() {
   const [carouselTick, setCarouselTick] = useState(0);
   const [fontSize, setFontSize] = useState<ChatFontSize>(() => getStoredChatFontSize());
   const [showPortraits, setShowPortraits] = useState(() => getStoredBoolean(SHOW_PORTRAITS_KEY));
+  const [portraitsTooNarrow, setPortraitsTooNarrow] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => getStoredBoolean(SIDEBAR_COLLAPSED_KEY));
   const [model, setModel] = useState('');
   const [samplers, setSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
@@ -120,8 +151,7 @@ export default function Chat() {
   // so a manual tweak doesn't overwrite what "reset" should go back to.
   const [defaultSamplers, setDefaultSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>('memories');
-  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>('settings');
   const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const [promptDialogDebug, setPromptDialogDebug] = useState<ChatDebugInfo | null>(null);
   const [promptDialogLoading, setPromptDialogLoading] = useState(false);
@@ -129,6 +159,7 @@ export default function Chat() {
   // prepopulate a stock scene note without reaching into the composer's internals.
   const [directions, setDirections] = useState('');
   const [directionsOpen, setDirectionsOpen] = useState(false);
+  const [keepForever, setKeepForever] = useState(false);
 
   // Reloads the composer's Temperature/Max Tokens sliders to whatever this model's tuned
   // defaults are (Model Tuning settings page) every time the selected model changes -- same
@@ -161,7 +192,81 @@ export default function Chat() {
     }
   }, []);
 
-  const session = useChatSession(conversationId ?? null);
+  const tts = useTtsPlayback();
+  const portraitsObserverRef = useRef<ResizeObserver | null>(null);
+  const chatMainRef = useCallback((el: HTMLElement | null) => {
+    portraitsObserverRef.current?.disconnect();
+    portraitsObserverRef.current = null;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setPortraitsTooNarrow(width <= PORTRAITS_MIN_MAIN_WIDTH);
+    });
+    observer.observe(el);
+    portraitsObserverRef.current = observer;
+  }, []);
+  const ttsCharacterVoiceRef = useRef<CharacterTtsVoice | null>(null);
+  const ttsPersonaVoiceRef = useRef<CharacterTtsVoice | null>(null);
+  const ttsNarratorVoiceRef = useRef<CharacterTtsVoice | null>(null);
+  const ttsCharacterTrackRef = useRef(tts.characterTrack);
+  const ttsPersonaTrackRef = useRef(tts.personaTrack);
+  const ttsReadingModeRef = useRef(tts.readingMode);
+  const ttsPersonaReadingModeRef = useRef(tts.personaReadingMode);
+  ttsCharacterTrackRef.current = tts.characterTrack;
+  ttsPersonaTrackRef.current = tts.personaTrack;
+  ttsReadingModeRef.current = tts.readingMode;
+  ttsPersonaReadingModeRef.current = tts.personaReadingMode;
+  const [narratorVoice, setNarratorVoice] = useState<CharacterTtsVoice | null>(null);
+
+  useEffect(() => {
+    void window.electronAPI.narratorVoice.get().then(setNarratorVoice);
+  }, []);
+
+  useEffect(() => {
+    function onFocus() {
+      void window.electronAPI.narratorVoice.get().then(setNarratorVoice);
+    }
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
+
+  const session = useChatSession(conversationId ?? null, {
+    onUserMessage: (message) => {
+      if (ttsPersonaTrackRef.current !== 'auto') return;
+      tts.speak(
+        message.content,
+        {
+          speakerVoice: ttsPersonaVoiceRef.current,
+          narratorVoice: ttsNarratorVoiceRef.current,
+        },
+        {
+          readingMode: ttsPersonaReadingModeRef.current,
+          persist: { messageId: message.id, variantId: null },
+        }
+      );
+    },
+    onUserPersisted: (message, optimisticId) => {
+      void tts.rebindPersistedAudio(optimisticId, message.id);
+    },
+    onReplyFinished: (message) => {
+      if (ttsCharacterTrackRef.current !== 'auto') return;
+      tts.speak(
+        message.content,
+        {
+          speakerVoice: ttsCharacterVoiceRef.current,
+          narratorVoice: ttsNarratorVoiceRef.current,
+        },
+        {
+          readingMode: ttsReadingModeRef.current,
+          persist: { messageId: message.id, variantId: message.selectedVariantId },
+        }
+      );
+    },
+  });
+
+  useEffect(() => {
+    tts.setOnAudioSaved((messageId, path, variantId) => session.patchTtsAudio(messageId, path, variantId));
+  }, [session.patchTtsAudio, tts.setOnAudioSaved]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -321,8 +426,30 @@ export default function Chat() {
       setScenarioImageId(conversation.scenarioImageId);
       setPersonaImageMode(conversation.personaImageMode);
       setPersonaImageId(conversation.personaImageId);
+      setKeepForever(conversation.keepForever);
     })();
   }, [conversationId, navigate]);
+
+  useEffect(() => {
+    setKeepForever(false);
+    void window.electronAPI.retention.setActiveConversation(conversationId ?? null);
+    return () => {
+      void window.electronAPI.retention.setActiveConversation(null);
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
+    return window.electronAPI.retention.onCleaned(({ deletedIds }) => {
+      if (deletedIds.length === 0) return;
+      void refreshConversations();
+      const last = getLastConversationId();
+      if (last && deletedIds.includes(last)) clearLastConversationId();
+      if (conversationId && deletedIds.includes(conversationId)) {
+        clearSessionActiveConversationId();
+        navigate('/chat');
+      }
+    });
+  }, [conversationId, navigate, refreshConversations]);
 
   // Loaded independently of the conversation-open effect above so a gallery also shows up
   // right after picking a character/persona for a brand-new (not yet created) conversation.
@@ -414,6 +541,40 @@ export default function Chat() {
 
   const character = characters.find((c) => c.id === characterId) ?? null;
   const persona = personas.find((p) => p.id === personaId) ?? null;
+  const characterVoice = character?.ttsVoice ?? null;
+  const personaVoice = persona?.ttsVoice ?? null;
+  const characterSpeechAvailable = Boolean(characterVoice || narratorVoice);
+  const personaSpeechAvailable = Boolean(personaVoice || narratorVoice);
+  const ttsAvailable = characterSpeechAvailable || personaSpeechAvailable;
+  const canSplitCharacter = Boolean(characterVoice && narratorVoice && !voicesMatch(characterVoice, narratorVoice));
+  const canSplitPersona = Boolean(personaVoice && narratorVoice && !voicesMatch(personaVoice, narratorVoice));
+  ttsCharacterVoiceRef.current = characterVoice;
+  ttsPersonaVoiceRef.current = personaVoice;
+  ttsNarratorVoiceRef.current = narratorVoice;
+
+  const speakMessage = (
+    message: Message,
+    opts?: { replace?: boolean; forceGenerate?: boolean; reportErrors?: boolean }
+  ) => {
+    const isAssistant = message.role === 'assistant';
+    tts.speak(
+      message.content,
+      {
+        speakerVoice: isAssistant ? characterVoice : personaVoice,
+        narratorVoice,
+      },
+      {
+        reportErrors: opts?.reportErrors ?? true,
+        readingMode: isAssistant ? tts.readingMode : tts.personaReadingMode,
+        persist: {
+          messageId: message.id,
+          variantId: isAssistant ? message.selectedVariantId : null,
+        },
+        savedPath: opts?.forceGenerate ? null : ttsPathForMessage(message, session.variants),
+        replace: opts?.replace,
+      }
+    );
+  };
 
   // Dropdown options and the sidebar list drop hidden entries while locked; a conversation
   // that already has a hidden character/persona selected (opened before locking, or via an
@@ -470,6 +631,8 @@ export default function Chat() {
   const handleSend = useCallback(
     async (message: string, directions: string) => {
       if (!characterId || !model) return;
+      if (tts.overlapMode === 'interrupt') tts.stop();
+      unlockSpeechPlayback();
       await session.send({
         characterId,
         model,
@@ -480,12 +643,14 @@ export default function Chat() {
       });
       void refreshConversations();
     },
-    [characterId, model, personaId, samplers, session, refreshConversations]
+    [characterId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
   );
 
   const handleContinue = useCallback(
     async (directions: string) => {
       if (!characterId || !model) return;
+      if (tts.overlapMode === 'interrupt') tts.stop();
+      unlockSpeechPlayback();
       await session.continueAsCharacter({
         characterId,
         model,
@@ -495,12 +660,37 @@ export default function Chat() {
       });
       void refreshConversations();
     },
-    [characterId, model, personaId, samplers, session, refreshConversations]
+    [characterId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
+  );
+
+  const handleRegenerate = useCallback(() => {
+    tts.stop();
+    unlockSpeechPlayback();
+    void session.regenerate(samplers, model);
+  }, [model, samplers, session, tts.stop]);
+
+  const handleSelectVariant = useCallback(
+    (variantId: string) => {
+      tts.stop();
+      unlockSpeechPlayback();
+      void session.selectVariant(variantId);
+    },
+    [session, tts.stop]
+  );
+
+  /** Save of the last assistant bubble -- stop speech here, not when the textarea opens. */
+  const handleEditLast = useCallback(
+    (content: string) => {
+      tts.stop();
+      void session.editLastMessage(content);
+    },
+    [session, tts.stop]
   );
 
   const handleEditPrior = useCallback(
     (messageId: string, content: string) => {
       if (!characterId || !model) return;
+      tts.stop();
       void session.editPriorMessage(messageId, content, {
         characterId,
         model,
@@ -509,7 +699,7 @@ export default function Chat() {
       });
       void refreshConversations();
     },
-    [characterId, model, personaId, samplers, session, refreshConversations]
+    [characterId, model, personaId, samplers, session, refreshConversations, tts.stop]
   );
 
   const deleteConversation = useCallback(
@@ -522,6 +712,19 @@ export default function Chat() {
       }
     },
     [conversationId, navigate, refreshConversations]
+  );
+
+  const handleKeepForeverChange = useCallback(
+    async (keep: boolean) => {
+      if (!conversationId) return;
+      setKeepForever(keep);
+      const updated = await window.electronAPI.conversations.setKeepForever(conversationId, keep);
+      setKeepForever(updated.keepForever);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? { ...c, keepForever: updated.keepForever } : c))
+      );
+    },
+    [conversationId]
   );
 
   const handleFontSizeChange = useCallback((size: ChatFontSize) => {
@@ -729,21 +932,21 @@ export default function Chat() {
           onClick={toggleSidebarCollapsed}
           aria-expanded="false"
         >
-          »
+          <ConversationsRevealIcon />
         </button>
       )}
       {conversationId && !rightSidebarOpen && (
         <button
           type="button"
           className="chat-right-sidebar-reveal-btn"
-          title="Show memories and debug"
+          title="Show settings, memories, and debug"
           onClick={() => {
-            setRightSidebarTab('memories');
+            setRightSidebarTab('settings');
             setRightSidebarOpen(true);
           }}
           aria-expanded="false"
         >
-          «
+          <SettingsRevealIcon />
         </button>
       )}
       {!sidebarCollapsed && (
@@ -781,7 +984,19 @@ export default function Chat() {
                     navigate(`/chat/${conversation.id}`);
                   }}
                 >
-                  <span className="chat-conversation-title">{conversationListTitle(conversation)}</span>
+                  <span className="chat-conversation-title">
+                    {conversation.keepForever && (
+                      <span
+                        className="chat-conversation-keep"
+                        title="Kept — retention will not delete this chat"
+                      >
+                        Keep
+                      </span>
+                    )}
+                    <span className="chat-conversation-title-text">
+                      {conversationListTitle(conversation)}
+                    </span>
+                  </span>
                   <span className="chat-conversation-meta">
                     {conversationListParticipants(conversation)}
                   </span>
@@ -801,7 +1016,7 @@ export default function Chat() {
         </aside>
       )}
 
-      <section className={`chat-main${showStartScreen ? ' chat-main-start' : ''}`}>
+      <section ref={chatMainRef} className={`chat-main${showStartScreen ? ' chat-main-start' : ''}`}>
 
         {showStartScreen ? (
           <ChatStartScreen
@@ -916,16 +1131,57 @@ export default function Chat() {
                   isGenerating={session.isGenerating}
                   isRegenerating={session.isRegenerating}
                   variants={session.variants}
-                  onRegenerate={() => void session.regenerate(samplers, model)}
-                  onSelectVariant={(variantId) => void session.selectVariant(variantId)}
-                  onEditLast={(content) => void session.editLastMessage(content)}
+                  onRegenerate={handleRegenerate}
+                  onSelectVariant={handleSelectVariant}
+                  onEditLast={handleEditLast}
                   onEditPrior={handleEditPrior}
                   onDeleteLast={() => void session.deleteLastMessage()}
                   onViewPrompt={(messageId) => void handleViewPrompt(messageId)}
+                  onContinue={
+                    canChat
+                      ? () => {
+                          unlockSpeechPlayback();
+                          void handleContinue(directions);
+                          setDirections('');
+                          setDirectionsOpen(false);
+                        }
+                      : undefined
+                  }
                   characterName={character?.name ?? 'Assistant'}
                   personaName={persona?.name ?? 'You'}
                   characterImages={characterImages}
                   personaImages={personaImages}
+                  tts={
+                    ttsAvailable
+                      ? {
+                          characterTrack: tts.characterTrack,
+                          personaTrack: tts.personaTrack,
+                          characterAvailable: characterSpeechAvailable,
+                          personaAvailable: personaSpeechAvailable,
+                          activeMessageId: tts.activeMessageId,
+                          activeVariantId: tts.activeVariantId,
+                          generating: tts.generating,
+                          playing: tts.playing,
+                          paused: tts.paused,
+                          analyser: tts.analyser,
+                          onPlay: (message) => {
+                            const variantId = message.selectedVariantId ?? null;
+                            if (
+                              tts.activeMessageId === message.id &&
+                              tts.activeVariantId === variantId &&
+                              tts.paused
+                            ) {
+                              tts.resume();
+                              return;
+                            }
+                            speakMessage(message, { replace: true });
+                          },
+                          onPause: tts.pause,
+                          onGenerate: (message) =>
+                            speakMessage(message, { replace: true, forceGenerate: true }),
+                        }
+                      : undefined
+                  }
                 />
 
               <Composer
@@ -936,8 +1192,20 @@ export default function Chat() {
                 directionsOpen={directionsOpen}
                 onDirectionsOpenChange={setDirectionsOpen}
                 onSend={(message, msgDirections) => void handleSend(message, msgDirections)}
-                onContinue={(turnDirections) => void handleContinue(turnDirections)}
-                onCancel={() => void session.cancel()}
+                onSkipDialogue={
+                  ttsAvailable &&
+                  tts.overlapMode === 'queue' &&
+                  (tts.playing || tts.paused || tts.generating) &&
+                  ((characterSpeechAvailable && tts.characterTrack !== 'off') ||
+                    (personaSpeechAvailable && tts.personaTrack !== 'off'))
+                    ? tts.skip
+                    : undefined
+                }
+                skipDialogueReady
+                onCancel={() => {
+                  tts.stop();
+                  void session.cancel();
+                }}
                 onSuggest={
                   canChat && conversationId
                     ? async () => {
@@ -951,130 +1219,38 @@ export default function Chat() {
                       }
                     : undefined
                 }
+                modelPicker={
+                  <StartScreenPicker
+                    className="start-screen-picker-compact start-screen-picker-toolbar"
+                    value={model}
+                    // Unlike character/persona, the model can change freely mid-conversation --
+                    // each turn already carries its own model, so switching doesn't disturb
+                    // anything already said, only what generates next.
+                    onChange={setModel}
+                    options={modelPickerOptions}
+                    placeholder={modelState.status !== 'ready' ? '—' : 'Select model…'}
+                    disabled={modelState.status !== 'ready'}
+                    ariaLabel="Model"
+                  />
+                }
+                messageCount={
+                  conversationId ? (
+                    <span className="chat-message-count text-muted">
+                      {session.messages.length} message{session.messages.length === 1 ? '' : 's'}
+                    </span>
+                  ) : null
+                }
               />
 
-              <div className="chat-settings-row">
-                <StartScreenPicker
-                  className="start-screen-picker-compact start-screen-picker-toolbar"
-                  value={model}
-                  // Unlike character/persona, the model can change freely mid-conversation --
-                  // each turn already carries its own model, so switching doesn't disturb
-                  // anything already said, only what generates next.
-                  onChange={setModel}
-                  options={modelPickerOptions}
-                  placeholder={modelState.status !== 'ready' ? '—' : 'Select model…'}
-                  disabled={modelState.status !== 'ready'}
-                  ariaLabel="Model"
-                />
-
-                <button
-                  type="button"
-                  className={`btn chat-more-toggle${settingsExpanded ? ' active' : ''}`}
-                  onClick={() => setSettingsExpanded((open) => !open)}
-                >
-                  ⚙ More {settingsExpanded ? '▴' : '▾'}
-                </button>
-
-                {conversationId && (
-                  <span className="chat-message-count text-muted">
-                    {session.messages.length} message{session.messages.length === 1 ? '' : 's'}
-                  </span>
-                )}
-              </div>
-
-              {settingsExpanded && (
-                <div className="chat-settings-more">
-                  <div className="chat-settings-more-pickers">
-                    <div className="chat-settings-more-col">
-                      <span className="chat-settings-more-label">Text size</span>
-                      <select
-                        value={fontSize}
-                        onChange={(e) => handleFontSizeChange(Number(e.target.value) as ChatFontSize)}
-                      >
-                        {CHAT_FONT_SIZES.map((size) => (
-                          <option key={size} value={size}>
-                            {size}px
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {conversationId && (
-                      <div
-                        className="chat-settings-more-col chat-settings-more-col-persona"
-                        title="Change who you're playing without disturbing the conversation so far"
-                      >
-                        <span className="chat-settings-more-label">Persona</span>
-                        <StartScreenPicker
-                          className="start-screen-picker-compact start-screen-picker-more"
-                          value={personaId}
-                          onChange={(id) => void handlePersonaSwitch(id)}
-                          options={personaPickerOptions}
-                          placeholder="Select…"
-                          ariaLabel="Persona"
-                        />
-                      </div>
-                    )}
-
-                    {conversationId && (characterImages.length > 0 || personaImages.length > 0) && (
-                      <div className="chat-settings-more-col chat-settings-more-col-portraits">
-                        <span className="chat-settings-more-label">Character Portraits</span>
-                        <select
-                          value={showPortraits ? 'on' : 'off'}
-                          onChange={(e) => handleShowPortraitsChange(e.target.value === 'on')}
-                        >
-                          <option value="on">On</option>
-                          <option value="off">Off</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="chat-settings-more-sliders">
-                    <label className="chat-slider chat-settings-more-slider">
-                      Temperature <output>{samplers.temperature.toFixed(2)}</output>
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={1.5}
-                        step={0.1}
-                        value={samplers.temperature}
-                        onChange={(e) => setSamplers({ ...samplers, temperature: Number(e.target.value) })}
-                      />
-                      <button
-                        type="button"
-                        className="chat-slider-reset"
-                        title={`Reset to default (${defaultSamplers.temperature.toFixed(2)})`}
-                        disabled={samplers.temperature === defaultSamplers.temperature}
-                        onClick={() => setSamplers((s) => ({ ...s, temperature: defaultSamplers.temperature }))}
-                      >
-                        ↺
-                      </button>
-                    </label>
-
-                    <label className="chat-slider chat-settings-more-slider">
-                      Max tokens <output>{samplers.maxTokens}</output>
-                      <input
-                        type="range"
-                        min={64}
-                        max={512}
-                        step={64}
-                        value={samplers.maxTokens}
-                        onChange={(e) => setSamplers({ ...samplers, maxTokens: Number(e.target.value) })}
-                      />
-                      <button
-                        type="button"
-                        className="chat-slider-reset"
-                        title={`Reset to default (${defaultSamplers.maxTokens})`}
-                        disabled={samplers.maxTokens === defaultSamplers.maxTokens}
-                        onClick={() => setSamplers((s) => ({ ...s, maxTokens: defaultSamplers.maxTokens }))}
-                      >
-                        ↺
-                      </button>
-                    </label>
-                  </div>
-                </div>
+              {tts.error && (
+                <p className="chat-tts-error text-muted">
+                  {tts.error}{' '}
+                  <button type="button" className="btn" onClick={tts.dismissError}>
+                    Dismiss
+                  </button>
+                </p>
               )}
+
             </div>
           </div>
 
@@ -1145,6 +1321,40 @@ export default function Chat() {
           liveCreatedAt={latestAssistantMessage?.createdAt ?? null}
           isGenerating={session.isGenerating}
           onMemoriesChanged={() => void session.refreshMemoryCount()}
+          settingsPanel={
+            <ChatSettingsPanel
+              fontSize={fontSize}
+              onFontSizeChange={handleFontSizeChange}
+              conversationId={conversationId}
+              personaId={personaId}
+              onPersonaChange={(id) => void handlePersonaSwitch(id)}
+              personaPickerOptions={personaPickerOptions}
+              showPortraitsToggle={characterImages.length > 0 || personaImages.length > 0}
+              showPortraits={showPortraits}
+              portraitsTooNarrow={portraitsTooNarrow}
+              onShowPortraitsChange={handleShowPortraitsChange}
+              characterSpeechAvailable={characterSpeechAvailable}
+              personaSpeechAvailable={personaSpeechAvailable}
+              characterTrack={tts.characterTrack}
+              onCharacterTrackChange={tts.setCharacterTrack}
+              readingMode={tts.readingMode}
+              onReadingModeChange={tts.setReadingMode}
+              personaTrack={tts.personaTrack}
+              onPersonaTrackChange={tts.setPersonaTrack}
+              personaReadingMode={tts.personaReadingMode}
+              onPersonaReadingModeChange={tts.setPersonaReadingMode}
+              overlapMode={tts.overlapMode}
+              onOverlapModeChange={tts.setOverlapMode}
+              narratorVoice={narratorVoice}
+              canSplitCharacter={canSplitCharacter}
+              canSplitPersona={canSplitPersona}
+              samplers={samplers}
+              defaultSamplers={defaultSamplers}
+              onSamplersChange={setSamplers}
+              keepForever={keepForever}
+              onKeepForeverChange={(keep) => void handleKeepForeverChange(keep)}
+            />
+          }
         />
       )}
     </div>

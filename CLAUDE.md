@@ -40,7 +40,7 @@ npm run package      # electron-builder, produces installers in release/
 
 - `src/main/` — Electron main process: `main.ts` (window, IPC handlers,
   auto-updater wiring), `database/` (`node:sqlite` schema + per-entity services),
-  `chat/` (prompt composition; see below), `dbLocation.ts` (relocatable SQLite
+  `chat/` (prompt composition, Ollama and Chatterbox HTTP clients; see below), `dbLocation.ts` (relocatable SQLite
   file), `images.ts` (native file picker for portraits, copies into
   `userData/images/`).
 - `src/renderer/` — React UI (Vite), `pages/` for routed screens,
@@ -104,6 +104,43 @@ Errors are never persisted as assistant turns. The user's message is written
 before generation (so a crash can't lose it), the reply only on success -- the
 source wrote its error text into the transcript, poisoning the context of every
 later turn.
+
+## Spoken replies (Chatterbox)
+
+Optional, same pattern as Ollama: a thin `fetch` client
+(`chat/chatterboxClient.ts`) against a **local** Chatterbox TTS server
+(https://github.com/devnen/Chatterbox-TTS-Server, default
+`http://localhost:8004`). The app ships no voice model. Chat and the library
+stay fully usable when Chatterbox is absent -- a down server is silent, never a
+failed turn.
+
+A character stores an optional `ttsVoice` (mode `predefined` | `clone` plus a
+filename). `predefined` is a stock file in Chatterbox's `voices/` folder;
+`clone` is a reference clip in `reference_audio/`. Settings lists custom voices
+and Chatterbox's stock voices in two expansion panels. Custom clips can be
+imported and deleted through Chatterbox's HTTP API (`POST /upload_reference`,
+`DELETE /delete_reference`) so the user never has to open Chatterbox's own
+UI; WAV/MP3 only (not MP4). Import requires a voice name (stored in
+`app-config.json`, shown in pickers; the file on disk is that name plus the
+source extension). Settings can also open Chatterbox's `reference_audio`
+folder. Stock voices are preview-only here and are not deleted from here.
+Settings also stores an optional narrator voice in `app-config.json`; chat uses the
+character or persona voice if set, otherwise the narrator. Chat Settings (right
+sidebar) has independent tracks for character replies and persona (user) lines: Off,
+Auto, or Manual, each with Character/Persona vs Narrator vs split
+italics. Chat Settings also has Interrupt vs Queue for new speech when at least
+one track is not Off: only one clip plays at a time; Interrupt cuts the current
+clip when the next line is ready, Queue waits until it finishes. Queue mode
+shows Skip dialogue next to Directions only while a clip is generating or
+playing -- it drops the current clip and starts the next. Clicking Play on a
+message always cuts in. Same-voice lines stay one Chatterbox request; split queues clips
+and prefetches the next while the current one plays. Persona Auto
+queues ahead of the character reply. Play/pause, the equalizer, a generate
+button (Speak), and a spinner while synthesizing live on each
+message's footer tray. The WAV is stored beside the database (`tts/`, path
+on `messages` / `message_variants`); later Play reads that file instead of
+calling Chatterbox. Track modes are localStorage toggles (Off / Auto /
+Manual), not a chat error path.
 
 ## Scenarios
 

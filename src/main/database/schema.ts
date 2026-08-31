@@ -232,11 +232,17 @@ export function initDatabase(dbPath?: string): DatabaseSync {
 
   ensureColumn(db, 'characters', 'description', 'TEXT');
   ensureColumn(db, 'characters', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'characters', 'tts_voice_mode', 'TEXT');
+  ensureColumn(db, 'characters', 'tts_voice_id', 'TEXT');
   ensureColumn(db, 'user_personas', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'user_personas', 'tts_voice_mode', 'TEXT');
+  ensureColumn(db, 'user_personas', 'tts_voice_id', 'TEXT');
   ensureColumn(db, 'lorebooks', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'messages', 'selected_variant_id', 'TEXT REFERENCES message_variants(id) ON DELETE SET NULL');
   ensureColumn(db, 'messages', 'model', 'TEXT');
+  ensureColumn(db, 'messages', 'tts_audio_path', 'TEXT');
   ensureColumn(db, 'message_variants', 'model', 'TEXT');
+  ensureColumn(db, 'message_variants', 'tts_audio_path', 'TEXT');
   ensureColumn(db, 'message_variants', 'debug', 'TEXT');
   ensureColumn(db, 'model_sampler_defaults', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'conversation_memories', 'message_id', 'TEXT REFERENCES messages(id) ON DELETE CASCADE');
@@ -249,6 +255,7 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'conversations', 'persona_image_id', 'TEXT REFERENCES persona_images(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'scenario_id', 'TEXT REFERENCES scenarios(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'scenario_image_id', 'TEXT REFERENCES scenario_images(id) ON DELETE SET NULL');
+  ensureColumn(db, 'conversations', 'keep_forever', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'scenarios', 'description', 'TEXT');
   // The non-static mode was originally called 'random' (reroll per message); it's since become
   // 'carousel' (auto-cycle every 10s in the margin portraits). ensureColumn only sets the

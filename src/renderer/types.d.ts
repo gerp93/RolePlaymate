@@ -23,6 +23,7 @@ import {
   PersonaBackgroundVersion,
 } from '../shared/types/userPersona';
 import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../shared/types/conversation';
+import { ChatRetentionRule, ChatRetentionState, ChatRetentionRunResult } from '../shared/retention';
 import {
   Scenario,
   ScenarioVersion,
@@ -42,6 +43,20 @@ import {
   UpdateLorebookEntryInput,
 } from '../shared/types/lorebook';
 import { PromptTemplates, StopPhraseSettings, PromptFieldVersion } from '../shared/types/promptTemplates';
+import {
+  CharacterTtsVoice,
+  ChatterboxHostInfo,
+  ChatterboxStatus,
+  TtsSpeakRequest,
+  TtsSpeakResult,
+  TtsStoreAudioRequest,
+  TtsStoreAudioResult,
+  TtsAttachAudioRequest,
+  TtsImportCloneResult,
+  TtsDeleteCloneResult,
+  TtsRevealCloneFolderResult,
+} from '../shared/types/tts';
+import { HardwareSnapshot } from '../shared/types/hardware';
 
 declare global {
   interface Window {
@@ -118,6 +133,25 @@ declare global {
         get: () => Promise<{ host: string; isDefault: boolean; defaultHost: string }>;
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
+      };
+      chatterboxHost: {
+        get: () => Promise<ChatterboxHostInfo>;
+        set: (host: string) => Promise<{ success: boolean }>;
+        resetToDefault: () => Promise<{ success: boolean }>;
+      };
+      narratorVoice: {
+        get: () => Promise<CharacterTtsVoice | null>;
+        set: (voice: CharacterTtsVoice | null) => Promise<{ success: boolean }>;
+      };
+      tts: {
+        status: () => Promise<ChatterboxStatus>;
+        speak: (request: TtsSpeakRequest) => Promise<TtsSpeakResult>;
+        cancel: () => Promise<{ success: boolean }>;
+        storeAudio: (request: TtsStoreAudioRequest) => Promise<TtsStoreAudioResult>;
+        attachAudio: (request: TtsAttachAudioRequest) => Promise<TtsStoreAudioResult>;
+        importClone: (displayName: string) => Promise<TtsImportCloneResult>;
+        deleteClone: (filename: string) => Promise<TtsDeleteCloneResult>;
+        revealCloneFolder: () => Promise<TtsRevealCloneFolderResult>;
       };
       embeddingModelPrompt: {
         getSuppressed: () => Promise<{ suppressed: boolean }>;
@@ -232,6 +266,7 @@ declare global {
         rename: (id: string, title: string) => Promise<Conversation>;
         setPersona: (id: string, userPersonaId: string | null) => Promise<Conversation>;
         setScenario: (id: string, scenarioId: string | null) => Promise<Conversation>;
+        setKeepForever: (id: string, keepForever: boolean) => Promise<Conversation>;
         setImageMode: (
           id: string,
           input: {
@@ -245,6 +280,14 @@ declare global {
         delete: (id: string) => Promise<{ success: true }>;
         deleteDraft: (id: string) => Promise<{ deleted: boolean }>;
         purgeDrafts: (exceptId?: string) => Promise<{ deletedIds: string[] }>;
+      };
+      retention: {
+        get: () => Promise<ChatRetentionState>;
+        setRules: (rules: ChatRetentionRule[]) => Promise<{ rules: ChatRetentionRule[] }>;
+        runNow: (ruleId?: string) => Promise<ChatRetentionRunResult>;
+        preview: (rules: ChatRetentionRule[]) => Promise<Record<string, number>>;
+        setActiveConversation: (id: string | null) => Promise<{ success: true }>;
+        onCleaned: (callback: (payload: { deletedIds: string[] }) => void) => () => void;
       };
       ollama: {
         listModels: () => Promise<
@@ -283,6 +326,9 @@ declare global {
       };
       app: {
         getVersion: () => Promise<string>;
+      };
+      hardware: {
+        getSnapshot: () => Promise<HardwareSnapshot>;
       };
       updates: {
         check: () => Promise<{

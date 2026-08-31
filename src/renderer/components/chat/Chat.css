@@ -118,6 +118,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-conversation-keep {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-accent-green);
+  border: 1px solid var(--color-accent-green);
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 1.4;
+}
+
+.chat-conversation-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-conversation-meta {
@@ -230,6 +252,14 @@
   color: var(--color-text);
 }
 
+.chat-sidebar-reveal-btn svg,
+.chat-right-sidebar-reveal-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex-shrink: 0;
+}
+
 /* Three literal vertical columns, left to right: each one's own controls (name/select,
    image picker) and its own large portrait live in the SAME column div, not in two parallel
    rows kept in visual sync via matching flex numbers. .chat-column-side-grown and
@@ -323,20 +353,19 @@
   gap: 8px;
   flex-wrap: nowrap;
   margin-top: 4px;
-  padding-top: 8px;
 }
 
-/* Model + Memories + Debug + More share the row evenly; message count stays fixed at the end. */
-.chat-settings-row > .start-screen-picker-toolbar,
-.chat-settings-row > .btn {
+.chat-settings-row > .start-screen-picker-toolbar {
   flex: 1 1 0;
   min-width: 0;
 }
 
-.chat-settings-row > .btn {
+.chat-settings-row > .chat-send {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 84px;
   min-height: 40px;
   box-sizing: border-box;
 }
@@ -353,52 +382,296 @@
   box-sizing: border-box;
 }
 
-.chat-more-toggle.active {
+.chat-tts-btn.active {
   background: var(--color-bg-hover);
 }
 
-.chat-settings-more {
+.chat-tts-error {
   display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 12px;
-  min-width: 0;
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 6px 0 0;
 }
 
-.chat-settings-more-pickers {
+.chat-tts-tray {
   display: flex;
-  align-items: stretch;
-  gap: 12px;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.chat-tts-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 320px;
+  height: 28px;
+  padding: 0 4px 0 6px;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.chat-tts-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  flex: 1 1 140px;
+  min-width: 72px;
+  max-width: 280px;
+  padding: 6px 8px 4px;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.chat-tts-eq-tray {
+  height: 18px;
+  flex: 1 1 auto;
+  min-width: 96px;
+  max-width: none;
+  padding: 2px 4px 1px;
+  background: transparent;
+  border: none;
+  gap: 3px;
+}
+
+.chat-tts-eq-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  background: var(--color-accent-green);
+  transform-origin: center bottom;
+  transform: scaleY(0.08);
+  opacity: 0.45;
+  border-radius: 1px 1px 0 0;
+}
+
+.chat-tts-control.is-live .chat-tts-eq-bar,
+.chat-tts-eq.is-live .chat-tts-eq-bar {
+  opacity: 0.95;
+}
+
+.chat-tts-control.is-paused .chat-tts-eq-bar,
+.chat-tts-eq.is-paused .chat-tts-eq-bar {
+  opacity: 0.55;
+}
+
+.chat-tts-control-btn {
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  min-width: 24px;
+  min-height: 22px;
+  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.chat-tts-control-wait {
+  cursor: pointer;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+}
+
+.chat-tts-control-wait:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.chat-tts-wait-label {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-style: italic;
 }
 
-/* Label over control, same footprint as every other dropdown in this row. */
-.chat-settings-more-col {
+.chat-tts-spinner {
+  width: 12px;
+  height: 12px;
+  margin: 0 4px 0 2px;
+  flex: 0 0 auto;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent-green);
+  border-radius: 50%;
+  animation: chat-tts-spin 0.7s linear infinite;
+}
+
+@keyframes chat-tts-spin {
+  to { transform: rotate(360deg); }
+}
+
+.chat-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
+.chat-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+
+.chat-settings-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.chat-settings-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.chat-settings-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 0 0 auto;
   min-width: 0;
+  position: relative;
 }
 
-.chat-settings-more-col-persona {
-  flex: 1 1 0;
-  min-width: 140px;
-  max-width: 220px;
-}
-
-.chat-settings-more-label {
+.chat-settings-field-label {
   font-size: 12px;
   line-height: 1.2;
   color: var(--color-text-muted);
-  white-space: nowrap;
 }
 
-.chat-settings-more-col select {
+.chat-settings-field-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-settings-info-wrap {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.chat-settings-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-settings-info:hover,
+.chat-settings-info:focus-visible {
+  color: var(--color-text);
+}
+
+.chat-settings-info-tip {
+  position: absolute;
+  z-index: 40;
+  top: 22px;
+  left: 0;
+  right: 0;
+  width: auto;
+  max-width: none;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-surface) 88%, var(--color-bg));
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: normal;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--color-bg) 55%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease,
+    visibility 0.12s ease;
+}
+
+.chat-settings-info-wrap:hover .chat-settings-info-tip,
+.chat-settings-info:focus-visible + .chat-settings-info-tip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.chat-settings-info-tip dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-settings-info-tip dt {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.chat-settings-info-tip dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-settings-info-tip p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-settings-info-tip dl + p {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.chat-settings-info-tip em {
+  font-style: italic;
+}
+
+.chat-settings-field select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -411,64 +684,39 @@
   font-size: 13px;
 }
 
-.chat-settings-more .start-screen-picker-more {
+.chat-settings-field select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.chat-settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.chat-settings-panel .start-screen-picker-settings {
   max-width: none;
   width: 100%;
 }
 
-.chat-settings-more .start-screen-picker-more .start-picker-anchor,
-.chat-settings-more .start-screen-picker-more .start-picker-trigger {
+.chat-settings-panel .start-screen-picker-settings .start-picker-anchor,
+.chat-settings-panel .start-screen-picker-settings .start-picker-trigger {
   width: 100%;
   min-width: 0;
 }
 
-/* Beside the pickers on wide layouts: two equal rows matching their label+control height.
-   Below ~1050px chat-main width the block drops to its own line and stacks at natural height. */
-.chat-settings-more-sliders {
-  flex: 1 1 260px;
-  min-width: 240px;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  gap: 4px;
+/* Default panel opens upward (start-screen bubbles and the composer model picker sit
+   low). This one is the first control in the sidebar, so upward clips under the tabs. */
+.chat-settings-panel .start-screen-picker-settings .start-picker-panel {
+  top: calc(100% + 4px);
+  bottom: auto;
 }
 
-@container chat-center (max-width: 820px) {
-  .chat-settings-more-pickers {
-    flex-basis: 100%;
-    width: 100%;
-  }
-
-  .chat-settings-more-col {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .chat-settings-more-col-persona {
-    max-width: none;
-    min-width: 0;
-  }
-
-  .chat-settings-more-sliders {
-    flex-basis: 100%;
-    width: 100%;
-    min-width: 0;
-    grid-template-rows: auto auto;
-  }
-}
-
-/* Two pickers side-by-side still crush below ~400px; stack them full-width instead. */
-@container chat-center (max-width: 420px) {
-  .chat-settings-more-pickers {
-    flex-direction: column;
-  }
-
-  .chat-settings-more-col {
-    flex: 1 1 auto;
-    width: 100%;
-  }
-}
-
-.chat-settings-more .chat-settings-more-slider {
+.chat-settings-slider {
   width: 100%;
   margin: 0;
   flex: none;
@@ -991,8 +1239,7 @@
   margin-left: 12px;
 }
 
-/* --- large portraits docked at the bottom of the side columns (opt-in, see the More panel
-   checkbox) -------------------------------------------------------------------------------- */
+/* --- large portraits docked at the bottom of the side columns (opt-in, see Chat Settings) */
 
 .chat-portrait-margin {
   /* Sits below this column's header block and fills whatever's left of the column's height --
@@ -1024,14 +1271,11 @@
 
 /* Below this width there's no longer room for two margin columns at --chat-margin-width plus
    the center track's --chat-center-min-width and two column gaps (220*2 + 520 + 16*2 = 992px),
-   so the feature goes away rather than rendering squished. The whole side column goes, not just
-   the portrait inside it: its header and image picker exist to label and re-pick that portrait,
-   so leaving them behind strands controls that act on something no longer visible. Keyed to
-   .chat-main's own width (see its container-type above), not the window's, so it tracks
-   correctly whether the sidebar is expanded or collapsed instead of going stale relative to
-   whatever it measured on load. */
+   so the side columns go away rather than rendering squished. The Settings-tab Portraits
+   dropdown stays put (disabled, showing why they're hidden) so the control doesn't vanish.
+   Keyed to .chat-main's own width (see its container-type above), not the window's, so it
+   tracks correctly whether the sidebar is expanded or collapsed. */
 @container chat-main (max-width: 1000px) {
-  .chat-settings-more-col-portraits,
   .chat-column-side {
     display: none;
   }
@@ -1073,6 +1317,26 @@
 .chat-transcript-empty {
   align-items: center;
   justify-content: center;
+}
+
+.chat-continue-cta {
+  align-self: flex-start;
+  margin: 2px 0 4px 74px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-continue-cta:hover {
+  color: var(--color-accent-blue);
+}
+
+.chat-continue-cta::after {
+  content: ' →';
 }
 
 /* --- bubble: a fixed-size avatar tile fused into the bubble's corner ----------------------
@@ -1362,6 +1626,25 @@ img.chat-bubble-avatar-panel {
   word-break: break-word;
 }
 
+.chat-suggestion-editor-field {
+  margin: 0 0 8px;
+}
+
+.chat-suggestion-editor {
+  width: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: hidden;
+  box-sizing: border-box;
+}
+
 .chat-suggestion-actions {
   display: flex;
   align-items: center;
@@ -1382,8 +1665,17 @@ img.chat-bubble-avatar-panel {
 .chat-composer-controls {
   display: flex;
   align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chat-skip-dialogue-wrap {
+  display: inline-flex;
+}
+
+.chat-skip-dialogue:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Two classes of higher specificity than the generic ".chat-column label" column-stacking
@@ -1397,6 +1689,18 @@ img.chat-bubble-avatar-panel {
   font-size: 12px;
   color: var(--color-text-muted);
   flex: 1 1 200px;
+}
+
+.chat-settings-panel .chat-slider {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
 }
 
 .chat-slider input[type='range'] {
@@ -1433,15 +1737,43 @@ img.chat-bubble-avatar-panel {
   color: var(--color-text);
 }
 
-.chat-composer-row {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-
 .chat-composer-input {
   flex: 1;
   min-width: 0;
+}
+
+.chat-composer-input-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.chat-composer-input-shell .chat-input {
+  padding-bottom: 32px;
+}
+
+.chat-suggest-in-field {
+  position: absolute;
+  right: 10px;
+  bottom: 22px;
+  z-index: 1;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-suggest-in-field:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.chat-suggest-in-field:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .chat-directions-field {
@@ -1485,19 +1817,6 @@ img.chat-bubble-avatar-panel {
   min-width: 84px;
 }
 
-/* Send + Continue stacked in the same width Send alone used to take, rather than two
-   full-height buttons widening the row -- .chat-composer-row's align-items: stretch already
-   makes this column match the textarea's height. */
-.chat-composer-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chat-composer-actions .chat-send {
-  flex: 1;
-}
-
 /* Deliberately tiny/muted and tucked at the end of the settings row rather than its own
    footer line -- a message count doesn't need the visual weight a dedicated banner gives it. */
 .chat-message-count {
@@ -1508,7 +1827,7 @@ img.chat-bubble-avatar-panel {
   padding-left: 4px;
 }
 
-/* --- right sidebar (memories + debug tabs) -------------------------------------------- */
+/* --- right sidebar (settings + memories + debug tabs) --------------------------------- */
 
 .chat-right-sidebar {
   display: flex;
@@ -1532,6 +1851,7 @@ img.chat-bubble-avatar-panel {
 .chat-right-sidebar-tabs {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   min-width: 0;
   flex: 1;
@@ -2094,6 +2414,7 @@ img.chat-bubble-avatar-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   flex: 1;
 }
 
@@ -2102,16 +2423,26 @@ img.chat-bubble-avatar-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Margin-auto on header/actions centers when there's room; when the diagram
+     is taller than the column, those margins collapse so overflow-y can reach
+     the top instead of clipping both ends (flex justify-content: center). */
   min-height: 0;
-  padding: 24px 16px 32px;
-  gap: 20px;
+  min-width: 0;
+  width: 100%;
+  padding: 16px clamp(12px, 3cqi, 24px) 24px;
+  gap: 16px;
+  overflow-x: hidden;
   overflow-y: auto;
+  container-type: inline-size;
+  container-name: chat-start;
 }
 
 .chat-start-header {
   text-align: center;
-  max-width: 520px;
+  max-width: min(520px, 100%);
+  padding-inline: 8px;
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .chat-start-eyebrow {
@@ -2125,7 +2456,7 @@ img.chat-bubble-avatar-panel {
 
 .chat-start-title {
   margin: 0 0 8px;
-  font-size: clamp(26px, 4vw, 36px);
+  font-size: clamp(22px, 6cqi, 36px);
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -2137,19 +2468,33 @@ img.chat-bubble-avatar-panel {
   line-height: 1.45;
 }
 
+.chat-start-stage {
+  width: min(680px, 100%);
+  min-width: 0;
+  flex-shrink: 0;
+  /* Catches portraits/panels sitting at 18%/82%/5% of the coordinate space. */
+  padding-inline: clamp(20px, 8cqi, 56px);
+  box-sizing: border-box;
+}
+
+.chat-start-stage-has-scenario {
+  padding-inline: clamp(36px, 12cqi, 72px);
+}
+
 .chat-start-constellation {
   position: relative;
+  container-type: inline-size;
+  /* Width tracks the chat column; height follows so zoom/narrow windows scale
+     the whole diagram instead of clipping the side nodes. */
   width: min(560px, 100%);
-  height: min(580px, 78vh);
-  flex-shrink: 0;
+  aspect-ratio: 560 / 580;
+  height: auto;
+  margin-inline: auto;
   overflow: visible;
-  /* Model panel sits below the bubble center; reserve that space in layout flow. */
-  margin-bottom: calc(var(--bubble-portrait) / 2 + var(--panel-gap) + 56px);
+  /* Model panel sits below the 80% bubble; keep it in the flex flow. */
+  margin-bottom: clamp(4.5rem, 12cqi, 6.5rem);
 
   /* Bubble centers — keep in sync with SVG viewBox coords (0–100). */
-  --bubble-portrait: 148px;
-  --bubble-portrait-scenario: calc(var(--bubble-portrait) * 0.75);
-  --panel-gap: 14px;
   --ax-char: 18%;
   --ay-char: 16%;
   --ax-persona: 82%;
@@ -2161,8 +2506,16 @@ img.chat-bubble-avatar-panel {
 }
 
 .chat-start-constellation-has-scenario {
-  height: min(640px, 82vh);
   width: min(600px, 100%);
+  aspect-ratio: 600 / 640;
+}
+
+/* Portrait size is a fraction of the constellation so it tracks zoom/width. */
+.chat-start-bubble,
+.chat-start-panel {
+  --bubble-portrait: clamp(56px, 26.4cqi, 148px);
+  --bubble-portrait-scenario: calc(var(--bubble-portrait) * 0.75);
+  --panel-gap: clamp(6px, 2.2cqi, 14px);
 }
 
 .chat-start-lines {
@@ -2202,7 +2555,7 @@ img.chat-bubble-avatar-panel {
 }
 
 .chat-start-bubble-scenario .chat-start-portrait-glyph {
-  font-size: 40px;
+  font-size: calc(var(--bubble-portrait-scenario) * 0.36);
 }
 
 .chat-start-bubble-model {
@@ -2218,7 +2571,8 @@ img.chat-bubble-avatar-panel {
   align-items: center;
   gap: 6px;
   transform: translateX(-50%);
-  width: min(200px, 38vw);
+  width: min(200px, 34cqi);
+  max-width: 100%;
   text-align: center;
 }
 
@@ -2240,7 +2594,7 @@ img.chat-bubble-avatar-panel {
 .chat-start-panel-model {
   left: var(--ax-model);
   top: calc(var(--ay-model) + var(--bubble-portrait) / 2 + var(--panel-gap));
-  width: min(360px, 94vw);
+  width: min(360px, 92%);
 }
 
 .chat-start-line {
@@ -2380,11 +2734,11 @@ img.chat-bubble-avatar-panel {
 }
 
 .chat-start-portrait-fallback {
-  font-size: 48px;
+  font-size: calc(var(--bubble-portrait) * 0.32);
 }
 
 .chat-start-portrait-glyph {
-  font-size: 52px;
+  font-size: calc(var(--bubble-portrait) * 0.35);
   line-height: 1;
   color: var(--color-accent-blue);
 }
@@ -2405,7 +2759,7 @@ img.chat-bubble-avatar-panel {
 .start-screen-picker {
   position: relative;
   width: 100%;
-  max-width: 200px;
+  max-width: min(200px, 100%);
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2575,7 +2929,7 @@ img.chat-bubble-avatar-panel {
   left: 0;
   right: 0;
   width: auto;
-  max-width: 92vw;
+  max-width: 100%;
   max-height: min(280px, 42vh);
   overflow-y: auto;
   display: flex;
@@ -2677,8 +3031,12 @@ img.chat-bubble-avatar-panel {
   flex-shrink: 0;
   position: relative;
   z-index: 5;
-  margin-top: 8px;
-  padding-bottom: 8px;
+  width: min(100%, 32rem);
+  max-width: 100%;
+  margin-top: 4px;
+  margin-bottom: auto;
+  padding: 0 8px 8px;
+  box-sizing: border-box;
 }
 
 .chat-start-btn {
@@ -2686,10 +3044,12 @@ img.chat-bubble-avatar-panel {
   align-items: center;
   justify-content: center;
   gap: 0.65em;
-  font-size: clamp(1.35rem, 4vw, 1.75rem);
+  font-size: clamp(1.1rem, 4cqi, 1.75rem);
   font-weight: 800;
-  padding: 1.1rem 3.25rem;
-  min-width: min(340px, 90vw);
+  padding: clamp(0.7rem, 2cqi, 1.1rem) clamp(1rem, 5cqi, 3.25rem);
+  min-width: min(340px, 100%);
+  max-width: 100%;
+  box-sizing: border-box;
   border-radius: 999px;
   border-width: 3px;
   letter-spacing: 0.14em;
@@ -2735,10 +3095,14 @@ img.chat-bubble-avatar-panel {
   cursor: not-allowed;
   text-transform: none;
   letter-spacing: 0.02em;
-  font-size: 1rem;
+  font-size: clamp(0.9rem, 3.2cqi, 1rem);
   font-weight: 600;
-  padding: 14px 28px;
+  padding: 12px 20px;
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  white-space: normal;
+  text-wrap: balance;
   border-width: 1px;
   box-shadow: none;
   animation: none;
@@ -2761,20 +3125,21 @@ img.chat-bubble-avatar-panel {
 }
 
 @media (max-width: 520px) {
-  .chat-start-constellation {
-    --bubble-portrait: 120px;
-    height: min(500px, 74vh);
+  .chat-start-btn {
+    letter-spacing: 0.08em;
+  }
+}
+
+@container chat-start (max-width: 520px) {
+  .chat-start-title {
+    font-size: clamp(22px, 7cqi, 28px);
   }
 
-  .chat-start-constellation-has-scenario {
-    height: min(580px, 80vh);
+  .chat-start-btn {
+    letter-spacing: 0.06em;
   }
 
-  .chat-start-portrait-fallback {
-    font-size: 40px;
-  }
-
-  .chat-start-portrait-glyph {
-    font-size: 44px;
+  .chat-start-btn:not(:disabled):hover {
+    transform: translateY(-2px) scale(1.03);
   }
 }

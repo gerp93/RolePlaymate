@@ -1,5 +1,6 @@
 import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
 import type { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
+import type { CharacterTtsVoice } from '../shared/types/tts';
 import type { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
 import type { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
 import type {
@@ -63,9 +64,39 @@ export function guardCharacterCreate(input: CreateCharacterInput): void {
   guardShort(input.description);
 }
 
+function isVoiceFilename(id: string): boolean {
+  if (!id.trim() || id !== id.trim()) return false;
+  if (id.includes('/') || id.includes('\\') || id.includes('..')) return false;
+  return true;
+}
+
+export function guardTtsVoice(voice: CharacterTtsVoice | null | undefined): void {
+  if (voice == null) return;
+  if (voice.mode !== 'predefined' && voice.mode !== 'clone') {
+    throw new Error('Voice mode must be predefined or clone');
+  }
+  assertMaxLength(voice.id, FIELD_LIMITS.name, 'Voice');
+  if (!isVoiceFilename(voice.id)) {
+    throw new Error('Voice must be a filename, not a path');
+  }
+}
+
+/** Clone clips are WAV/MP3 filenames in Chatterbox's reference_audio folder. */
+export function guardCloneVoiceFilename(filename: string): void {
+  assertMaxLength(filename, FIELD_LIMITS.name, 'Voice');
+  if (!isVoiceFilename(filename)) {
+    throw new Error('Voice must be a filename, not a path');
+  }
+  const lower = filename.toLowerCase();
+  if (!lower.endsWith('.wav') && !lower.endsWith('.mp3')) {
+    throw new Error('Voice clips must be .wav or .mp3');
+  }
+}
+
 export function guardCharacterUpdate(input: UpdateCharacterInput): void {
   guardName(input.name);
   guardShort(input.description);
+  if ('ttsVoice' in input) guardTtsVoice(input.ttsVoice);
 }
 
 export function guardScenarioCreate(input: CreateScenarioInput): void {
@@ -86,6 +117,7 @@ export function guardPersonaCreate(input: CreateUserPersonaInput): void {
 export function guardPersonaUpdate(input: UpdateUserPersonaInput): void {
   guardName(input.name);
   guardShort(input.description);
+  if ('ttsVoice' in input) guardTtsVoice(input.ttsVoice);
 }
 
 export function guardLorebookCreate(input: CreateLorebookInput): void {

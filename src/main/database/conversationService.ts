@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
 import { Message, MessageRole, MessageVariant } from '../../shared/types/message';
 import { ChatDebugInfo, ChatDebugHistoryEntry } from '../../shared/types/chat';
+import { RetentionCandidate } from '../../shared/retention';
 import {
   ConversationMemory,
   CreateMemoryInput,
@@ -13,9 +14,11 @@ import {
   CreateUserPersonaInput,
   UpdateUserPersonaInput,
 } from '../../shared/types/userPersona';
+import { parseTtsVoice } from '../../shared/types/tts';
 import { transaction } from './schema';
 import { SecurityService } from './securityService';
 import { PersonaFieldVersionService } from './personaFieldVersionService';
+import { deleteTtsAudioFile } from '../ttsAudio';
 
 const CONVERSATION_COLUMNS = `
   id,
@@ -29,6 +32,7 @@ const CONVERSATION_COLUMNS = `
   scenario_image_id as scenarioImageId,
   persona_image_mode as personaImageMode,
   persona_image_id as personaImageId,
+  keep_forever as keepForever,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -45,6 +49,7 @@ const CONVERSATION_COLUMNS_FROM_C = `
   c.scenario_image_id as scenarioImageId,
   c.persona_image_mode as personaImageMode,
   c.persona_image_id as personaImageId,
+  c.keep_forever as keepForever,
   c.created_at as createdAt,
   c.updated_at as updatedAt
 `;
@@ -56,6 +61,7 @@ const MESSAGE_COLUMNS = `
   content,
   selected_variant_id as selectedVariantId,
   model,
+  tts_audio_path as ttsAudioPath,
   seq,
   created_at as createdAt
 `;
@@ -65,6 +71,7 @@ const VARIANT_COLUMNS = `
   message_id as messageId,
   content,
   model,
+  tts_audio_path as ttsAudioPath,
   created_at as createdAt
 `;
 
@@ -86,6 +93,8 @@ const PERSONA_COLUMNS = `
   up.description as description,
   pbv.content as background,
   up.avatar as avatar,
+  up.tts_voice_mode as ttsVoiceMode,
+  up.tts_voice_id as ttsVoiceId,
   up.is_hidden as isHidden,
   up.created_at as createdAt
 `;
@@ -127,6 +136,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     scenarioImageId: (row.scenarioImageId as string | null) ?? null,
     personaImageMode: row.personaImageMode as ImageMode,
     personaImageId: (row.personaImageId as string | null) ?? null,
+    keepForever: !!row.keepForever,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -140,6 +150,7 @@ function rowToMessage(row: Record<string, unknown>): Message {
     content: row.content as string,
     selectedVariantId: (row.selectedVariantId as string | null) ?? null,
     model: (row.model as string | null) ?? null,
+    ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
     seq: row.seq as number,
     createdAt: row.createdAt as string,
   };
@@ -151,6 +162,7 @@ function rowToVariant(row: Record<string, unknown>): MessageVariant {
     messageId: row.messageId as string,
     content: row.content as string,
     model: (row.model as string | null) ?? null,
+    ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
     createdAt: row.createdAt as string,
   };
 }
@@ -194,11 +206,14 @@ export class ConversationService {
     const isHidden = !!row.isHidden;
     const description = row.description as string | null;
     const background = row.background as string | null;
+    const ttsVoiceMode = (row.ttsVoiceMode ?? row.tts_voice_mode) as string | null | undefined;
+    const ttsVoiceId = (row.ttsVoiceId ?? row.tts_voice_id) as string | null | undefined;
     return {
       id: row.id as string,
       name: this.security.decryptIfHidden(row.name as string, isHidden),
       description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
       background: background == null ? null : this.security.decryptIfHidden(background, isHidden),
+      ttsVoice: parseTtsVoice(ttsVoiceMode ?? null, ttsVoiceId ?? null),
       avatar: (row.avatar as string | null) ?? null,
       isHidden,
       createdAt: row.createdAt as string,
@@ -430,9 +445,82 @@ export class ConversationService {
     return this.getConversation(id)!;
   }
 
-  /** Cascades to messages and memories via the schema's foreign keys. */
+  /** Retention never deletes a kept conversation, regardless of matching rules. Does not bump
+   * `updated_at` — keeping a thread is not activity. */
+  setKeepForever(id: string, keepForever: boolean): Conversation {
+    const existing = this.getConversation(id);
+    if (!existing) {
+      throw new Error(`Conversation with id ${id} not found`);
+    }
+    this.db.prepare(`UPDATE conversations SET keep_forever = ? WHERE id = ?`).run(keepForever ? 1 : 0, id);
+    return this.getConversation(id)!;
+  }
+
+  /**
+   * Committed conversations that retention is allowed to consider. Skips greeting-only drafts
+   * (those have their own purge) and anything already marked keep-forever.
+   */
+  listRetentionCandidates(): RetentionCandidate[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT
+             c.id,
+             c.created_at as createdAt,
+             c.character_id as characterId,
+             c.user_persona_id as userPersonaId,
+             c.scenario_id as scenarioId,
+             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS messageCount,
+             (SELECT MIN(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS firstMessageAt,
+             (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS lastMessageAt
+           FROM conversations c
+           WHERE c.keep_forever = 0
+           AND NOT (${GREETING_ONLY_DRAFT_WHERE})`
+        )
+        .all() as {
+        id: string;
+        createdAt: string;
+        characterId: string | null;
+        userPersonaId: string | null;
+        scenarioId: string | null;
+        messageCount: number;
+        firstMessageAt: string | null;
+        lastMessageAt: string | null;
+      }[]
+    ).map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      characterId: row.characterId ?? null,
+      userPersonaId: row.userPersonaId ?? null,
+      scenarioId: row.scenarioId ?? null,
+      lorebookIds: [],
+      messageCount: Number(row.messageCount ?? 0),
+      firstMessageAt: row.firstMessageAt ?? null,
+      lastMessageAt: row.lastMessageAt ?? null,
+    }));
+  }
+
+  /** Cascades to messages and memories via the schema's foreign keys. Spoken WAV files are
+   * unlinked first -- CASCADE only drops the rows, not the files beside the database. */
   deleteConversation(id: string): void {
+    this.deleteTtsFilesForConversation(id);
     this.db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+  }
+
+  private deleteTtsFilesForConversation(conversationId: string): void {
+    const messagePaths = this.db
+      .prepare(`SELECT tts_audio_path as path FROM messages WHERE conversation_id = ? AND tts_audio_path IS NOT NULL`)
+      .all(conversationId) as unknown as { path: string }[];
+    const variantPaths = this.db
+      .prepare(
+        `SELECT v.tts_audio_path as path FROM message_variants v
+         JOIN messages m ON m.id = v.message_id
+         WHERE m.conversation_id = ? AND v.tts_audio_path IS NOT NULL`
+      )
+      .all(conversationId) as unknown as { path: string }[];
+    for (const row of [...messagePaths, ...variantPaths]) {
+      deleteTtsAudioFile(row.path);
+    }
   }
 
   // --- Messages ------------------------------------------------------------------------
@@ -476,7 +564,17 @@ export class ConversationService {
     if (first?.id === messageId && first.role === 'assistant') {
       throw new Error('The opening greeting cannot be deleted');
     }
+    this.deleteTtsFilesForMessage(messageId);
     this.db.prepare(`DELETE FROM messages WHERE id = ?`).run(messageId);
+  }
+
+  private deleteTtsFilesForMessage(messageId: string): void {
+    const message = this.getMessage(messageId);
+    deleteTtsAudioFile(message?.ttsAudioPath);
+    const variants = this.getVariants(messageId);
+    for (const variant of variants) {
+      deleteTtsAudioFile(variant.ttsAudioPath);
+    }
   }
 
   /** Updates a message's stored text in place -- unlike appendMessage, doesn't touch `seq` or
@@ -485,7 +583,9 @@ export class ConversationService {
    * generations. Callers decide which messages are safe to touch this way -- see
    * ChatSessionManager.editPriorUserMessage, currently the only caller. */
   updateMessageContent(id: string, content: string): Message {
-    this.db.prepare(`UPDATE messages SET content = ? WHERE id = ?`).run(content, id);
+    const current = this.getMessage(id);
+    if (current?.ttsAudioPath) deleteTtsAudioFile(current.ttsAudioPath);
+    this.db.prepare(`UPDATE messages SET content = ?, tts_audio_path = NULL WHERE id = ?`).run(content, id);
     const message = this.getMessage(id);
     if (!message) throw new Error(`Message with id ${id} not found`);
     return message;
@@ -609,6 +709,43 @@ export class ConversationService {
     return rowToVariant(row!);
   }
 
+  /** Attaches a saved spoken WAV to a user message, or to one assistant variant (and the
+   * message row when that variant is the one currently shown). Replaces any previous file. */
+  setTtsAudio(messageId: string, variantId: string | null, filePath: string): Message {
+    const message = this.getMessage(messageId);
+    if (!message) throw new Error(`Message ${messageId} not found`);
+
+    const targetVariantId = variantId ?? message.selectedVariantId;
+    if (message.role === 'assistant' && targetVariantId) {
+      const row = this.db
+        .prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ? AND message_id = ?`)
+        .get(targetVariantId, messageId);
+      if (!row) throw new Error(`Variant ${targetVariantId} not found on message ${messageId}`);
+      const variant = rowToVariant(row);
+      if (variant.ttsAudioPath !== filePath) deleteTtsAudioFile(variant.ttsAudioPath);
+      this.db.prepare(`UPDATE message_variants SET tts_audio_path = ? WHERE id = ?`).run(filePath, targetVariantId);
+      if (message.selectedVariantId === targetVariantId) {
+        this.db.prepare(`UPDATE messages SET tts_audio_path = ? WHERE id = ?`).run(filePath, messageId);
+      }
+    } else {
+      if (message.ttsAudioPath !== filePath) deleteTtsAudioFile(message.ttsAudioPath);
+      this.db.prepare(`UPDATE messages SET tts_audio_path = ? WHERE id = ?`).run(filePath, messageId);
+    }
+
+    return this.getMessage(messageId)!;
+  }
+
+  /** Unlink spoken files for every conversation owned by this character. Character delete
+   * uses a raw SQL cascade rather than deleteConversation, so this has to be called first. */
+  deleteTtsFilesForCharacter(characterId: string): void {
+    const rows = this.db
+      .prepare(`SELECT id FROM conversations WHERE character_id = ?`)
+      .all(characterId) as unknown as { id: string }[];
+    for (const row of rows) {
+      this.deleteTtsFilesForConversation(row.id);
+    }
+  }
+
   /** Makes a variant the one shown -- updates the message's own `content` and `model` to
    * match, so every existing reader (the transcript, the model context once this turn is
    * finalized) sees it without needing to know variants exist. */
@@ -621,8 +758,10 @@ export class ConversationService {
       const variant = rowToVariant(row);
 
       this.db
-        .prepare(`UPDATE messages SET content = ?, model = ?, selected_variant_id = ? WHERE id = ?`)
-        .run(variant.content, variant.model, variantId, messageId);
+        .prepare(
+          `UPDATE messages SET content = ?, model = ?, selected_variant_id = ?, tts_audio_path = ? WHERE id = ?`
+        )
+        .run(variant.content, variant.model, variantId, variant.ttsAudioPath, messageId);
 
       return this.getMessage(messageId)!;
     });
@@ -780,11 +919,15 @@ export class ConversationService {
     const source = this.getPersona(id);
     if (!source) throw new Error(`UserPersona with id ${id} not found`);
 
-    return this.createPersona({
+    const cloned = this.createPersona({
       name: `${source.name} (Copy)`,
       description: source.description ?? undefined,
       background: source.background ?? undefined,
     });
+    if (source.ttsVoice) {
+      return this.updatePersona(cloned.id, { ttsVoice: source.ttsVoice });
+    }
+    return cloned;
   }
 
   /** `background` can no longer be set here -- only through personaFieldVersions:* (create a
@@ -796,12 +939,18 @@ export class ConversationService {
     }
     const name = input.name ?? existing.name;
     const description = input.description ?? existing.description;
+    const ttsVoice =
+      Object.prototype.hasOwnProperty.call(input, 'ttsVoice') ? (input.ttsVoice ?? null) : existing.ttsVoice;
     this.db
-      .prepare(`UPDATE user_personas SET name = ?, description = ?, avatar = ? WHERE id = ?`)
+      .prepare(
+        `UPDATE user_personas SET name = ?, description = ?, avatar = ?, tts_voice_mode = ?, tts_voice_id = ? WHERE id = ?`
+      )
       .run(
         this.security.encryptIfHidden(name, existing.isHidden),
         description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
         input.avatar ?? existing.avatar,
+        ttsVoice?.mode ?? null,
+        ttsVoice?.id ?? null,
         id
       );
     return this.getPersona(id)!;
@@ -877,5 +1026,16 @@ export class ConversationService {
    * becomes NULL via the schema's ON DELETE SET NULL. */
   deletePersona(id: string): void {
     this.db.prepare(`DELETE FROM user_personas WHERE id = ?`).run(id);
+  }
+
+  /** Same as CharacterService.clearCloneVoice -- a deleted Chatterbox clip should not linger
+   * as a persona assignment. */
+  clearPersonaCloneVoice(filename: string): void {
+    this.db
+      .prepare(
+        `UPDATE user_personas SET tts_voice_mode = NULL, tts_voice_id = NULL
+         WHERE tts_voice_mode = 'clone' AND tts_voice_id = ?`
+      )
+      .run(filename);
   }
 }

@@ -1,3 +1,5 @@
+import { CharacterTtsVoice } from './tts';
+
 /** Who *you* are roleplaying as in a conversation -- the counterpart to a Character, which
  * is who the AI plays. Kept separate from the character library on purpose: the library
  * means "AI characters". Personas have a portrait gallery (persona_images, see
@@ -15,6 +17,9 @@ export interface UserPersona {
    * only added when both name and background are non-empty -- a persona with no background
    * contributes nothing, so it is skipped rather than emitted as an empty section. */
   background: string | null;
+  /** Optional Chatterbox voice for spoken persona (user) lines. Null means fall back to the
+   * Settings narrator, same as a character with no voice of its own. */
+  ttsVoice: CharacterTtsVoice | null;
   /** Superseded by the persona_images gallery -- left in place (unused going forward) purely
    * so migrateLegacyPersonaAvatars in schema.ts can still read pre-existing single avatars on
    * upgrade, same convention as characters.image_url. */
@@ -36,6 +41,7 @@ export interface UpdateUserPersonaInput {
   name?: string;
   description?: string;
   avatar?: string;
+  ttsVoice?: CharacterTtsVoice | null;
 }
 
 /** One saved version of a persona's background -- same shape as CharacterFieldVersion, keyed

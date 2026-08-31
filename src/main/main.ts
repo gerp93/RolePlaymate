@@ -16,6 +16,15 @@ import {
   isUsingDefaultOllamaHost,
   setOllamaHost,
   resetOllamaHost,
+  getEffectiveChatterboxHost,
+  isUsingDefaultChatterboxHost,
+  setChatterboxHost,
+  resetChatterboxHost,
+  getNarratorVoice,
+  setNarratorVoice,
+  getCloneVoiceNames,
+  setCloneVoiceName,
+  removeCloneVoiceName,
   getStoredZoomLevel,
   setStoredZoomLevel,
   isEmbeddingModelPromptSuppressed,
@@ -24,6 +33,7 @@ import {
   isUsingDefaultMemoryEmbeddingModel,
   setConfiguredMemoryEmbeddingModel,
   resetMemoryEmbeddingModel,
+  getChatRetentionState,
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
 import { migrateImagePathsToCanonicalDir } from './imagePathMigration';
@@ -39,12 +49,33 @@ import { ModelSamplerService } from './database/modelSamplerService';
 import { ConversationService } from './database/conversationService';
 import { LorebookService } from './database/lorebookService';
 import { SecurityService } from './database/securityService';
+import {
+  startChatRetention,
+  stopChatRetention,
+  saveChatRetentionRules,
+  runChatRetention,
+  previewRetentionMatches,
+  setRetentionActiveConversation,
+} from './chatRetention';
 import { PromptBuilder } from './chat/promptBuilder';
 import { PromptSettingsService, ResettableField } from './database/promptSettingsService';
 import { PromptFieldVersionService } from './database/promptFieldVersionService';
 import { DEFAULT_STOP_PHRASES } from './chat/promptTemplates';
 import { PromptTemplates, StopPhraseSettings, TEMPLATE_FIELD_KEYS } from '../shared/types/promptTemplates';
 import { OllamaClient, DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
+import {
+  ChatterboxBusyError,
+  ChatterboxCancelledError,
+  ChatterboxClient,
+  ChatterboxRequestError,
+  ChatterboxTimeoutError,
+  ChatterboxUnavailableError,
+  DEFAULT_CHATTERBOX_HOST,
+} from './chat/chatterboxClient';
+import { textForSpeech } from '../shared/utils/ttsText';
+import { normalizeCloneVoices, stemFromVoiceName } from '../shared/utils/ttsPreview';
+import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
+import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudioRequest } from '../shared/types/tts';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
@@ -54,6 +85,8 @@ import {
   cloneCharacterImage,
   getImagesDir,
 } from './images';
+import { getTtsDir, isTtsLibraryPath, writeTtsWav, concatenateWavBuffers } from './ttsAudio';
+import { getHardwareSnapshot } from './hardware';
 import { parseCharacterHtml, parseLorebookHtml, resolveLocalAvatarPath } from './htmlImport';
 import { parseLorebookJson } from './lorebookJsonImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
@@ -94,6 +127,8 @@ import {
   guardStopPhrasesUpdate,
   guardUrl,
   guardConversationTitle,
+  guardTtsVoice,
+  guardCloneVoiceFilename,
 } from './fieldLengthGuards';
 import { randomUUID } from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
@@ -106,6 +141,39 @@ app.setName(app.isPackaged ? 'roleplaymate' : 'roleplaymate-dev');
 
 const REPO_URL = 'https://github.com/gerp93/RolePlaymate';
 const ISSUES_URL = `${REPO_URL}/issues`;
+const CLONE_VOICE_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Filename Chatterbox will store. The required voice name becomes the stem; the source
+ * file keeps its .wav/.mp3 extension. */
+function cloneUploadFilename(sourcePath: string, voiceName: string): string {
+  const sourceExt = path.extname(sourcePath).toLowerCase();
+  const stem = stemFromVoiceName(voiceName);
+  if (!stem) throw new Error('Voice name must contain letters or numbers.');
+  return `${stem}${sourceExt}`;
+}
+
+function chatterboxCloneErrorMessage(error: unknown, kind: 'import' | 'delete'): string {
+  if (error instanceof ChatterboxRequestError) {
+    const body = error.message;
+    if (
+      kind === 'delete' &&
+      /HTTP 404/.test(body) &&
+      /"Not Found"/i.test(body) &&
+      !/reference audio/i.test(body)
+    ) {
+      return 'This Chatterbox server has no delete API yet. Restart Chatterbox after updating it, or delete the file from its reference_audio folder.';
+    }
+    const detail = body.match(/"detail"\s*:\s*"([^"]+)"/);
+    if (detail?.[1]) return detail[1];
+    const afterStatus = body.replace(/^Chatterbox HTTP \d+:\s*/, '').trim();
+    return afterStatus || body;
+  }
+  return error instanceof Error
+    ? error.message
+    : kind === 'import'
+      ? 'Could not import clip.'
+      : 'Could not delete clip.';
+}
 
 // Portrait <img> tags load through this instead of a raw `file://` src. Electron refuses to
 // load `file://` subresources from a page whose own origin isn't `file:` -- true of the dev
@@ -235,6 +303,7 @@ let promptBuilder: PromptBuilder;
 let promptSettingsService: PromptSettingsService;
 let promptFieldVersionService: PromptFieldVersionService;
 let ollamaClient: OllamaClient;
+let chatterboxClient: ChatterboxClient;
 let chatSessions: ChatSessionManager;
 let lorebookService: LorebookService;
 let securityService: SecurityService;
@@ -547,13 +616,17 @@ app.whenReady().then(() => {
   session.defaultSession.setSpellCheckerLanguages(['en-US']);
   enforceDevDatabaseIsolation();
   // The path is the whole opaque, percent-encoded remainder after `rpimage://` (see toImageUrl
-  // in the renderer) -- resolved and re-checked against the images directory rather than
-  // trusted outright, since the request still originates from renderer-controlled code.
+  // in the renderer) -- resolved and re-checked against the images and tts directories rather
+  // than trusted outright, since the request still originates from renderer-controlled code.
   protocol.handle('rpimage', (request) => {
     const encoded = request.url.slice('rpimage://'.length).replace(/\/+$/, '');
     const requested = path.resolve(decodeURIComponent(encoded));
     const imagesDir = getImagesDir();
-    if (requested !== imagesDir && !requested.startsWith(imagesDir + path.sep)) {
+    const ttsDir = getTtsDir();
+    const allowed =
+      (requested === imagesDir || requested.startsWith(imagesDir + path.sep)) ||
+      (requested === ttsDir || requested.startsWith(ttsDir + path.sep));
+    if (!allowed) {
       return new Response('Forbidden', { status: 403 });
     }
     return net.fetch(pathToFileURL(requested).toString());
@@ -598,6 +671,7 @@ app.whenReady().then(() => {
   // ollamaHost:set below) takes effect on the client's very next request -- no restart, unlike
   // the db path, which OllamaClient never caches for that reason.
   ollamaClient = new OllamaClient(getEffectiveOllamaHost);
+  chatterboxClient = new ChatterboxClient(getEffectiveChatterboxHost);
   lorebookService = new LorebookService(db, securityService);
   modelSamplerService = new ModelSamplerService(db);
   chatSessions = new ChatSessionManager(
@@ -610,6 +684,20 @@ app.whenReady().then(() => {
   );
 
   registerIPCHandlers();
+
+  startChatRetention({
+    conversations: conversationService,
+    lorebooks: lorebookService,
+    isGenerating: (id) => chatSessions.isGenerating(id),
+    dropSession: (id) => chatSessions.dropSession(id),
+    broadcastDeleted: (deletedIds) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('conversations:retention-cleaned', { deletedIds });
+        }
+      }
+    },
+  });
 
   setupApplicationMenu();
   createWindow();
@@ -639,6 +727,7 @@ app.on('window-all-closed', () => {
 // Closing the database belongs here rather than in `window-all-closed`: on macOS that fires
 // without quitting, and a closed handle would break the `activate` -> createWindow path.
 app.on('before-quit', () => {
+  stopChatRetention();
   closeDatabase();
   db = null;
 });
@@ -704,6 +793,9 @@ function registerIPCHandlers() {
         name: `${source.name} (Copy)`,
         description: source.description ?? undefined,
       });
+      if (source.ttsVoice) {
+        characterService.updateCharacter(cloned.id, { ttsVoice: source.ttsVoice });
+      }
 
       for (const clonedPath of clonedImagePaths) {
         characterImageService.addImage(cloned.id, clonedPath);
@@ -728,6 +820,7 @@ function registerIPCHandlers() {
 
   ipcMain.handle('characters:delete', (_, id: string) => {
     const images = characterImageService.getImagesByCharacter(id);
+    conversationService.deleteTtsFilesForCharacter(id);
     characterService.deleteCharacter(id);
     for (const image of images) deleteCharacterImage(image.path);
     return { success: true };
@@ -1024,6 +1117,248 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  ipcMain.handle('chatterboxHost:get', () => ({
+    host: getEffectiveChatterboxHost(),
+    isDefault: isUsingDefaultChatterboxHost(),
+    defaultHost: DEFAULT_CHATTERBOX_HOST,
+  }));
+
+  ipcMain.handle('chatterboxHost:set', (_, host: string) => {
+    guardUrl(host);
+    setChatterboxHost(host);
+    return { success: true };
+  });
+
+  ipcMain.handle('chatterboxHost:resetToDefault', () => {
+    resetChatterboxHost();
+    return { success: true };
+  });
+
+  ipcMain.handle('narratorVoice:get', () => getNarratorVoice());
+
+  ipcMain.handle('narratorVoice:set', (_, voice: CharacterTtsVoice | null) => {
+    guardTtsVoice(voice);
+    setNarratorVoice(voice);
+    return { success: true };
+  });
+
+  ipcMain.handle('tts:status', async () => {
+    try {
+      const predefined = await chatterboxClient.listPredefinedVoices();
+      let filenames: string[] = [];
+      try {
+        filenames = await chatterboxClient.listCloneVoices();
+      } catch {
+        // A stock-voices-only server is still usable; clone list is extra.
+      }
+      const names = getCloneVoiceNames();
+      const clones = normalizeCloneVoices(filenames, names);
+      return { reachable: true, host: chatterboxClient.host, predefined, clones };
+    } catch {
+      return { reachable: false, host: chatterboxClient.host, predefined: [], clones: [] };
+    }
+  });
+
+  ipcMain.handle('tts:importClone', async (_, displayName: string) => {
+    const name = typeof displayName === 'string' ? displayName.trim() : '';
+    try {
+      assertMaxLength(name, FIELD_LIMITS.name, 'Voice name');
+    } catch (error) {
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Invalid voice name.',
+      };
+    }
+    if (!stemFromVoiceName(name)) {
+      return { status: 'error' as const, message: 'Give this voice a name before importing.' };
+    }
+    if (!mainWindow) return { status: 'cancelled' as const };
+
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import a voice clip',
+      properties: ['openFile'],
+      filters: [{ name: 'Voice clips', extensions: ['wav', 'mp3'] }],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { status: 'cancelled' as const };
+
+    const sourcePath = picked.filePaths[0];
+    let filename: string;
+    try {
+      filename = cloneUploadFilename(sourcePath, name);
+      guardCloneVoiceFilename(filename);
+    } catch (error) {
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Invalid voice filename.',
+      };
+    }
+
+    let bytes: Buffer;
+    try {
+      bytes = fs.readFileSync(sourcePath);
+    } catch {
+      return { status: 'error' as const, message: 'Could not read that file.' };
+    }
+    if (bytes.length > CLONE_VOICE_MAX_BYTES) {
+      return { status: 'error' as const, message: 'Clip is too large (max 20 MB).' };
+    }
+
+    try {
+      const clones = await chatterboxClient.uploadReference(filename, bytes);
+      const uploaded =
+        clones.find((row) => row.toLowerCase() === filename.toLowerCase()) ?? filename;
+      setCloneVoiceName(uploaded, name);
+      return { status: 'ok' as const, filename: uploaded };
+    } catch (error) {
+      if (error instanceof ChatterboxUnavailableError) return { status: 'unavailable' as const };
+      return { status: 'error' as const, message: chatterboxCloneErrorMessage(error, 'import') };
+    }
+  });
+
+  ipcMain.handle('tts:deleteClone', async (_, filename: string) => {
+    try {
+      guardCloneVoiceFilename(filename);
+    } catch (error) {
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Invalid voice filename.',
+      };
+    }
+
+    try {
+      await chatterboxClient.deleteReference(filename);
+      removeCloneVoiceName(filename);
+      characterService.clearCloneVoice(filename);
+      conversationService.clearPersonaCloneVoice(filename);
+      const narrator = getNarratorVoice();
+      const narratorCleared = narrator?.mode === 'clone' && narrator.id === filename;
+      if (narratorCleared) setNarratorVoice(null);
+      return { status: 'ok' as const, narratorCleared };
+    } catch (error) {
+      if (error instanceof ChatterboxUnavailableError) return { status: 'unavailable' as const };
+      return { status: 'error' as const, message: chatterboxCloneErrorMessage(error, 'delete') };
+    }
+  });
+
+  ipcMain.handle('tts:revealCloneFolder', async () => {
+    try {
+      const dir = await chatterboxClient.getReferenceAudioDir();
+      if (!dir) {
+        return {
+          status: 'error' as const,
+          message:
+            'Could not find Chatterbox\'s reference_audio folder. Restart Chatterbox after updating it, then try again.',
+        };
+      }
+      if (!fs.existsSync(dir)) {
+        return {
+          status: 'error' as const,
+          message: `That folder isn't on this computer (${dir}). Open it on the machine running Chatterbox.`,
+        };
+      }
+      const err = await shell.openPath(dir);
+      if (err) return { status: 'error' as const, message: err };
+      return { status: 'ok' as const };
+    } catch (error) {
+      if (error instanceof ChatterboxUnavailableError) return { status: 'unavailable' as const };
+      if (
+        error instanceof ChatterboxRequestError &&
+        /HTTP 404/.test(error.message) &&
+        /"Not Found"/i.test(error.message)
+      ) {
+        return {
+          status: 'error' as const,
+          message:
+            "This Chatterbox server has no folder API yet. Restart Chatterbox after updating it, then try again.",
+        };
+      }
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Could not open that folder.',
+      };
+    }
+  });
+
+  ipcMain.handle('tts:speak', async (_, request: TtsSpeakRequest) => {
+    guardTtsVoice(request.voice);
+    guardChatMessage(request.text);
+    if (!textForSpeech(request.text)) return { status: 'skipped' as const };
+    try {
+      const audio = await chatterboxClient.speak(request.text, request.voice);
+      return {
+        status: 'ok' as const,
+        mimeType: audio.mimeType,
+        data: Buffer.from(audio.bytes).toString('base64'),
+      };
+    } catch (error) {
+      if (error instanceof ChatterboxBusyError) return { status: 'busy' as const };
+      if (error instanceof ChatterboxCancelledError) return { status: 'cancelled' as const };
+      if (error instanceof ChatterboxTimeoutError) {
+        return { status: 'error' as const, message: error.message };
+      }
+      if (error instanceof ChatterboxUnavailableError) return { status: 'unavailable' as const };
+      if (error instanceof ChatterboxRequestError) {
+        return { status: 'error' as const, message: error.message };
+      }
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Could not generate speech.',
+      };
+    }
+  });
+
+  ipcMain.handle('tts:cancel', () => {
+    chatterboxClient.cancelSpeak();
+    return { success: true };
+  });
+
+  ipcMain.handle('tts:storeAudio', (_, request: TtsStoreAudioRequest) => {
+    try {
+      if (!request?.messageId || !Array.isArray(request.clips) || request.clips.length === 0) {
+        return { status: 'error' as const, message: 'Nothing to store.' };
+      }
+      if (request.clips.length > 24) {
+        return { status: 'error' as const, message: 'Too many audio clips.' };
+      }
+      const buffers = request.clips.map((clip) => {
+        if (!clip?.data || typeof clip.data !== 'string') throw new Error('Invalid audio clip.');
+        const buf = Buffer.from(clip.data, 'base64');
+        if (buf.length === 0 || buf.length > 12 * 1024 * 1024) throw new Error('Audio clip too large.');
+        return buf;
+      });
+      const wav = concatenateWavBuffers(buffers);
+      const destPath = writeTtsWav(wav);
+      if (request.messageId.startsWith('pending-')) {
+        return { status: 'ok' as const, path: destPath, attached: false };
+      }
+      conversationService.setTtsAudio(request.messageId, request.variantId ?? null, destPath);
+      return { status: 'ok' as const, path: destPath, attached: true };
+    } catch (error) {
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Could not save spoken audio.',
+      };
+    }
+  });
+
+  ipcMain.handle('tts:attachAudio', (_, request: TtsAttachAudioRequest) => {
+    try {
+      if (!request?.messageId || !request.path || request.messageId.startsWith('pending-')) {
+        return { status: 'error' as const, message: 'Cannot attach audio to that message.' };
+      }
+      if (!isTtsLibraryPath(request.path) || !fs.existsSync(request.path)) {
+        return { status: 'error' as const, message: 'Spoken audio file is missing.' };
+      }
+      conversationService.setTtsAudio(request.messageId, request.variantId ?? null, request.path);
+      return { status: 'ok' as const, path: request.path, attached: true };
+    } catch (error) {
+      return {
+        status: 'error' as const,
+        message: error instanceof Error ? error.message : 'Could not attach spoken audio.',
+      };
+    }
+  });
+
   ipcMain.handle('embeddingModelPrompt:getSuppressed', () => ({
     suppressed: isEmbeddingModelPromptSuppressed(),
   }));
@@ -1153,6 +1488,10 @@ function registerIPCHandlers() {
     conversationService.setConversationScenario(id, scenarioId)
   );
 
+  ipcMain.handle('conversations:setKeepForever', (_, id: string, keepForever: boolean) =>
+    conversationService.setKeepForever(id, keepForever)
+  );
+
   ipcMain.handle(
     'conversations:setImageMode',
     (
@@ -1184,6 +1523,17 @@ function registerIPCHandlers() {
     const deletedIds = conversationService.purgeDraftConversations(exceptId ?? null);
     for (const id of deletedIds) chatSessions.dropSession(id);
     return { deletedIds };
+  });
+
+  ipcMain.handle('retention:get', () => getChatRetentionState());
+  ipcMain.handle('retention:setRules', (_, rules: unknown) => saveChatRetentionRules(rules));
+  ipcMain.handle('retention:runNow', (_, ruleId?: unknown) =>
+    typeof ruleId === 'string' && ruleId ? runChatRetention('now', ruleId) : runChatRetention('now')
+  );
+  ipcMain.handle('retention:preview', (_, rules: unknown) => previewRetentionMatches(rules));
+  ipcMain.handle('retention:setActiveConversation', (_, id: string | null) => {
+    setRetentionActiveConversation(typeof id === 'string' ? id : null);
+    return { success: true as const };
   });
 
   // Ollama handlers -- the app stays fully usable when the server is absent, so these
@@ -1273,6 +1623,7 @@ function registerIPCHandlers() {
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());
+  ipcMain.handle('hardware:getSnapshot', () => getHardwareSnapshot());
   ipcMain.handle('updates:check', () => checkForUpdatesNow());
 
   // Prompt settings handlers -- see src/renderer/pages/PromptSettings.tsx. Templates now have

@@ -15,6 +15,10 @@ export interface Message {
   /** Mirrors the selected variant's model, same convention as content. Null for user/system
    * messages and for an assistant message that predates this column. */
   model: string | null;
+  /** Absolute path of the saved spoken WAV for this row (user) or the selected variant
+   * (assistant). Null until speech has been generated once. Replay reads this file instead of
+   * calling Chatterbox again. */
+  ttsAudioPath: string | null;
   /** Monotonic within a conversation, allocated inside the insert transaction. */
   seq: number;
   createdAt: string;
@@ -33,5 +37,21 @@ export interface MessageVariant {
   messageId: string;
   content: string;
   model: string | null;
+  /** Saved spoken WAV for this redo candidate. Independent of other variants -- switching
+   * back to one that was already spoken replays it without regenerating. */
+  ttsAudioPath: string | null;
   createdAt: string;
+}
+
+/** Spoken WAV for what's currently on screen. Assistant redos each have their own file --
+ * never reuse another variant's clip just because they share a message id. */
+export function ttsPathForMessage(
+  message: Message,
+  variants: readonly MessageVariant[] = []
+): string | null {
+  if (message.role === 'assistant' && message.selectedVariantId) {
+    const variant = variants.find((v) => v.id === message.selectedVariantId);
+    if (variant) return variant.ttsAudioPath;
+  }
+  return message.ttsAudioPath;
 }

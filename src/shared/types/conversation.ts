@@ -32,6 +32,8 @@ export interface Conversation {
   scenarioImageId: string | null;
   personaImageMode: ImageMode;
   personaImageId: string | null;
+  /** When true, chat retention rules never delete this conversation. */
+  keepForever: boolean;
   createdAt: string;
   updatedAt: string;
 }

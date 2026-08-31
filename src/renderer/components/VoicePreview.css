@@ -1,0 +1,125 @@
+.voice-preview {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.voice-preview.has-label {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.voice-preview-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.voice-preview-eq-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 4px 0 6px;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.voice-preview-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+  flex: 1 1 auto;
+  min-width: 72px;
+  padding: 2px 4px 1px;
+}
+
+.voice-preview-eq-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  background: var(--color-accent-green);
+  transform-origin: center bottom;
+  transform: scaleY(0.08);
+  opacity: 0.45;
+  border-radius: 1px 1px 0 0;
+}
+
+.voice-preview-eq-wrap.is-live .voice-preview-eq-bar {
+  opacity: 0.95;
+}
+
+.voice-preview-eq-wrap.is-paused .voice-preview-eq-bar {
+  opacity: 0.7;
+}
+
+.voice-preview-btn,
+.voice-preview-wait {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.voice-preview-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.voice-preview-wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 140px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.voice-preview-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent-green);
+  border-radius: 50%;
+  animation: voice-preview-spin 0.7s linear infinite;
+}
+
+@keyframes voice-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.voice-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.voice-picker-select {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.voice-picker-select select {
+  width: 100%;
+}
