@@ -37,6 +37,7 @@ import {
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
 import { migrateImagePathsToCanonicalDir } from './imagePathMigration';
+import { migrateTtsPathsToCanonicalDir } from './ttsPathMigration';
 import { CharacterService } from './database/characterService';
 import { CharacterFieldService } from './database/characterFieldService';
 import { FieldVersionService } from './database/fieldVersionService';
@@ -634,6 +635,7 @@ app.whenReady().then(() => {
 
   db = openDatabaseWithRecovery();
   const imageMigration = migrateImagePathsToCanonicalDir(db);
+  migrateTtsPathsToCanonicalDir(db);
   if (!app.isPackaged && imageMigration.missing > 0) {
     dialog.showMessageBoxSync({
       type: 'warning',

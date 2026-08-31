@@ -97,7 +97,10 @@ export class ChatterboxClient {
       response = await fetch(`${host}${path}`, { ...init, signal });
     } catch (error) {
       if (init.signal?.aborted) throw new ChatterboxCancelledError();
-      if (isAbortError(error) && error instanceof Error && error.name === 'TimeoutError') {
+      // AbortSignal.any reports the timeout as AbortError (reason/cause may be TimeoutError),
+      // so check the timeout signal itself -- error.name === 'TimeoutError' only holds when
+      // that signal was passed through unwrapped.
+      if (timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')) {
         throw new ChatterboxTimeoutError();
       }
       throw new ChatterboxUnavailableError(host, error);
