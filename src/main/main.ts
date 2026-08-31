@@ -154,10 +154,11 @@ function cloneUploadFilename(sourcePath: string, voiceName: string): string {
   return `${stem}${sourceExt}`;
 }
 
-/** macOS bundle extensions that `open` (and so shell.openPath) *launches* rather than reveals.
- * A bundle is a directory, so an isDirectory() check alone does not tell a folder apart from an
- * application (or from a .pkg/.mpkg that Installer opens). Extensions only -- the check below
- * is on the path's last component. */
+/** macOS bundle/package extensions that `open` (and so shell.openPath) acts on -- launching an
+ * application, or handing a .pkg to Installer -- rather than revealing in Finder. Every one of
+ * these is a *directory*, so an isDirectory() check alone cannot tell a folder apart from an
+ * application. This list is the fast, obvious half of the check; resolveOpenableDirectory below
+ * is the half that does not depend on knowing every extension Apple ships. */
 const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
   '.app',
   '.command',
@@ -171,24 +172,38 @@ const MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS = new Set([
   '.mpkg',
 ]);
 
-/** True only for a path that exists, is a real directory (a symlink to one counts, since
- * realpathSync follows it), and is not a macOS bundle that opening would execute. Used to keep
- * server-supplied paths away from shell.openPath's "hand it to the OS default handler"
- * behaviour -- on a Mac that includes launching a .app, which is a directory like any other.
+/** A bundle of any kind carries Contents/Info.plist. Checking for it catches bundle types the
+ * extension list above does not name (.scptd, .saver, .qlgenerator, and whatever ships next),
+ * so the guard does not depend on an exhaustive denylist. A plain folder of audio files has no
+ * such file. */
+function looksLikeBundle(dir: string): boolean {
+  return fs.existsSync(path.join(dir, 'Contents', 'Info.plist'));
+}
+
+/**
+ * The real, symlink-free directory `candidate` refers to, or null when it is not a directory
+ * this app should hand to shell.openPath.
  *
- * Takes the already-resolved path: the extension test is on the last path component, so
- * "/Applications/Evil.app/." would otherwise read as having no extension while still opening
- * the bundle. The same check runs on the realpath so a symlink whose own name is not
- * denylisted cannot alias a bundle. Callers resolve first and open that same resolved path. */
-function isOpenableDirectory(resolved: string): boolean {
-  if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return false;
+ * Returns the resolved path rather than a boolean because the caller must open *that* path:
+ * checking one path and opening another is what made the two previous versions of this guard
+ * bypassable. `fs.realpathSync` is the load-bearing call -- `statSync` follows symlinks while
+ * `path.extname` reads the lexical name, so a symlink innocently named "reference_audio"
+ * pointing at an .app satisfied both an extension denylist and an isDirectory() test, and then
+ * got launched. Resolving first means the extension and bundle-marker tests below see what will
+ * actually be opened.
+ */
+function resolveOpenableDirectory(candidate: string): string | null {
+  if (!path.isAbsolute(candidate)) return null;
+  let real: string;
   try {
-    const real = fs.realpathSync(resolved);
-    if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(real).toLowerCase())) return false;
-    return fs.statSync(real).isDirectory();
+    real = fs.realpathSync(candidate);
+    if (!fs.statSync(real).isDirectory()) return null;
   } catch {
-    return false;
+    return null;
   }
+  if (MACOS_LAUNCHABLE_BUNDLE_EXTENSIONS.has(path.extname(real).toLowerCase())) return null;
+  if (looksLikeBundle(real)) return null;
+  return real;
 }
 
 function chatterboxCloneErrorMessage(error: unknown, kind: 'import' | 'delete'): string {
@@ -1358,10 +1373,10 @@ function registerIPCHandlers() {
       // `dir` is whatever the Chatterbox server put in its JSON response, so it is untrusted
       // input, not a path this app chose. shell.openPath on a *file* hands it to the OS default
       // handler -- i.e. runs it -- so a hostile or spoofed server on the configured host could
-      // answer with an .exe/.desktop/.app and get it launched by this button. Only ever open an
-      // absolute path that exists AND is a directory the OS won't execute.
-      const resolvedDir = path.resolve(dir);
-      if (!path.isAbsolute(dir) || !isOpenableDirectory(resolvedDir)) {
+      // answer with an .exe/.desktop/.app and get it launched by this button. Only ever open the
+      // fully resolved directory this vets, never the string the server sent.
+      const resolvedDir = resolveOpenableDirectory(dir);
+      if (!resolvedDir) {
         return {
           status: 'error' as const,
           message: `That folder isn't on this computer (${dir}). Open it on the machine running Chatterbox.`,
