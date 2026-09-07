@@ -17,7 +17,9 @@ export const ABOUT_FAQ: AboutFaqItem[] = [
     answer: (
       <>
         No for the library — characters, personas, world books, and images work without it. Yes for chat:
-        replies are generated through Ollama on your machine.
+        replies are generated through Ollama on your machine. You can pick the Ollama folder once under{' '}
+        <Link to="/settings?tab=servers">Settings → Chat Dependencies</Link> so RolePlaymate starts it on
+        launch if it isn&apos;t already running. Stop on that page shuts it down; closing the app does not.
       </>
     ),
   },
@@ -160,7 +162,10 @@ export const ABOUT_FAQ: AboutFaqItem[] = [
         playing). Controls live on each message
         (play/pause, generate, a spinner while Chatterbox is working). Once a line has been spoken,
         the WAV is kept with that message so play does not call Chatterbox again. Chat still works if
-        Chatterbox isn&apos;t running; replies just stay silent.
+        Chatterbox isn&apos;t running; replies just stay silent. Pick the Chatterbox TTS Server folder
+        once under <Link to="/settings?tab=servers">Settings → Chat Dependencies</Link> so RolePlaymate
+        can start it on launch if it isn&apos;t already running. Stop on that page shuts it down;
+        closing the app does not.
       </>
     ),
   },

@@ -169,6 +169,16 @@ export class ChatterboxClient {
     return this.listCloneVoices();
   }
 
+  /** Cheap liveness check -- used before auto-starting a configured Chatterbox install. */
+  async isReachable(): Promise<boolean> {
+    try {
+      await this.request('/', { method: 'GET' }, 2_500);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async deleteReference(filename: string): Promise<string[]> {
     const params = new URLSearchParams({ filename });
     const response = await this.request(

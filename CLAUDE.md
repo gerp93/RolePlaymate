@@ -86,9 +86,11 @@ reaches a model -- `{{user}}` resolves to the selected persona's name, or
 `chat/ollamaClient.ts` is a thin `fetch` client against the Ollama HTTP API --
 no dependency, no model in-process. It streams `/api/chat` (the source never
 did) and keeps a non-streaming path for the short internal calls where partial
-output is useless. `chat/chatSession.ts` holds per-conversation state in a Map;
-the source used module globals, which is why it could only ever have one live
-conversation.
+output is useless. Settings can store the Ollama install folder in
+`app-config.json` and RolePlaymate starts it on launch if the host isn't
+reachable; Settings Stop shuts it down. Quit does not stop it. `chat/chatSession.ts` holds per-conversation
+state in a Map; the source used module globals, which is why it could only ever
+have one live conversation.
 
 **Chat is the only feature that pushes to the renderer.** Everything else is
 `ipcRenderer.invoke` request/response. `chat:send` returns a `streamId`
@@ -112,7 +114,9 @@ Optional, same pattern as Ollama: a thin `fetch` client
 (https://github.com/devnen/Chatterbox-TTS-Server, default
 `http://localhost:8004`). The app ships no voice model. Chat and the library
 stay fully usable when Chatterbox is absent -- a down server is silent, never a
-failed turn.
+failed turn. Settings stores the Chatterbox install folder in `app-config.json`
+and RolePlaymate starts it on launch if the host isn't reachable; Settings Stop
+shuts it down. Quit does not stop it.
 
 A character stores an optional `ttsVoice` (mode `predefined` | `clone` plus a
 filename). `predefined` is a stock file in Chatterbox's `voices/` folder;

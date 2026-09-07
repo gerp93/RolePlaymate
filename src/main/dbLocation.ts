@@ -19,6 +19,10 @@ interface AppConfig {
   dbPath?: string;
   ollamaHost?: string;
   chatterboxHost?: string;
+  /** Folder that contains ollama.exe / ollama. RolePlaymate starts it on launch if the server is down. */
+  ollamaLaunchDir?: string;
+  /** Folder that contains Chatterbox's start.bat / start.py. RolePlaymate starts it on launch if the server is down. */
+  chatterboxLaunchDir?: string;
   /** Fallback TTS voice when a character has none. Same shape as Character.ttsVoice. */
   narratorVoice?: CharacterTtsVoice;
   /** Friendly names for Chatterbox clone clips, keyed by filename. */
@@ -292,6 +296,36 @@ export function setChatterboxHost(host: string): void {
 export function resetChatterboxHost(): void {
   const config = readConfig();
   delete config.chatterboxHost;
+  writeConfig(config);
+}
+
+export function getOllamaLaunchDir(): string | null {
+  const dir = readConfig().ollamaLaunchDir?.trim();
+  return dir || null;
+}
+
+export function setOllamaLaunchDir(dir: string): void {
+  writeConfig({ ...readConfig(), ollamaLaunchDir: dir });
+}
+
+export function clearOllamaLaunchDir(): void {
+  const config = readConfig();
+  delete config.ollamaLaunchDir;
+  writeConfig(config);
+}
+
+export function getChatterboxLaunchDir(): string | null {
+  const dir = readConfig().chatterboxLaunchDir?.trim();
+  return dir || null;
+}
+
+export function setChatterboxLaunchDir(dir: string): void {
+  writeConfig({ ...readConfig(), chatterboxLaunchDir: dir });
+}
+
+export function clearChatterboxLaunchDir(): void {
+  const config = readConfig();
+  delete config.chatterboxLaunchDir;
   writeConfig(config);
 }
 

@@ -13,6 +13,8 @@
  * - chatMessage / directions / memory: live chat and continuity
  * - stopPhrases: multiline stop-phrase list
  * - url: Ollama / Chatterbox host string
+ * - ollamaLaunchDir: Ollama install folder path
+ * - chatterboxLaunchDir: Chatterbox TTS Server folder path
  * - conversationTitle: renamed chat threads
  */
 export const FIELD_LIMITS = {
@@ -27,6 +29,8 @@ export const FIELD_LIMITS = {
   memory: 2_000,
   stopPhrases: 4_000,
   url: 2_048, // Ollama / Chatterbox host strings
+  ollamaLaunchDir: 1_024,
+  chatterboxLaunchDir: 1_024,
   conversationTitle: 200,
 } as const;
 

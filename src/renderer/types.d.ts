@@ -134,10 +134,33 @@ declare global {
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
       };
+      ollamaLaunch: {
+        get: () => Promise<{ dir: string | null }>;
+        choose: () => Promise<
+          { status: 'ok'; dir: string } | { status: 'cancelled' } | { status: 'error'; message: string }
+        >;
+        clear: () => Promise<{ success: boolean }>;
+        startNow: () => Promise<
+          { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
+        >;
+        status: () => Promise<{ reachable: boolean }>;
+        stop: () => Promise<{ status: 'ok' } | { status: 'error'; message: string }>;
+      };
       chatterboxHost: {
         get: () => Promise<ChatterboxHostInfo>;
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
+      };
+      chatterboxLaunch: {
+        get: () => Promise<{ dir: string | null }>;
+        choose: () => Promise<
+          { status: 'ok'; dir: string } | { status: 'cancelled' } | { status: 'error'; message: string }
+        >;
+        clear: () => Promise<{ success: boolean }>;
+        startNow: () => Promise<
+          { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
+        >;
+        stop: () => Promise<{ status: 'ok' } | { status: 'error'; message: string }>;
       };
       narratorVoice: {
         get: () => Promise<CharacterTtsVoice | null>;

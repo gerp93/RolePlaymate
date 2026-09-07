@@ -16,10 +16,12 @@ import {
   isUsingDefaultOllamaHost,
   setOllamaHost,
   resetOllamaHost,
+  getOllamaLaunchDir,
   getEffectiveChatterboxHost,
   isUsingDefaultChatterboxHost,
   setChatterboxHost,
   resetChatterboxHost,
+  getChatterboxLaunchDir,
   getNarratorVoice,
   setNarratorVoice,
   getCloneVoiceNames,
@@ -72,6 +74,20 @@ import {
   ChatterboxUnavailableError,
   DEFAULT_CHATTERBOX_HOST,
 } from './chat/chatterboxClient';
+import {
+  chooseOllamaLaunchDir,
+  forgetOllamaLaunchDir,
+  maybeStartOllamaOnAppLaunch,
+  startOllamaFromDir,
+  stopOllama,
+} from './ollamaLaunch';
+import {
+  chooseChatterboxLaunchDir,
+  forgetChatterboxLaunchDir,
+  maybeStartChatterboxOnAppLaunch,
+  startChatterboxFromDir,
+  stopChatterbox,
+} from './chatterboxLaunch';
 import { textForSpeech } from '../shared/utils/ttsText';
 import { normalizeCloneVoices, stemFromVoiceName } from '../shared/utils/ttsPreview';
 import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
@@ -701,6 +717,8 @@ app.whenReady().then(() => {
 
   setupApplicationMenu();
   createWindow();
+  void maybeStartOllamaOnAppLaunch(ollamaClient);
+  void maybeStartChatterboxOnAppLaunch(chatterboxClient);
   setupAutoUpdater();
 
   app.on('activate', () => {
@@ -1117,6 +1135,30 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  ipcMain.handle('ollamaLaunch:get', () => ({
+    dir: getOllamaLaunchDir(),
+  }));
+
+  ipcMain.handle('ollamaLaunch:choose', () => chooseOllamaLaunchDir(mainWindow));
+
+  ipcMain.handle('ollamaLaunch:clear', () => {
+    forgetOllamaLaunchDir();
+    return { success: true };
+  });
+
+  ipcMain.handle('ollamaLaunch:startNow', async () => {
+    const dir = getOllamaLaunchDir();
+    if (!dir) return { status: 'error' as const, message: 'Choose an Ollama folder first.' };
+    if (await ollamaClient.isReachable()) return { status: 'already-running' as const };
+    return startOllamaFromDir(dir);
+  });
+
+  ipcMain.handle('ollamaLaunch:status', async () => ({
+    reachable: await ollamaClient.isReachable(),
+  }));
+
+  ipcMain.handle('ollamaLaunch:stop', () => stopOllama(ollamaClient));
+
   ipcMain.handle('chatterboxHost:get', () => ({
     host: getEffectiveChatterboxHost(),
     isDefault: isUsingDefaultChatterboxHost(),
@@ -1133,6 +1175,26 @@ function registerIPCHandlers() {
     resetChatterboxHost();
     return { success: true };
   });
+
+  ipcMain.handle('chatterboxLaunch:get', () => ({
+    dir: getChatterboxLaunchDir(),
+  }));
+
+  ipcMain.handle('chatterboxLaunch:choose', () => chooseChatterboxLaunchDir(mainWindow));
+
+  ipcMain.handle('chatterboxLaunch:clear', () => {
+    forgetChatterboxLaunchDir();
+    return { success: true };
+  });
+
+  ipcMain.handle('chatterboxLaunch:startNow', async () => {
+    const dir = getChatterboxLaunchDir();
+    if (!dir) return { status: 'error' as const, message: 'No Chatterbox folder is set.' };
+    if (await chatterboxClient.isReachable()) return { status: 'already-running' as const };
+    return startChatterboxFromDir(dir);
+  });
+
+  ipcMain.handle('chatterboxLaunch:stop', () => stopChatterbox(chatterboxClient));
 
   ipcMain.handle('narratorVoice:get', () => getNarratorVoice());
 

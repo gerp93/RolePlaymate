@@ -86,6 +86,16 @@ export class OllamaClient {
     return response;
   }
 
+  /** Cheap liveness check -- used before auto-starting a configured Ollama install. */
+  async isReachable(): Promise<boolean> {
+    try {
+      await this.request('/api/tags', { method: 'GET' }, 2_500);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Tags of every model the server currently has pulled. */
   async listModels(): Promise<string[]> {
     const response = await this.request('/api/tags', { method: 'GET' }, REQUEST_TIMEOUT_MS);
