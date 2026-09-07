@@ -274,6 +274,10 @@ declare global {
         delete: (id: string) => Promise<{ success: true }>;
         /** Bulk-adds entries to an already-existing book from a hand-authored JSON file. */
         importFromJson: (lorebookId: string) => Promise<{ count: number; warnings: string[] } | null>;
+        /** Reassigns one entry to a different lorebook, re-encrypting for the destination's hidden state. */
+        move: (entryId: string, targetLorebookId: string) => Promise<LorebookEntry>;
+        /** Same, for several entries at once (bulk move from a multi-select). */
+        moveMany: (entryIds: string[], targetLorebookId: string) => Promise<LorebookEntry[]>;
       };
       loreVersions: {
         getByEntry: (entryId: string) => Promise<LorebookEntryVersion[]>;

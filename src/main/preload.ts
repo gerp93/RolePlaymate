@@ -229,6 +229,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: string, input: unknown) => ipcRenderer.invoke('loreEntries:update', id, input),
     delete: (id: string) => ipcRenderer.invoke('loreEntries:delete', id),
     importFromJson: (lorebookId: string) => ipcRenderer.invoke('loreEntries:importFromJson', lorebookId),
+    move: (entryId: string, targetLorebookId: string) =>
+      ipcRenderer.invoke('loreEntries:move', entryId, targetLorebookId),
+    moveMany: (entryIds: string[], targetLorebookId: string) =>
+      ipcRenderer.invoke('loreEntries:moveMany', entryIds, targetLorebookId),
   },
 
   loreVersions: {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LorebookEntry, LorebookEntryVersion } from '../../../shared/types/lorebook';
+import { Lorebook, LorebookEntry, LorebookEntryVersion } from '../../../shared/types/lorebook';
 import LimitedInput from '../LimitedInput';
 import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
@@ -8,6 +8,12 @@ interface Props {
   entry: LorebookEntry;
   onChanged: () => void;
   onDeleted: () => void;
+  /** Present only when the parent offers multi-select (a bulk "Move selected to…" action). */
+  selected?: boolean;
+  onToggleSelected?: (entryId: string) => void;
+  /** Other books this entry could move to. Omitted/empty hides the per-entry "Move to…" control. */
+  moveTargets?: Lorebook[];
+  onMove?: (entryId: string, targetLorebookId: string) => void;
 }
 
 /**
@@ -17,7 +23,15 @@ interface Props {
  * same active marker, same refusal to delete the last one -- because lore uses the same
  * versioning model rather than a parallel one.
  */
-export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) {
+export default function LoreEntryEditor({
+  entry,
+  onChanged,
+  onDeleted,
+  selected,
+  onToggleSelected,
+  moveTargets,
+  onMove,
+}: Props) {
   const [versions, setVersions] = useState<LorebookEntryVersion[]>([]);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -90,6 +104,15 @@ export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) 
   return (
     <li className={`lore-entry${enabled ? '' : ' lore-entry-disabled'}`}>
       <div className="lore-entry-head">
+        {onToggleSelected && (
+          <input
+            type="checkbox"
+            className="lore-entry-select"
+            aria-label={`Select ${entry.title}`}
+            checked={!!selected}
+            onChange={() => onToggleSelected(entry.id)}
+          />
+        )}
         <button type="button" className="lore-entry-toggle" onClick={() => setOpen((o) => !o)}>
           {open ? '▾' : '▸'} {entry.title}
         </button>
@@ -99,6 +122,23 @@ export default function LoreEntryEditor({ entry, onChanged, onDeleted }: Props) 
           {entry.priority !== 0 && <span className="lore-badge">p{entry.priority}</span>}
           {!entry.enabled && <span className="lore-badge lore-badge-off">disabled</span>}
         </span>
+        {moveTargets && moveTargets.length > 0 && onMove && (
+          <select
+            className="lore-entry-move-select"
+            aria-label={`Move ${entry.title} to another lorebook`}
+            value=""
+            onChange={(e) => {
+              if (e.target.value) onMove(entry.id, e.target.value);
+            }}
+          >
+            <option value="">Move to…</option>
+            {moveTargets.map((book) => (
+              <option key={book.id} value={book.id}>
+                {book.name}
+              </option>
+            ))}
+          </select>
+        )}
         <button type="button" className="btn btn-danger lore-entry-delete" onClick={onDeleted}>
           Delete
         </button>

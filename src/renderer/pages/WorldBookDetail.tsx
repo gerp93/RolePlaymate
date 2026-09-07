@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Lorebook, LorebookEntry } from '../../shared/types/lorebook';
+import { LOREBOOK_ENTRIES_IMPORT_SAMPLE } from '../../shared/lorebookImportSample';
 import LoreEntryEditor from '../components/lore/LoreEntryEditor';
+import LorebookJsonImport from '../components/lore/LorebookJsonImport';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
@@ -15,16 +17,21 @@ export default function WorldBookDetail() {
   const { hiddenUnlocked } = useSecurity();
   const [book, setBook] = useState<Lorebook | null>(null);
   const [entries, setEntries] = useState<LorebookEntry[]>([]);
+  const [otherWorldBooks, setOtherWorldBooks] = useState<Lorebook[]>([]);
   const [nameDraft, setNameDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [newEntryTitle, setNewEntryTitle] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkMoveTarget, setBulkMoveTarget] = useState('');
 
   const load = useCallback(async () => {
     if (!lorebookId) return;
-    const [loadedBook, loadedEntries] = await Promise.all([
+    const [loadedBook, loadedEntries, allWorldBooks] = await Promise.all([
       window.electronAPI.lorebooks.getById(lorebookId),
       window.electronAPI.loreEntries.getByBook(lorebookId),
+      window.electronAPI.lorebooks.getWorldBooks(),
     ]);
     if (!loadedBook) {
       navigate('/world-books');
@@ -34,6 +41,8 @@ export default function WorldBookDetail() {
     setNameDraft(loadedBook.name);
     setDescriptionDraft(loadedBook.description ?? '');
     setEntries(loadedEntries);
+    setOtherWorldBooks(allWorldBooks.filter((b) => b.id !== lorebookId));
+    setSelectedIds(new Set());
   }, [lorebookId, navigate]);
 
   // hiddenUnlocked: load() already ran under the previous lock state holds ciphertext when
@@ -80,6 +89,54 @@ export default function WorldBookDetail() {
     setNewEntryTitle('');
     await load();
   };
+
+  const importJson = async () => {
+    if (!lorebookId) return;
+    setImporting(true);
+    try {
+      const result = await window.electronAPI.loreEntries.importFromJson(lorebookId);
+      if (!result) return;
+      await load();
+      if (result.warnings.length > 0) {
+        alert(`Imported ${result.count} ${result.count === 1 ? 'entry' : 'entries'} with some gaps:\n\n${result.warnings.join('\n')}`);
+      }
+    } catch (err) {
+      alert(`Import failed: ${(err as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const toggleSelected = (entryId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entryId)) next.delete(entryId);
+      else next.add(entryId);
+      return next;
+    });
+  };
+
+  const moveEntry = async (entryId: string, targetLorebookId: string) => {
+    try {
+      await window.electronAPI.loreEntries.move(entryId, targetLorebookId);
+      await load();
+    } catch (err) {
+      alert(`Move failed: ${(err as Error).message}`);
+    }
+  };
+
+  const moveSelected = async () => {
+    if (!bulkMoveTarget || selectedIds.size === 0) return;
+    try {
+      await window.electronAPI.loreEntries.moveMany(Array.from(selectedIds), bulkMoveTarget);
+      setBulkMoveTarget('');
+      await load();
+    } catch (err) {
+      alert(`Move failed: ${(err as Error).message}`);
+    }
+  };
+
+  const visibleMoveTargets = otherWorldBooks.filter((b) => hiddenUnlocked || !b.isHidden);
 
   if (!book) return <div className="text-muted">Loading…</div>;
   if (book.isHidden && !hiddenUnlocked) return <LockedPlaceholder label="This world book" />;
@@ -140,8 +197,37 @@ export default function WorldBookDetail() {
             >
               Add entry
             </button>
+            <LorebookJsonImport
+              importing={importing}
+              onImport={() => void importJson()}
+              sample={LOREBOOK_ENTRIES_IMPORT_SAMPLE}
+            />
           </div>
         </div>
+
+        {selectedIds.size > 0 && (
+          <div className="lore-bulk-actions">
+            <span>{selectedIds.size} selected</span>
+            <select
+              value={bulkMoveTarget}
+              onChange={(e) => setBulkMoveTarget(e.target.value)}
+              disabled={visibleMoveTargets.length === 0}
+            >
+              <option value="">Move to…</option>
+              {visibleMoveTargets.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn btn-primary" disabled={!bulkMoveTarget} onClick={() => void moveSelected()}>
+              Move
+            </button>
+            <button type="button" className="btn" onClick={() => setSelectedIds(new Set())}>
+              Clear selection
+            </button>
+          </div>
+        )}
 
         <ul className="lore-entry-list">
           {entries.length === 0 && (
@@ -162,6 +248,10 @@ export default function WorldBookDetail() {
                 await window.electronAPI.loreEntries.delete(entry.id);
                 await load();
               }}
+              selected={selectedIds.has(entry.id)}
+              onToggleSelected={toggleSelected}
+              moveTargets={visibleMoveTargets}
+              onMove={moveEntry}
             />
           ))}
         </ul>

@@ -1987,6 +1987,12 @@ function registerLorebookHandlers() {
     lorebookService.deleteEntry(id);
     return { success: true };
   });
+  ipcMain.handle('loreEntries:move', (_, entryId: string, targetLorebookId: string) =>
+    lorebookService.moveEntry(entryId, targetLorebookId)
+  );
+  ipcMain.handle('loreEntries:moveMany', (_, entryIds: string[], targetLorebookId: string) =>
+    lorebookService.moveEntries(entryIds, targetLorebookId)
+  );
 
   // Bulk-adds entries to an already-existing book (a character's or persona's personal
   // history) from a hand-authored JSON file. "name"/"description" in the JSON, if present,
