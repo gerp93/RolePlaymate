@@ -240,8 +240,10 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'lorebooks', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'messages', 'selected_variant_id', 'TEXT REFERENCES message_variants(id) ON DELETE SET NULL');
   ensureColumn(db, 'messages', 'model', 'TEXT');
+  ensureColumn(db, 'messages', 'generation_ms', 'INTEGER');
   ensureColumn(db, 'messages', 'tts_audio_path', 'TEXT');
   ensureColumn(db, 'message_variants', 'model', 'TEXT');
+  ensureColumn(db, 'message_variants', 'generation_ms', 'INTEGER');
   ensureColumn(db, 'message_variants', 'tts_audio_path', 'TEXT');
   ensureColumn(db, 'message_variants', 'debug', 'TEXT');
   ensureColumn(db, 'model_sampler_defaults', 'enabled', 'INTEGER NOT NULL DEFAULT 1');

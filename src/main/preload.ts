@@ -291,6 +291,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetField: (model: string, field: string) => ipcRenderer.invoke('modelTuning:resetField', model, field),
     resetAll: (model: string) => ipcRenderer.invoke('modelTuning:resetAll', model),
     setEnabled: (model: string, enabled: boolean) => ipcRenderer.invoke('modelTuning:setEnabled', model, enabled),
+    getAverageResponseTimes: () => ipcRenderer.invoke('modelTuning:getAverageResponseTimes'),
   },
 
   personas: {

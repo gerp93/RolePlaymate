@@ -61,6 +61,7 @@ const MESSAGE_COLUMNS = `
   content,
   selected_variant_id as selectedVariantId,
   model,
+  generation_ms as generationMs,
   tts_audio_path as ttsAudioPath,
   seq,
   created_at as createdAt
@@ -71,6 +72,7 @@ const VARIANT_COLUMNS = `
   message_id as messageId,
   content,
   model,
+  generation_ms as generationMs,
   tts_audio_path as ttsAudioPath,
   created_at as createdAt
 `;
@@ -150,6 +152,7 @@ function rowToMessage(row: Record<string, unknown>): Message {
     content: row.content as string,
     selectedVariantId: (row.selectedVariantId as string | null) ?? null,
     model: (row.model as string | null) ?? null,
+    generationMs: (row.generationMs as number | null) ?? null,
     ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
     seq: row.seq as number,
     createdAt: row.createdAt as string,
@@ -162,6 +165,7 @@ function rowToVariant(row: Record<string, unknown>): MessageVariant {
     messageId: row.messageId as string,
     content: row.content as string,
     model: (row.model as string | null) ?? null,
+    generationMs: (row.generationMs as number | null) ?? null,
     ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
     createdAt: row.createdAt as string,
   };
@@ -633,11 +637,12 @@ export class ConversationService {
     conversationId: string,
     content: string,
     model: string,
-    debug: ChatDebugInfo
+    debug: ChatDebugInfo,
+    generationMs?: number
   ): { message: Message; variant: MessageVariant } {
     return transaction(this.db, () => {
       const message = this.appendMessage({ conversationId, role: 'assistant', content });
-      const variant = this.addVariant(message.id, content, model, debug);
+      const variant = this.addVariant(message.id, content, model, debug, generationMs);
       const selected = this.selectVariant(message.id, variant.id);
       return { message: selected, variant };
     });
@@ -697,16 +702,48 @@ export class ConversationService {
   /** Records a new redo candidate without changing which one is currently shown -- the caller
    * (chatSession.regenerate) selects it separately once generation succeeds, so a failed or
    * cancelled redo never disturbs what's on screen. */
-  addVariant(messageId: string, content: string, model?: string, debug?: ChatDebugInfo): MessageVariant {
+  addVariant(
+    messageId: string,
+    content: string,
+    model?: string,
+    debug?: ChatDebugInfo,
+    generationMs?: number
+  ): MessageVariant {
     const id = uuidv4();
     this.db
       .prepare(
-        `INSERT INTO message_variants (id, message_id, content, model, debug, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO message_variants (id, message_id, content, model, generation_ms, debug, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, messageId, content, model ?? null, debug ? JSON.stringify(debug) : null, new Date().toISOString());
+      .run(
+        id,
+        messageId,
+        content,
+        model ?? null,
+        generationMs ?? null,
+        debug ? JSON.stringify(debug) : null,
+        new Date().toISOString()
+      );
     const row = this.db.prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ?`).get(id);
     return rowToVariant(row!);
+  }
+
+  /**
+   * Average generation time per model, across every variant ever produced by it -- not just
+   * the currently-selected one, so a message that was later redone with a different model
+   * still counts its earlier attempt's timing under the model that actually produced it.
+   * Backs the Model Tuning page's "Avg response time" column.
+   */
+  getAverageGenerationMsByModel(): { model: string; avgMs: number; count: number }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT model, AVG(generation_ms) as avgMs, COUNT(*) as count
+         FROM message_variants
+         WHERE model IS NOT NULL AND generation_ms IS NOT NULL
+         GROUP BY model`
+      )
+      .all() as unknown as { model: string; avgMs: number; count: number }[];
+    return rows.map((row) => ({ model: row.model, avgMs: Math.round(row.avgMs), count: row.count }));
   }
 
   /** Attaches a saved spoken WAV to a user message, or to one assistant variant (and the
@@ -759,9 +796,9 @@ export class ConversationService {
 
       this.db
         .prepare(
-          `UPDATE messages SET content = ?, model = ?, selected_variant_id = ?, tts_audio_path = ? WHERE id = ?`
+          `UPDATE messages SET content = ?, model = ?, generation_ms = ?, selected_variant_id = ?, tts_audio_path = ? WHERE id = ?`
         )
-        .run(variant.content, variant.model, variantId, variant.ttsAudioPath, messageId);
+        .run(variant.content, variant.model, variant.generationMs, variantId, variant.ttsAudioPath, messageId);
 
       return this.getMessage(messageId)!;
     });

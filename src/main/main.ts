@@ -1679,6 +1679,11 @@ function registerIPCHandlers() {
   ipcMain.handle('modelTuning:setEnabled', (_, model: string, enabled: boolean) =>
     modelSamplerService.setEnabled(model, enabled)
   );
+  // Average reply generation time per model, across every reply ever generated -- backs the
+  // Model Tuning page's "Avg response time" column. See conversationService.ts.
+  ipcMain.handle('modelTuning:getAverageResponseTimes', () =>
+    conversationService.getAverageGenerationMsByModel()
+  );
 
   registerLorebookHandlers();
   registerChatHandlers();
