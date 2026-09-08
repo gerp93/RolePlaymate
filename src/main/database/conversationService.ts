@@ -724,24 +724,27 @@ export class ConversationService {
         debug ? JSON.stringify(debug) : null,
         new Date().toISOString()
       );
+    const now = new Date().toISOString();
+    // Durable copy, independent of this variant's row -- see generation_stats' schema comment.
+    // Deleting the message (or the whole conversation) later must not erase this timing entry.
+    if (model && generationMs != null) {
+      this.db
+        .prepare(`INSERT INTO generation_stats (id, model, generation_ms, created_at) VALUES (?, ?, ?, ?)`)
+        .run(uuidv4(), model, generationMs, now);
+    }
     const row = this.db.prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ?`).get(id);
     return rowToVariant(row!);
   }
 
   /**
-   * Average generation time per model, across every variant ever produced by it -- not just
-   * the currently-selected one, so a message that was later redone with a different model
-   * still counts its earlier attempt's timing under the model that actually produced it.
-   * Backs the Model Tuning page's "Avg response time" column.
+   * Average generation time per model, and how many replies that average is built from --
+   * backs the Model Tuning page's "Avg response time" and "Replies" columns. Reads from
+   * generation_stats rather than message_variants, since a deleted message (or an emptied
+   * conversation) must not shrink this history -- see that table's schema comment.
    */
   getAverageGenerationMsByModel(): { model: string; avgMs: number; count: number }[] {
     const rows = this.db
-      .prepare(
-        `SELECT model, AVG(generation_ms) as avgMs, COUNT(*) as count
-         FROM message_variants
-         WHERE model IS NOT NULL AND generation_ms IS NOT NULL
-         GROUP BY model`
-      )
+      .prepare(`SELECT model, AVG(generation_ms) as avgMs, COUNT(*) as count FROM generation_stats GROUP BY model`)
       .all() as unknown as { model: string; avgMs: number; count: number }[];
     return rows.map((row) => ({ model: row.model, avgMs: Math.round(row.avgMs), count: row.count }));
   }

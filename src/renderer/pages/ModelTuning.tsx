@@ -522,6 +522,12 @@ function ModelTuningPage() {
                 >
                   Avg Response
                 </th>
+                <th
+                  style={{ textAlign: 'left', padding: '6px 10px' }}
+                  title="How many replies that average is built from. Kept even after the replies themselves are deleted."
+                >
+                  Replies
+                </th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Params</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Quant</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Context</th>
@@ -587,12 +593,13 @@ function ModelTuningPage() {
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                     {avgResponseByModel[info.name] ? (
-                      <span title={`Averaged over ${avgResponseByModel[info.name].count} repl${avgResponseByModel[info.name].count === 1 ? 'y' : 'ies'}`}>
-                        {formatResponseTime(avgResponseByModel[info.name].avgMs)}
-                      </span>
+                      formatResponseTime(avgResponseByModel[info.name].avgMs)
                     ) : (
                       <span className="text-muted" title="No replies generated with this model yet">—</span>
                     )}
+                  </td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                    {avgResponseByModel[info.name]?.count ?? <span className="text-muted">—</span>}
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }} title={info.parameterSize ? undefined : 'Not reported by Ollama'}>
                     {info.parameterSize || '—'}
