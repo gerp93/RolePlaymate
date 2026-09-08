@@ -107,6 +107,18 @@ before generation (so a crash can't lose it), the reply only on success -- the
 source wrote its error text into the transcript, poisoning the context of every
 later turn.
 
+Each reply's wall-clock generation time is stored twice: once on its
+`message_variants` row (shown in the transcript's hover info next to the
+model name, gone if that message is deleted) and once as a standalone row in
+`generation_stats` (model + duration only, no message/conversation reference
+at all). The Model Tuning page's "Avg response time"/"Replies" columns read
+only the latter, so deleting a message, deleting a whole conversation, or
+letting retention clear old chats never shrinks that history -- only the
+reply text and its FK-linked rows are deletable; the timing metric survives
+on purpose. The composer's Stop button shows a live-ticking elapsed time
+while `isGenerating` is true, covering both the pre-first-token wait and the
+rest of the stream.
+
 ## Spoken replies (Chatterbox)
 
 Optional, same pattern as Ollama: a thin `fetch` client

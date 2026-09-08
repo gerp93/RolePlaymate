@@ -1,6 +1,7 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
+import { formatResponseTime } from '../../utils/formatResponseTime';
 
 interface Props {
   disabled: boolean;
@@ -55,6 +56,22 @@ export default function Composer({
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggesting, setSuggesting] = useState(false);
   const [editingSuggestion, setEditingSuggestion] = useState(false);
+
+  // Live "how long has this been waiting" readout on the Stop button -- ticks while
+  // isGenerating covers both the pre-first-token wait and the rest of the stream, so it
+  // reflects the same span the eventual generation_ms will record. Resets to 0 the moment
+  // generation starts or ends, rather than freezing on the last value.
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!isGenerating) {
+      setElapsedMs(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setElapsedMs(0);
+    const interval = setInterval(() => setElapsedMs(Date.now() - startedAt), 200);
+    return () => clearInterval(interval);
+  }, [isGenerating]);
 
   const submit = () => {
     if (!message.trim() || disabled || isGenerating) return;
@@ -243,7 +260,7 @@ export default function Composer({
         {modelPicker}
         {isGenerating ? (
           <button type="button" className="btn btn-danger chat-send" onClick={onCancel}>
-            Stop
+            Stop <span className="chat-send-elapsed">{formatResponseTime(elapsedMs)}</span>
           </button>
         ) : (
           <button
