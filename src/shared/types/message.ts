@@ -15,6 +15,9 @@ export interface Message {
   /** Mirrors the selected variant's model, same convention as content. Null for user/system
    * messages and for an assistant message that predates this column. */
   model: string | null;
+  /** Mirrors the selected variant's generation time, same convention as content/model. Null
+   * for user/system messages and for an assistant message that predates this column. */
+  generationMs: number | null;
   /** Absolute path of the saved spoken WAV for this row (user) or the selected variant
    * (assistant). Null until speech has been generated once. Replay reads this file instead of
    * calling Chatterbox again. */
@@ -37,6 +40,10 @@ export interface MessageVariant {
   messageId: string;
   content: string;
   model: string | null;
+  /** Wall-clock time this variant took to generate, in milliseconds. Null for variants that
+   * predate this column, or that were never produced by a model call (e.g. a hand-edited
+   * message). Powers the Model Tuning page's per-model average response time. */
+  generationMs: number | null;
   /** Saved spoken WAV for this redo candidate. Independent of other variants -- switching
    * back to one that was already spoken replays it without regenerating. */
   ttsAudioPath: string | null;

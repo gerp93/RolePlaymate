@@ -99,6 +99,14 @@ export default function Settings() {
   const [ollamaHostDraft, setOllamaHostDraft] = useState('');
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
+  const [ollamaLaunchDir, setOllamaLaunchDir] = useState<string | null>(null);
+  const [ollamaLaunchBusy, setOllamaLaunchBusy] = useState(false);
+  const [ollamaLaunchNotice, setOllamaLaunchNotice] = useState<{
+    kind: 'error' | 'info';
+    text: string;
+  } | null>(null);
+  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
+  const [ollamaStarting, setOllamaStarting] = useState(false);
 
   const [chatterboxHost, setChatterboxHostState] = useState<{
     host: string;
@@ -108,7 +116,14 @@ export default function Settings() {
   const [chatterboxHostDraft, setChatterboxHostDraft] = useState('');
   const [chatterboxBusy, setChatterboxBusy] = useState(false);
   const [chatterboxError, setChatterboxError] = useState<string | null>(null);
+  const [chatterboxLaunchDir, setChatterboxLaunchDir] = useState<string | null>(null);
+  const [chatterboxLaunchBusy, setChatterboxLaunchBusy] = useState(false);
+  const [chatterboxLaunchNotice, setChatterboxLaunchNotice] = useState<{
+    kind: 'error' | 'info';
+    text: string;
+  } | null>(null);
   const [chatterboxReachable, setChatterboxReachable] = useState<boolean | null>(null);
+  const [chatterboxStarting, setChatterboxStarting] = useState(false);
   const [narratorVoice, setNarratorVoice] = useState<CharacterTtsVoice | null>(null);
   const [cloneVoices, setCloneVoices] = useState<ChatterboxCloneVoice[]>([]);
   const [stockVoices, setStockVoices] = useState<ChatterboxPredefinedVoice[]>([]);
@@ -146,21 +161,64 @@ export default function Settings() {
       setOllamaHostState(result);
       setOllamaHostDraft(result.host);
     });
+    window.electronAPI.ollamaLaunch.get().then((result) => {
+      setOllamaLaunchDir(result.dir);
+    });
     window.electronAPI.chatterboxHost.get().then((result) => {
       setChatterboxHostState(result);
       setChatterboxHostDraft(result.host);
     });
+    window.electronAPI.chatterboxLaunch.get().then((result) => {
+      setChatterboxLaunchDir(result.dir);
+    });
     void window.electronAPI.narratorVoice.get().then(setNarratorVoice);
+    void refreshOllamaStatus();
     void refreshChatterboxStatus();
     void refreshEmbeddingSettings();
   }, []);
 
+  async function refreshOllamaStatus() {
+    const status = await window.electronAPI.ollamaLaunch.status();
+    setOllamaReachable(status.reachable);
+    if (status.reachable) setOllamaStarting(false);
+  }
+
+  async function pollOllamaUntilReachable() {
+    for (let i = 0; i < 15; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const status = await window.electronAPI.ollamaLaunch.status();
+      setOllamaReachable(status.reachable);
+      if (status.reachable) {
+        setOllamaStarting(false);
+        return;
+      }
+    }
+    setOllamaStarting(false);
+  }
+
   async function refreshChatterboxStatus() {
     const status = await window.electronAPI.tts.status();
     setChatterboxReachable(status.reachable);
+    if (status.reachable) setChatterboxStarting(false);
     setCloneVoices(normalizeCloneVoices(status.clones));
     setStockVoices(status.predefined ?? []);
     setVoiceListKey((n) => n + 1);
+  }
+
+  async function pollChatterboxUntilReachable() {
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const status = await window.electronAPI.tts.status();
+      setChatterboxReachable(status.reachable);
+      if (status.reachable) {
+        setChatterboxStarting(false);
+        setCloneVoices(normalizeCloneVoices(status.clones));
+        setStockVoices(status.predefined ?? []);
+        setVoiceListKey((n) => n + 1);
+        return;
+      }
+    }
+    setChatterboxStarting(false);
   }
 
   async function handleImportClone() {
@@ -383,6 +441,79 @@ export default function Settings() {
     }
   }
 
+  function applyOllamaStartResult(
+    start: { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
+  ) {
+    if (start.status === 'already-running') {
+      setOllamaReachable(true);
+      setOllamaStarting(false);
+      setOllamaLaunchNotice({ kind: 'info', text: 'Ollama is already running.' });
+    } else if (start.status === 'ok') {
+      setOllamaStarting(true);
+      setOllamaLaunchNotice({ kind: 'info', text: 'Starting Ollama…' });
+      void pollOllamaUntilReachable();
+    } else {
+      setOllamaStarting(false);
+      setOllamaLaunchNotice({ kind: 'error', text: start.message });
+    }
+  }
+
+  async function handleChooseOllamaLaunchDir() {
+    setOllamaLaunchBusy(true);
+    setOllamaLaunchNotice(null);
+    try {
+      const result = await window.electronAPI.ollamaLaunch.choose();
+      if (result.status === 'cancelled') return;
+      if (result.status === 'error') {
+        setOllamaLaunchNotice({ kind: 'error', text: result.message });
+        return;
+      }
+      setOllamaLaunchDir(result.dir);
+      applyOllamaStartResult(await window.electronAPI.ollamaLaunch.startNow());
+    } finally {
+      setOllamaLaunchBusy(false);
+    }
+  }
+
+  async function handleClearOllamaLaunchDir() {
+    setOllamaLaunchBusy(true);
+    setOllamaLaunchNotice(null);
+    try {
+      await window.electronAPI.ollamaLaunch.clear();
+      setOllamaLaunchDir(null);
+    } finally {
+      setOllamaLaunchBusy(false);
+    }
+  }
+
+  async function handleStartOllamaNow() {
+    setOllamaLaunchBusy(true);
+    setOllamaLaunchNotice(null);
+    try {
+      applyOllamaStartResult(await window.electronAPI.ollamaLaunch.startNow());
+    } finally {
+      setOllamaLaunchBusy(false);
+    }
+  }
+
+  async function handleStopOllama() {
+    setOllamaLaunchBusy(true);
+    setOllamaLaunchNotice(null);
+    setOllamaStarting(false);
+    try {
+      const result = await window.electronAPI.ollamaLaunch.stop();
+      if (result.status === 'error') {
+        setOllamaLaunchNotice({ kind: 'error', text: result.message });
+      } else {
+        setOllamaReachable(false);
+        setOllamaLaunchNotice({ kind: 'info', text: 'Ollama stopped.' });
+      }
+      await refreshOllamaStatus();
+    } finally {
+      setOllamaLaunchBusy(false);
+    }
+  }
+
   async function persistChatterboxHostIfChanged() {
     const trimmed = chatterboxHostDraft.trim();
     if (!chatterboxHost || !trimmed || trimmed === chatterboxHost.host) return;
@@ -413,6 +544,81 @@ export default function Settings() {
       await refreshChatterboxStatus();
     } finally {
       setChatterboxBusy(false);
+    }
+  }
+
+  function applyChatterboxStartResult(
+    start: { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
+  ) {
+    if (start.status === 'already-running') {
+      setChatterboxReachable(true);
+      setChatterboxStarting(false);
+      setChatterboxLaunchNotice({ kind: 'info', text: 'Chatterbox is already running.' });
+    } else if (start.status === 'ok') {
+      setChatterboxStarting(true);
+      setChatterboxLaunchNotice({ kind: 'info', text: 'Starting Chatterbox…' });
+      void pollChatterboxUntilReachable();
+    } else {
+      setChatterboxStarting(false);
+      setChatterboxLaunchNotice({ kind: 'error', text: start.message });
+    }
+  }
+
+  async function handleChooseChatterboxLaunchDir() {
+    setChatterboxLaunchBusy(true);
+    setChatterboxLaunchNotice(null);
+    try {
+      const result = await window.electronAPI.chatterboxLaunch.choose();
+      if (result.status === 'cancelled') return;
+      if (result.status === 'error') {
+        setChatterboxLaunchNotice({ kind: 'error', text: result.message });
+        return;
+      }
+      setChatterboxLaunchDir(result.dir);
+      applyChatterboxStartResult(await window.electronAPI.chatterboxLaunch.startNow());
+      await refreshChatterboxStatus();
+    } finally {
+      setChatterboxLaunchBusy(false);
+    }
+  }
+
+  async function handleClearChatterboxLaunchDir() {
+    setChatterboxLaunchBusy(true);
+    setChatterboxLaunchNotice(null);
+    try {
+      await window.electronAPI.chatterboxLaunch.clear();
+      setChatterboxLaunchDir(null);
+    } finally {
+      setChatterboxLaunchBusy(false);
+    }
+  }
+
+  async function handleStartChatterboxNow() {
+    setChatterboxLaunchBusy(true);
+    setChatterboxLaunchNotice(null);
+    try {
+      applyChatterboxStartResult(await window.electronAPI.chatterboxLaunch.startNow());
+      await refreshChatterboxStatus();
+    } finally {
+      setChatterboxLaunchBusy(false);
+    }
+  }
+
+  async function handleStopChatterbox() {
+    setChatterboxLaunchBusy(true);
+    setChatterboxLaunchNotice(null);
+    setChatterboxStarting(false);
+    try {
+      const result = await window.electronAPI.chatterboxLaunch.stop();
+      if (result.status === 'error') {
+        setChatterboxLaunchNotice({ kind: 'error', text: result.message });
+      } else {
+        setChatterboxReachable(false);
+        setChatterboxLaunchNotice({ kind: 'info', text: 'Chatterbox stopped.' });
+      }
+      await refreshChatterboxStatus();
+    } finally {
+      setChatterboxLaunchBusy(false);
     }
   }
 
@@ -702,6 +908,75 @@ export default function Settings() {
           The local Ollama server RolePlaymate talks to for chat. Change this if it&apos;s
           running on a different port, or on another machine on your network.
         </p>
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          Pick the Ollama folder once (the folder that contains ollama.exe). RolePlaymate starts it
+          from there when you open this app, if it isn&apos;t already running. Stop shuts it down
+          from here. Closing RolePlaymate does not.
+        </p>
+        {ollamaLaunchDir && (
+          <div className="field">
+            <label>Ollama folder</label>
+            <input
+              value={ollamaLaunchDir}
+              readOnly
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn"
+            disabled={ollamaLaunchBusy}
+            onClick={() => void handleChooseOllamaLaunchDir()}
+          >
+            Choose folder…
+          </button>
+          {ollamaLaunchDir && (
+            <button
+              className="btn"
+              disabled={ollamaLaunchBusy}
+              onClick={() => void handleClearOllamaLaunchDir()}
+            >
+              Clear
+            </button>
+          )}
+          {ollamaLaunchDir && ollamaReachable === true && (
+            <button
+              className="btn"
+              disabled={ollamaLaunchBusy}
+              onClick={() => void handleStopOllama()}
+            >
+              Stop
+            </button>
+          )}
+          {ollamaLaunchDir && ollamaReachable !== true && ollamaStarting && (
+            <button className="btn" disabled>
+              Starting…
+            </button>
+          )}
+          {ollamaLaunchDir && ollamaReachable !== true && !ollamaStarting && (
+            <button
+              className="btn"
+              disabled={ollamaLaunchBusy}
+              onClick={() => void handleStartOllamaNow()}
+            >
+              Start now
+            </button>
+          )}
+        </div>
+        {ollamaLaunchNotice && (
+          <p
+            className={ollamaLaunchNotice.kind === 'info' ? 'text-muted' : undefined}
+            style={{
+              color: ollamaLaunchNotice.kind === 'error' ? 'var(--color-accent-red)' : undefined,
+              fontSize: 13,
+              marginTop: 8,
+              marginBottom: 0,
+            }}
+          >
+            {ollamaLaunchNotice.text}
+          </p>
+        )}
         {ollamaHost && (
           <>
             <div className="field">
@@ -817,6 +1092,75 @@ export default function Settings() {
           </a>
           .
         </p>
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          Pick the Chatterbox TTS Server folder once (the one with start.bat). RolePlaymate starts it
+          from there on app launch if it isn&apos;t already running. Stop shuts it down from here.
+          Closing RolePlaymate does not.
+        </p>
+        {chatterboxLaunchDir && (
+          <div className="field">
+            <label>Chatterbox folder</label>
+            <input
+              value={chatterboxLaunchDir}
+              readOnly
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn"
+            disabled={chatterboxLaunchBusy}
+            onClick={() => void handleChooseChatterboxLaunchDir()}
+          >
+            Choose folder…
+          </button>
+          {chatterboxLaunchDir && (
+            <button
+              className="btn"
+              disabled={chatterboxLaunchBusy}
+              onClick={() => void handleClearChatterboxLaunchDir()}
+            >
+              Clear
+            </button>
+          )}
+          {chatterboxLaunchDir && chatterboxReachable === true && (
+            <button
+              className="btn"
+              disabled={chatterboxLaunchBusy}
+              onClick={() => void handleStopChatterbox()}
+            >
+              Stop
+            </button>
+          )}
+          {chatterboxLaunchDir && chatterboxReachable !== true && chatterboxStarting && (
+            <button className="btn" disabled>
+              Starting…
+            </button>
+          )}
+          {chatterboxLaunchDir && chatterboxReachable !== true && !chatterboxStarting && (
+            <button
+              className="btn"
+              disabled={chatterboxLaunchBusy}
+              onClick={() => void handleStartChatterboxNow()}
+            >
+              Start now
+            </button>
+          )}
+        </div>
+        {chatterboxLaunchNotice && (
+          <p
+            className={chatterboxLaunchNotice.kind === 'info' ? 'text-muted' : undefined}
+            style={{
+              color: chatterboxLaunchNotice.kind === 'error' ? 'var(--color-accent-red)' : undefined,
+              fontSize: 13,
+              marginTop: 8,
+              marginBottom: 0,
+            }}
+          >
+            {chatterboxLaunchNotice.text}
+          </p>
+        )}
         {chatterboxHost && (
           <>
             <div className="field">

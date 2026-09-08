@@ -200,10 +200,49 @@
   color: var(--color-accent-red);
 }
 
+.lore-entry-select {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.lore-entry-move-select {
+  flex-shrink: 0;
+  max-width: 160px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 .lore-entry-delete {
   flex-shrink: 0;
   font-size: 12px;
   padding: 4px 8px;
+}
+
+/* --- bulk move ---------------------------------------------------------------------------- */
+
+.lore-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.lore-bulk-actions select {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  font-size: 12px;
 }
 
 /* An entry with no keys and not always-on can never fire -- worth saying so, since it

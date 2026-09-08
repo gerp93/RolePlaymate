@@ -13,6 +13,7 @@ import {
   SPEED_TIER_COLORS,
 } from '../../shared/utils/hardwareFit';
 import { displayModelName, assignModelTiers, modelCompositeScore, MODEL_TIER_COLORS, ModelTier } from '../utils/modelPresentation';
+import { formatResponseTime } from '../utils/formatResponseTime';
 import OllamaRequiredGate from '../components/chat/OllamaRequiredGate';
 
 interface FieldSpec {
@@ -253,18 +254,23 @@ function ModelTuningPage() {
   const [hardware, setHardware] = useState<HardwareSnapshot | null>(null);
   const [hardwareReady, setHardwareReady] = useState(false);
   const [customRows, setCustomRows] = useState<Record<string, ModelSamplerDefaults>>({});
+  const [avgResponseByModel, setAvgResponseByModel] = useState<Record<string, { avgMs: number; count: number }>>({});
   const [recommended, setRecommended] = useState<Record<string, SamplerParams>>({});
   const [drafts, setDrafts] = useState<Record<string, Partial<Record<keyof SamplerParams, string>>>>({});
   const [busyModel, setBusyModel] = useState<string | null>(null);
 
   async function load() {
-    const [modelsResult, rows, embeddingConfig] = await Promise.all([
+    const [modelsResult, rows, embeddingConfig, avgResponseTimes] = await Promise.all([
       window.electronAPI.ollama.listModelsDetailed(),
       window.electronAPI.modelTuning.getAll(),
       window.electronAPI.memoryEmbeddingModel.get(),
+      window.electronAPI.modelTuning.getAverageResponseTimes(),
     ]);
 
     setActiveEmbeddingModel(embeddingConfig.model);
+    const avgByModel: Record<string, { avgMs: number; count: number }> = {};
+    for (const row of avgResponseTimes) avgByModel[row.model] = { avgMs: row.avgMs, count: row.count };
+    setAvgResponseByModel(avgByModel);
 
     const rowsByModel: Record<string, ModelSamplerDefaults> = {};
     for (const row of rows) rowsByModel[row.model] = row;
@@ -510,6 +516,12 @@ function ModelTuningPage() {
                 >
                   On this PC
                 </th>
+                <th
+                  style={{ textAlign: 'left', padding: '6px 10px' }}
+                  title="Measured average time to generate a reply with this model, across every reply it has ever produced in this app -- not a heuristic, unlike On this PC."
+                >
+                  Avg Response
+                </th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Params</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Quant</th>
                 <th style={{ textAlign: 'left', padding: '6px 10px' }}>Context</th>
@@ -572,6 +584,15 @@ function ModelTuningPage() {
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                     <SpeedCell speed={speed} sweetSpot={!!sweetSpot} hardware={hardware} />
+                  </td>
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                    {avgResponseByModel[info.name] ? (
+                      <span title={`Averaged over ${avgResponseByModel[info.name].count} repl${avgResponseByModel[info.name].count === 1 ? 'y' : 'ies'}`}>
+                        {formatResponseTime(avgResponseByModel[info.name].avgMs)}
+                      </span>
+                    ) : (
+                      <span className="text-muted" title="No replies generated with this model yet">—</span>
+                    )}
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }} title={info.parameterSize ? undefined : 'Not reported by Ollama'}>
                     {info.parameterSize || '—'}

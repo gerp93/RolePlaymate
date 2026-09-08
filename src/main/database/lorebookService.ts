@@ -589,6 +589,47 @@ export class LorebookService {
     this.db.prepare(`DELETE FROM lorebook_entries WHERE id = ?`).run(id);
   }
 
+  /**
+   * Reassigns entries to a different book, re-encrypting title and every version's content
+   * for the destination book's hidden state. Reuses getEntry/getVersions rather than reading
+   * raw columns, so the source side of the transition goes through the same decrypt path
+   * (legacy-plaintext handling included) as every other reader -- only the re-encrypt for the
+   * new owner is new work here.
+   */
+  moveEntries(entryIds: string[], targetLorebookId: string): LorebookEntry[] {
+    const target = this.getBook(targetLorebookId);
+    if (!target) throw new Error(`Lorebook with id ${targetLorebookId} not found`);
+
+    return transaction(this.db, () =>
+      entryIds.map((entryId) => {
+        const entry = this.getEntry(entryId);
+        if (!entry) throw new Error(`Lorebook entry with id ${entryId} not found`);
+        if (entry.lorebookId === targetLorebookId) return entry;
+
+        const versions = this.getVersions(entryId);
+        const now = new Date().toISOString();
+
+        this.db
+          .prepare(`UPDATE lorebook_entries SET lorebook_id = ?, title = ?, updated_at = ? WHERE id = ?`)
+          .run(targetLorebookId, this.security.encryptIfHidden(entry.title, target.isHidden), now, entryId);
+
+        const contentStmt = this.db.prepare(
+          `UPDATE lorebook_entry_versions SET content = ?, updated_at = ? WHERE id = ?`
+        );
+        for (const version of versions) {
+          contentStmt.run(this.security.encryptIfHidden(version.content, target.isHidden), now, version.id);
+        }
+
+        return this.getEntry(entryId)!;
+      })
+    );
+  }
+
+  /** Single-entry convenience wrapper around moveEntries. */
+  moveEntry(entryId: string, targetLorebookId: string): LorebookEntry {
+    return this.moveEntries([entryId], targetLorebookId)[0];
+  }
+
   // --- Entry versions ------------------------------------------------------------------
   // Deliberately the same model as CharacterFieldVersion: active always tracks the latest,
   // self-healed on read, and "save as new version" duplicates rather than overwriting.

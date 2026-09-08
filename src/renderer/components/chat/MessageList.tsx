@@ -4,6 +4,7 @@ import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
 import { resolveCoverImage } from '../../utils/avatarImage';
 import { toImageUrl } from '../../utils/imageUrl';
+import { formatResponseTime } from '../../utils/formatResponseTime';
 import FormattedContent from '../FormattedContent';
 import ImageLightbox from '../ImageLightbox';
 import LimitedTextarea from '../LimitedTextarea';
@@ -180,6 +181,7 @@ export default function MessageList({
             avatarUrl={avatarFor(message.role)}
             content={message.content}
             model={message.role === 'assistant' ? message.model : null}
+            generationMs={message.role === 'assistant' ? message.generationMs : null}
             onViewPrompt={message.model ? () => onViewPrompt(message.id) : undefined}
             isEditing={isEditing}
             editDraft={editDraft}
@@ -355,6 +357,7 @@ function Bubble({
   content,
   streaming = false,
   model,
+  generationMs,
   onViewPrompt,
   isEditing = false,
   editDraft = '',
@@ -372,6 +375,9 @@ function Bubble({
   /** Shown in a hover tooltip below the bubble. Undefined/null for user messages and for an
    * assistant message that predates this column -- nothing to report either way. */
   model?: string | null;
+  /** How long this reply took to generate, in milliseconds. Same nullability as `model` --
+   * shown alongside it in the hover info. */
+  generationMs?: number | null;
   /** Present only when there's logged prompt data to show -- see `model`. */
   onViewPrompt?: () => void;
   /** Swaps the formatted content for an editable textarea -- see MessageList's editingId. */
@@ -443,6 +449,7 @@ function Bubble({
         {model && (
           <div className="chat-bubble-hover-info">
             <span>Model: {model}</span>
+            {generationMs != null && <span>{formatResponseTime(generationMs)}</span>}
             {onViewPrompt && (
               <button type="button" className="chat-bubble-hover-link" onClick={onViewPrompt}>
                 View prompt

@@ -293,6 +293,7 @@ export function useChatSession(
         content: input.message,
         selectedVariantId: null,
         model: null,
+        generationMs: null,
         ttsAudioPath: null,
         seq: Number.MAX_SAFE_INTEGER,
         createdAt: new Date().toISOString(),

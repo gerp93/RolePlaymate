@@ -26,6 +26,8 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
   const [attachedIds, setAttachedIds] = useState<string[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkMoveTarget, setBulkMoveTarget] = useState('');
 
   const refresh = useCallback(async () => {
     // Creates the personal book on first view rather than alongside every character, so
@@ -40,6 +42,7 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
     setEntries(loadedEntries);
     setWorldBooks(allWorldBooks);
     setAttachedIds(forCharacter.world.map((b) => b.id));
+    setSelectedIds(new Set());
   }, [characterId]);
 
   // hiddenUnlocked: refresh() already ran under the previous lock state holds ciphertext when
@@ -73,6 +76,35 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
     }
   };
 
+  const toggleSelected = (entryId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entryId)) next.delete(entryId);
+      else next.add(entryId);
+      return next;
+    });
+  };
+
+  const moveEntry = async (entryId: string, targetLorebookId: string) => {
+    try {
+      await window.electronAPI.loreEntries.move(entryId, targetLorebookId);
+      await refresh();
+    } catch (err) {
+      alert(`Move failed: ${(err as Error).message}`);
+    }
+  };
+
+  const moveSelected = async () => {
+    if (!bulkMoveTarget || selectedIds.size === 0) return;
+    try {
+      await window.electronAPI.loreEntries.moveMany(Array.from(selectedIds), bulkMoveTarget);
+      setBulkMoveTarget('');
+      await refresh();
+    } catch (err) {
+      alert(`Move failed: ${(err as Error).message}`);
+    }
+  };
+
   const toggleWorldBook = async (lorebookId: string, attached: boolean) => {
     if (attached) {
       await window.electronAPI.lorebooks.detach(characterId, lorebookId);
@@ -87,6 +119,8 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
   if (book?.isHidden && !hiddenUnlocked) {
     return <LockedPlaceholder label="This character's personal history" />;
   }
+
+  const visibleWorldBooks = worldBooks.filter((b) => hiddenUnlocked || !b.isHidden);
 
   return (
     <div className="card personal-history">
@@ -123,6 +157,30 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
         </div>
       </div>
 
+      {selectedIds.size > 0 && (
+        <div className="lore-bulk-actions">
+          <span>{selectedIds.size} selected</span>
+          <select
+            value={bulkMoveTarget}
+            onChange={(e) => setBulkMoveTarget(e.target.value)}
+            disabled={visibleWorldBooks.length === 0}
+          >
+            <option value="">Move to…</option>
+            {visibleWorldBooks.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn btn-primary" disabled={!bulkMoveTarget} onClick={() => void moveSelected()}>
+            Move
+          </button>
+          <button type="button" className="btn" onClick={() => setSelectedIds(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
       <ul className="lore-entry-list">
         {entries.length === 0 && (
           <li className="text-muted">
@@ -141,6 +199,10 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
               await window.electronAPI.loreEntries.delete(entry.id);
               await refresh();
             }}
+            selected={selectedIds.has(entry.id)}
+            onToggleSelected={toggleSelected}
+            moveTargets={visibleWorldBooks}
+            onMove={moveEntry}
           />
         ))}
       </ul>
@@ -153,9 +215,7 @@ export default function PersonalHistoryPanel({ characterId }: { characterId: str
           </p>
         ) : (
           <ul className="lore-attached-books">
-            {worldBooks
-              .filter((b) => hiddenUnlocked || !b.isHidden)
-              .map((worldBook) => {
+            {visibleWorldBooks.map((worldBook) => {
               const attached = attachedIds.includes(worldBook.id);
               return (
                 <li key={worldBook.id}>

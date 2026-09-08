@@ -91,10 +91,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('ollamaHost:resetToDefault'),
   },
 
+  ollamaLaunch: {
+    get: () => ipcRenderer.invoke('ollamaLaunch:get'),
+    choose: () => ipcRenderer.invoke('ollamaLaunch:choose'),
+    clear: () => ipcRenderer.invoke('ollamaLaunch:clear'),
+    startNow: () => ipcRenderer.invoke('ollamaLaunch:startNow'),
+    status: () => ipcRenderer.invoke('ollamaLaunch:status'),
+    stop: () => ipcRenderer.invoke('ollamaLaunch:stop'),
+  },
+
   chatterboxHost: {
     get: () => ipcRenderer.invoke('chatterboxHost:get'),
     set: (host: string) => ipcRenderer.invoke('chatterboxHost:set', host),
     resetToDefault: () => ipcRenderer.invoke('chatterboxHost:resetToDefault'),
+  },
+
+  chatterboxLaunch: {
+    get: () => ipcRenderer.invoke('chatterboxLaunch:get'),
+    choose: () => ipcRenderer.invoke('chatterboxLaunch:choose'),
+    clear: () => ipcRenderer.invoke('chatterboxLaunch:clear'),
+    startNow: () => ipcRenderer.invoke('chatterboxLaunch:startNow'),
+    stop: () => ipcRenderer.invoke('chatterboxLaunch:stop'),
   },
 
   narratorVoice: {
@@ -212,6 +229,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: string, input: unknown) => ipcRenderer.invoke('loreEntries:update', id, input),
     delete: (id: string) => ipcRenderer.invoke('loreEntries:delete', id),
     importFromJson: (lorebookId: string) => ipcRenderer.invoke('loreEntries:importFromJson', lorebookId),
+    move: (entryId: string, targetLorebookId: string) =>
+      ipcRenderer.invoke('loreEntries:move', entryId, targetLorebookId),
+    moveMany: (entryIds: string[], targetLorebookId: string) =>
+      ipcRenderer.invoke('loreEntries:moveMany', entryIds, targetLorebookId),
   },
 
   loreVersions: {
@@ -270,6 +291,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetField: (model: string, field: string) => ipcRenderer.invoke('modelTuning:resetField', model, field),
     resetAll: (model: string) => ipcRenderer.invoke('modelTuning:resetAll', model),
     setEnabled: (model: string, enabled: boolean) => ipcRenderer.invoke('modelTuning:setEnabled', model, enabled),
+    getAverageResponseTimes: () => ipcRenderer.invoke('modelTuning:getAverageResponseTimes'),
   },
 
   personas: {

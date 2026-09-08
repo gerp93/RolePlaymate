@@ -381,6 +381,7 @@ export class ChatSessionManager {
     session.abort = controller;
 
     try {
+      const startedAt = Date.now();
       const result = await this.ollama.chat({
         model: request.model,
         messages,
@@ -388,6 +389,7 @@ export class ChatSessionManager {
         signal: controller.signal,
         onToken,
       });
+      const generationMs = Date.now() - startedAt;
 
       // Post-processing is trim() only, as in the source. Anything more (stripping name
       // prefixes, collapsing whitespace) silently mangles legitimate output.
@@ -419,7 +421,8 @@ export class ChatSessionManager {
         request.conversationId,
         content,
         request.model,
-        debug
+        debug,
+        generationMs
       );
       // The model can change freely turn to turn -- keep the conversation record (and the
       // sidebar) pointed at whichever one was actually used most recently.
@@ -491,6 +494,7 @@ export class ChatSessionManager {
     session.abort = controller;
 
     try {
+      const startedAt = Date.now();
       const result = await this.ollama.chat({
         model: effectiveModel,
         messages,
@@ -498,6 +502,7 @@ export class ChatSessionManager {
         signal: controller.signal,
         onToken,
       });
+      const generationMs = Date.now() - startedAt;
       const content = result.content.trim();
 
       // A message from before redo support has no variant of its own yet -- back one out of
@@ -545,7 +550,13 @@ export class ChatSessionManager {
       };
       session.lastDebug = debug;
 
-      const variant = this.conversations.addVariant(pending.assistantMessageId, content, effectiveModel, debug);
+      const variant = this.conversations.addVariant(
+        pending.assistantMessageId,
+        content,
+        effectiveModel,
+        debug,
+        generationMs
+      );
       const message = this.conversations.selectVariant(pending.assistantMessageId, variant.id);
 
       this.conversations.updateConversationModel(conversationId, effectiveModel);
@@ -662,6 +673,7 @@ export class ChatSessionManager {
     session.abort = controller;
 
     try {
+      const startedAt = Date.now();
       const result = await this.ollama.chat({
         model: request.model,
         messages,
@@ -669,6 +681,7 @@ export class ChatSessionManager {
         signal: controller.signal,
         onToken,
       });
+      const generationMs = Date.now() - startedAt;
       const content = result.content.trim();
 
       const debug: ChatDebugInfo = {
@@ -700,7 +713,13 @@ export class ChatSessionManager {
         if (current) this.conversations.addVariant(pending.assistantMessageId, current.content);
       }
 
-      const variant = this.conversations.addVariant(pending.assistantMessageId, content, request.model, debug);
+      const variant = this.conversations.addVariant(
+        pending.assistantMessageId,
+        content,
+        request.model,
+        debug,
+        generationMs
+      );
       const message = this.conversations.selectVariant(pending.assistantMessageId, variant.id);
 
       this.conversations.updateConversationModel(request.conversationId, request.model);
@@ -813,6 +832,7 @@ export class ChatSessionManager {
     session.abort = controller;
 
     try {
+      const startedAt = Date.now();
       const result = await this.ollama.chat({
         model: request.model,
         messages,
@@ -820,6 +840,7 @@ export class ChatSessionManager {
         signal: controller.signal,
         onToken,
       });
+      const generationMs = Date.now() - startedAt;
       const content = result.content.trim();
 
       const debug: ChatDebugInfo = {
@@ -848,7 +869,8 @@ export class ChatSessionManager {
         request.conversationId,
         content,
         request.model,
-        debug
+        debug,
+        generationMs
       );
       this.conversations.updateConversationModel(request.conversationId, request.model);
 
