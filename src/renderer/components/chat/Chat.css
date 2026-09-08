@@ -1817,6 +1817,13 @@ img.chat-bubble-avatar-panel {
   min-width: 84px;
 }
 
+/* Live elapsed time while a reply is generating -- tabular-nums so the ticking digits don't
+   jitter the Stop button's width every 200ms. */
+.chat-send-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 /* Deliberately tiny/muted and tucked at the end of the settings row rather than its own
    footer line -- a message count doesn't need the visual weight a dedicated banner gives it. */
 .chat-message-count {

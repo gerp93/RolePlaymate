@@ -152,4 +152,19 @@ export const CHAT_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_memories_conv ON conversation_memories(conversation_id);
+
+  -- One row per reply ever generated: just enough to average response time per model on the
+  -- Model Tuning page. Deliberately holds no reference to the message/conversation that
+  -- produced it and no reply text -- only the timing metadata, so deleting a message,
+  -- deleting a whole conversation, or clearing chat retention never erases it. Contrast with
+  -- message_variants.generation_ms, which mirrors the same value but disappears with its row;
+  -- this table is the durable record.
+  CREATE TABLE IF NOT EXISTS generation_stats (
+    id TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    generation_ms INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_generation_stats_model ON generation_stats(model);
 `;
