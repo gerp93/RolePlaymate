@@ -5,6 +5,8 @@ import LockedPlaceholder from './LockedPlaceholder';
 import { toImageUrl } from '../utils/imageUrl';
 import LimitedInput from './LimitedInput';
 import LimitedTextarea from './LimitedTextarea';
+import CroppableImage from './CroppableImage';
+import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 interface Props {
@@ -33,6 +35,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
   const [images, setImages] = useState<ScenarioImage[]>([]);
   const [imageIndex, setImageIndex] = useState(0);
   const [imageBusy, setImageBusy] = useState(false);
+  const { crops, refresh: refreshCrops } = useImageCrops(images.map((img) => img.id));
 
   const loadVersions = useCallback(
     async (keepVersionId?: string) => {
@@ -217,7 +220,19 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
             </label>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div className="scenario-image-thumb">
-                {currentImage ? <img src={toImageUrl(currentImage.path)} alt={scenario.name} /> : <span>?</span>}
+                {currentImage ? (
+                  <CroppableImage
+                    src={toImageUrl(currentImage.path)}
+                    alt={scenario.name}
+                    imageId={currentImage.id}
+                    imageOwner="scenario"
+                    location="scenarioThumb"
+                    crop={crops[currentImage.id]?.scenarioThumb}
+                    onCropSaved={refreshCrops}
+                  />
+                ) : (
+                  <span>?</span>
+                )}
               </div>
               {images.length > 1 && (
                 <>

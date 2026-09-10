@@ -57,6 +57,7 @@ import {
   TtsRevealCloneFolderResult,
 } from '../shared/types/tts';
 import { HardwareSnapshot } from '../shared/types/hardware';
+import { ImageCrop, ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 
 declare global {
   interface Window {
@@ -94,6 +95,11 @@ declare global {
         add: (personaId: string) => Promise<PersonaImage[]>;
         remove: (id: string) => Promise<{ success: boolean }>;
         setCover: (id: string) => Promise<{ success: boolean }>;
+      };
+      imageCrops: {
+        getForImages: (imageIds: string[]) => Promise<ImageCrop[]>;
+        set: (input: SetImageCropInput) => Promise<ImageCrop>;
+        reset: (imageId: string, location: ImageCropLocation) => Promise<{ success: boolean }>;
       };
       scenarios: {
         getByCharacter: (characterId: string) => Promise<Scenario[]>;

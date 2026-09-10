@@ -9,6 +9,7 @@ import { Scenario, ScenarioImage } from '../../shared/types/scenario';
 import { useChatSession } from '../hooks/useChatSession';
 import { Message, ttsPathForMessage } from '../../shared/types/message';
 import { unlockSpeechPlayback, useTtsPlayback } from '../hooks/useTtsPlayback';
+import { useImageCrops } from '../hooks/useImageCrops';
 import { CharacterTtsVoice } from '../../shared/types/tts';
 import { voicesMatch } from '../../shared/utils/ttsSegments';
 import { useSecurity } from '../context/SecurityContext';
@@ -18,7 +19,8 @@ import MessagePromptDialog from '../components/chat/MessagePromptDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
-import ChatStartScreen, { startScreenPortraitUrl } from '../components/chat/ChatStartScreen';
+import CroppableImage from '../components/CroppableImage';
+import ChatStartScreen, { startScreenPortraitUrl, startScreenPortraitImage } from '../components/chat/ChatStartScreen';
 import StartScreenPicker from '../components/chat/StartScreenPicker';
 import { buildModelPickerOptions, buildPersonaPickerOptions } from '../utils/chatPickerOptions';
 import { ChatDebugInfo } from '../../shared/types/chat';
@@ -132,6 +134,12 @@ export default function Chat() {
   const [characterImages, setCharacterImages] = useState<CharacterImage[]>([]);
   const [personaImages, setPersonaImages] = useState<PersonaImage[]>([]);
   const [scenarioImages, setScenarioImages] = useState<ScenarioImage[]>([]);
+  // Every image any of the margin/start-screen portraits could show -- fetched once as a flat
+  // set rather than only whichever's currently displayed, so carousel mode and the static
+  // picker don't need a refetch on every tick/switch.
+  const { crops: portraitCrops, refresh: refreshPortraitCrops } = useImageCrops(
+    [...characterImages, ...scenarioImages, ...personaImages].map((image) => image.id)
+  );
   const [startCharacterCovers, setStartCharacterCovers] = useState<Record<string, CharacterImage[]>>({});
   const [startPersonaCovers, setStartPersonaCovers] = useState<Record<string, PersonaImage[]>>({});
   const [startScenarioCoverUrls, setStartScenarioCoverUrls] = useState<Record<string, string | null>>({});
@@ -877,14 +885,14 @@ export default function Chat() {
   const personaMarginPortrait = portraitsActive ? personaPortrait : null;
   const showStartScreen = !conversationId;
 
-  const startCharacterPortraitUrl = useMemo(() => startScreenPortraitUrl(characterImages), [characterImages]);
+  const startCharacterPortrait = useMemo(() => startScreenPortraitImage(characterImages), [characterImages]);
 
-  const startScenarioPortraitUrl = useMemo(() => {
+  const startScenarioPortrait = useMemo(() => {
     if (!scenarioId) return null;
-    return startScreenPortraitUrl(scenarioImages);
+    return startScreenPortraitImage(scenarioImages);
   }, [scenarioId, scenarioImages]);
 
-  const startPersonaPortraitUrl = useMemo(() => startScreenPortraitUrl(personaImages), [personaImages]);
+  const startPersonaPortrait = useMemo(() => startScreenPortraitImage(personaImages), [personaImages]);
 
   const startCharacterCoverUrls = useMemo(() => {
     const urls: Record<string, string | null> = {};
@@ -1029,12 +1037,14 @@ export default function Chat() {
             personaId={personaId}
             scenarioId={scenarioId}
             model={model}
-            characterPortraitUrl={startCharacterPortraitUrl}
-            personaPortraitUrl={startPersonaPortraitUrl}
-            scenarioPortraitUrl={startScenarioPortraitUrl}
+            characterPortrait={startCharacterPortrait}
+            personaPortrait={startPersonaPortrait}
+            scenarioPortrait={startScenarioPortrait}
             characterCoverUrls={startCharacterCoverUrls}
             personaCoverUrls={startPersonaCoverUrls}
             scenarioCoverUrls={startScenarioCoverUrls}
+            crops={portraitCrops}
+            onCropSaved={refreshPortraitCrops}
             onCharacterChange={(id) => {
               setCharacterId(id);
               setScenarioId('');
@@ -1085,7 +1095,17 @@ export default function Chat() {
 
             {characterMarginPortrait && (
               <div className="chat-portrait-margin">
-                <img src={toImageUrl(characterMarginPortrait.path)} alt={character?.name ?? ''} />
+                <CroppableImage
+                  src={toImageUrl(characterMarginPortrait.path)}
+                  alt={character?.name ?? ''}
+                  imageId={characterMarginPortrait.id}
+                  imageOwner={
+                    scenarioImages.some((img) => img.id === characterMarginPortrait.id) ? 'scenario' : 'character'
+                  }
+                  location="chatMargin"
+                  crop={portraitCrops[characterMarginPortrait.id]?.chatMargin}
+                  onCropSaved={refreshPortraitCrops}
+                />
                 {conversationId && mergedCharacterImages.length > 0 && (
                   <ImagePickerSelect
                     label="Character image"
@@ -1278,7 +1298,15 @@ export default function Chat() {
 
             {personaMarginPortrait && (
               <div className="chat-portrait-margin chat-portrait-margin-persona">
-                <img src={toImageUrl(personaMarginPortrait.path)} alt={persona?.name ?? ''} />
+                <CroppableImage
+                  src={toImageUrl(personaMarginPortrait.path)}
+                  alt={persona?.name ?? ''}
+                  imageId={personaMarginPortrait.id}
+                  imageOwner="persona"
+                  location="chatMargin"
+                  crop={portraitCrops[personaMarginPortrait.id]?.chatMargin}
+                  onCropSaved={refreshPortraitCrops}
+                />
                 {conversationId && personaImages.length > 0 && (
                   <ImagePickerSelect
                     label="Persona image"

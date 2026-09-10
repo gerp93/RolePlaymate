@@ -47,7 +47,9 @@ function readConfig(): AppConfig {
   const configPath = getConfigPath();
   if (!fs.existsSync(configPath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // Strip a UTF-8 BOM if present -- PowerShell Set-Content -Encoding UTF8 writes one,
+    // and JSON.parse then throws, which used to silently fall back to an empty default DB.
+    return JSON.parse(fs.readFileSync(configPath, 'utf-8').replace(/^\uFEFF/, ''));
   } catch {
     return {};
   }
@@ -60,7 +62,7 @@ function writeConfig(config: AppConfig): void {
 function readConfigAt(configPath: string): AppConfig {
   if (!fs.existsSync(configPath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    return JSON.parse(fs.readFileSync(configPath, 'utf-8').replace(/^\uFEFF/, ''));
   } catch {
     return {};
   }

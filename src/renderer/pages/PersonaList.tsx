@@ -5,6 +5,8 @@ import { PersonaImage } from '../../shared/types/personaImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LimitedInput from '../components/LimitedInput';
+import CroppableImage from '../components/CroppableImage';
+import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 // Same sizing rule as the character grid -- fewer tiles get bigger, more tiles bottom out and
@@ -31,6 +33,10 @@ export default function PersonaList() {
   const [newName, setNewName] = useState('');
   const [nameError, setNameError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const coverImageIds = Object.values(coverImages)
+    .map((images) => images[0]?.id)
+    .filter((id): id is string => !!id);
+  const { crops, refresh: refreshCrops } = useImageCrops(coverImageIds);
 
   // hiddenUnlocked: personas already fetched under the previous lock state hold ciphertext
   // for anything hidden -- re-fetch on every lock/unlock so names update immediately instead
@@ -127,7 +133,19 @@ export default function PersonaList() {
               return (
               <Link key={persona.id} to={`/personas/${persona.id}`} className="card character-card">
                 <div className="character-card-portrait">
-                  {cover ? <img src={toImageUrl(cover.path)} alt={persona.name} /> : <span>?</span>}
+                  {cover ? (
+                    <CroppableImage
+                      src={toImageUrl(cover.path)}
+                      alt={persona.name}
+                      imageId={cover.id}
+                      imageOwner="persona"
+                      location="card"
+                      crop={crops[cover.id]?.card}
+                      onCropSaved={refreshCrops}
+                    />
+                  ) : (
+                    <span>?</span>
+                  )}
                 </div>
                 <div className="character-card-body">
                   <p className="character-card-name">{persona.name}</p>

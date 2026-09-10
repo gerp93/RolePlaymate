@@ -1093,9 +1093,10 @@ export default function Settings() {
           .
         </p>
         <p className="text-muted" style={{ fontSize: 13 }}>
-          Pick the Chatterbox TTS Server folder once (the one with start.bat). RolePlaymate starts it
-          from there on app launch if it isn&apos;t already running. Stop shuts it down from here.
-          Closing RolePlaymate does not.
+          Pick the Chatterbox TTS Server folder once (the one with start.bat / start.py). RolePlaymate
+          starts it from there on app launch — on Windows that is the portable CUDA launcher (
+          <code>python start.py --portable --nvidia-cu128 --verbose</code>
+          ). Stop shuts it down from here. Closing RolePlaymate does not.
         </p>
         {chatterboxLaunchDir && (
           <div className="field">

@@ -127,8 +127,10 @@ Optional, same pattern as Ollama: a thin `fetch` client
 `http://localhost:8004`). The app ships no voice model. Chat and the library
 stay fully usable when Chatterbox is absent -- a down server is silent, never a
 failed turn. Settings stores the Chatterbox install folder in `app-config.json`
-and RolePlaymate starts it on launch if the host isn't reachable; Settings Stop
-shuts it down. Quit does not stop it.
+and RolePlaymate starts it on launch if the host isn't reachable (on Windows:
+`python_embedded\python.exe start.py --portable --nvidia-cu128 --verbose` when
+that portable tree exists, otherwise `start.bat` with the same flags). Settings
+Stop shuts it down. Quit does not stop it.
 
 A character stores an optional `ttsVoice` (mode `predefined` | `clone` plus a
 filename). `predefined` is a stock file in Chatterbox's `voices/` folder;

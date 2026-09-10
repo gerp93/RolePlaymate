@@ -1367,12 +1367,23 @@
   background: var(--color-bg-hover);
 }
 
-.chat-bubble-avatar-panel {
+/* CroppableImage's wrapper for the message-bubble avatar -- owns the 64px/rounded box shape
+   that used to live directly on the <img> (`object-fit: cover` and all), so the <img> can fill
+   it at 100%/100% (see CroppableImage) and the adjust button has somewhere to anchor. */
+.chat-bubble-avatar-wrap {
+  position: relative;
   width: 64px;
   height: 64px;
   border-radius: 10px;
-  object-fit: cover;
+  overflow: hidden;
   flex-shrink: 0;
+}
+
+.chat-bubble-avatar-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: pointer;
 }
 
 .chat-bubble-avatar-panel-fallback {
@@ -1386,10 +1397,6 @@
   font-size: 24px;
   font-weight: 700;
   background: var(--color-bg-hover);
-}
-
-img.chat-bubble-avatar-panel {
-  cursor: pointer;
 }
 
 .chat-bubble-content {
@@ -2682,6 +2689,7 @@ img.chat-bubble-avatar-panel {
 }
 
 .chat-start-portrait {
+  position: relative;
   width: var(--bubble-portrait);
   height: var(--bubble-portrait);
   border-radius: 50%;
