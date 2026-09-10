@@ -2,15 +2,27 @@ import { MouseEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { Message, MessageVariant, ttsPathForMessage } from '../../../shared/types/message';
 import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
+import { ImageCrop, ImageCropOwner } from '../../../shared/types/imageCrop';
 import { resolveCoverImage } from '../../utils/avatarImage';
 import { toImageUrl } from '../../utils/imageUrl';
 import { formatResponseTime } from '../../utils/formatResponseTime';
+import { useImageCrops } from '../../hooks/useImageCrops';
 import FormattedContent from '../FormattedContent';
 import ImageLightbox from '../ImageLightbox';
+import CroppableImage from '../CroppableImage';
 import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 import { TtsTrackMode } from '../../../shared/utils/ttsSegments';
 import MessageTtsControls from './TtsPlaybackBar';
+
+/** What a message bubble's avatar needs to render and, if it's a real image, to open the crop
+ * editor for it -- see MessageList's characterAvatar/personaAvatar. */
+interface AvatarInfo {
+  url: string | null;
+  imageId: string | null;
+  imageOwner: ImageCropOwner;
+  crop?: ImageCrop | null;
+}
 
 export interface MessageTtsProps {
   characterTrack: TtsTrackMode;
@@ -96,15 +108,24 @@ export default function MessageList({
 
   // A message bubble's avatar is always the gallery's cover image -- no per-message variation
   // (that's what the large margin portraits' carousel is for). Cheap to compute once per role.
-  const characterAvatarUrl = (() => {
-    const image = resolveCoverImage(characterImages);
-    return image ? toImageUrl(image.path) : null;
-  })();
-  const personaAvatarUrl = (() => {
-    const image = resolveCoverImage(personaImages);
-    return image ? toImageUrl(image.path) : null;
-  })();
-  const avatarFor = (role: string) => (role === 'user' ? personaAvatarUrl : characterAvatarUrl);
+  const characterAvatarImage = resolveCoverImage(characterImages);
+  const personaAvatarImage = resolveCoverImage(personaImages);
+  const { crops: avatarCrops, refresh: refreshAvatarCrops } = useImageCrops(
+    [characterAvatarImage?.id, personaAvatarImage?.id].filter((id): id is string => !!id)
+  );
+  const characterAvatar: AvatarInfo = {
+    url: characterAvatarImage ? toImageUrl(characterAvatarImage.path) : null,
+    imageId: characterAvatarImage?.id ?? null,
+    imageOwner: 'character',
+    crop: characterAvatarImage ? avatarCrops[characterAvatarImage.id]?.chatAvatar : undefined,
+  };
+  const personaAvatar: AvatarInfo = {
+    url: personaAvatarImage ? toImageUrl(personaAvatarImage.path) : null,
+    imageId: personaAvatarImage?.id ?? null,
+    imageOwner: 'persona',
+    crop: personaAvatarImage ? avatarCrops[personaAvatarImage.id]?.chatAvatar : undefined,
+  };
+  const avatarFor = (role: string) => (role === 'user' ? personaAvatar : characterAvatar);
 
   // Follow the stream as it grows, and jump to the end when a conversation is opened.
   useEffect(() => {
@@ -178,7 +199,8 @@ export default function MessageList({
             containerStyle={isEditing && editWidth ? { width: editWidth, maxWidth: editWidth } : undefined}
             role={message.role}
             name={message.role === 'user' ? personaName : characterName}
-            avatarUrl={avatarFor(message.role)}
+            avatar={avatarFor(message.role)}
+            onAvatarCropSaved={refreshAvatarCrops}
             content={message.content}
             model={message.role === 'assistant' ? message.model : null}
             generationMs={message.role === 'assistant' ? message.generationMs : null}
@@ -253,9 +275,18 @@ export default function MessageList({
         );
       })}
       {streamingText ? (
-        <Bubble role="assistant" name={characterName} avatarUrl={characterAvatarUrl} content={streamingText} streaming />
+        <Bubble
+          role="assistant"
+          name={characterName}
+          avatar={characterAvatar}
+          onAvatarCropSaved={refreshAvatarCrops}
+          content={streamingText}
+          streaming
+        />
       ) : (
-        isGenerating && <TypingIndicator name={characterName} avatarUrl={characterAvatarUrl} />
+        isGenerating && (
+          <TypingIndicator name={characterName} avatar={characterAvatar} onAvatarCropSaved={refreshAvatarCrops} />
+        )
       )}
       {onContinue &&
         canActOnLast &&
@@ -279,10 +310,18 @@ export default function MessageList({
 /** Shown between sending a message and the first token arriving, so a slow model start (lore
  * scanning, memory retrieval, the request round-trip) doesn't read as the app having hung --
  * the blinking caret on the streaming bubble covers the same worry once tokens are flowing. */
-function TypingIndicator({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
+function TypingIndicator({
+  name,
+  avatar,
+  onAvatarCropSaved,
+}: {
+  name: string;
+  avatar: AvatarInfo;
+  onAvatarCropSaved?: () => void;
+}) {
   return (
     <div className="chat-bubble chat-bubble-assistant chat-bubble-typing">
-      <BubbleAvatarPanel url={avatarUrl} name={name} />
+      <BubbleAvatarPanel avatar={avatar} name={name} onCropSaved={onAvatarCropSaved} />
       <div className="chat-bubble-content">
         <div className="chat-bubble-name">{name}</div>
         <div className="chat-typing-dots" aria-label={`${name} is typing`}>
@@ -353,7 +392,8 @@ function VariantNav({
 function Bubble({
   role,
   name,
-  avatarUrl,
+  avatar,
+  onAvatarCropSaved,
   content,
   streaming = false,
   model,
@@ -369,7 +409,8 @@ function Bubble({
 }: {
   role: string;
   name: string;
-  avatarUrl: string | null;
+  avatar: AvatarInfo;
+  onAvatarCropSaved?: () => void;
   content: string;
   streaming?: boolean;
   /** Shown in a hover tooltip below the bubble. Undefined/null for user messages and for an
@@ -405,7 +446,7 @@ function Bubble({
 
   return (
     <div className={`chat-bubble chat-bubble-${role}${streaming ? ' chat-bubble-streaming' : ''}`} style={containerStyle}>
-      <BubbleAvatarPanel url={avatarUrl} name={name} />
+      <BubbleAvatarPanel avatar={avatar} name={name} onCropSaved={onAvatarCropSaved} />
       <div className="chat-bubble-content">
         <div className="chat-bubble-name-row">
           <div className="chat-bubble-name">{name}</div>
@@ -466,9 +507,17 @@ function Bubble({
  * it -- an image when the gallery has one, otherwise a colored panel with the name's first
  * letter (same idea as Slack/Discord's default initials). Clicking a real image opens the
  * full-size lightbox. */
-function BubbleAvatarPanel({ url, name }: { url: string | null; name: string }) {
+function BubbleAvatarPanel({
+  avatar,
+  name,
+  onCropSaved,
+}: {
+  avatar: AvatarInfo;
+  name: string;
+  onCropSaved?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  if (!url) {
+  if (!avatar.url || !avatar.imageId) {
     return (
       <span className="chat-bubble-avatar-panel-fallback" aria-hidden="true">
         {name.trim().charAt(0).toUpperCase() || '?'}
@@ -476,9 +525,18 @@ function BubbleAvatarPanel({ url, name }: { url: string | null; name: string }) 
     );
   }
   return (
-    <>
-      <img className="chat-bubble-avatar-panel" src={url} alt={name} onClick={() => setExpanded(true)} />
-      {expanded && <ImageLightbox url={url} onClose={() => setExpanded(false)} />}
-    </>
+    <span className="chat-bubble-avatar-wrap">
+      <CroppableImage
+        src={avatar.url}
+        alt={name}
+        imageId={avatar.imageId}
+        imageOwner={avatar.imageOwner}
+        location="chatAvatar"
+        crop={avatar.crop}
+        onClick={() => setExpanded(true)}
+        onCropSaved={onCropSaved}
+      />
+      {expanded && <ImageLightbox url={avatar.url} onClose={() => setExpanded(false)} />}
+    </span>
   );
 }

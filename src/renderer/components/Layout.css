@@ -119,6 +119,54 @@
   margin-top: 12px;
 }
 
+/* ImageCropEditor -- wider than the base .modal-dialog to leave real room for the preview. */
+.crop-editor-dialog {
+  width: min(420px, 92vw);
+}
+
+.crop-editor-hint {
+  font-size: 12px;
+  margin: -6px 0 12px;
+}
+
+.crop-editor-preview {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  touch-action: none;
+  cursor: grab;
+}
+
+.crop-editor-preview:active {
+  cursor: grabbing;
+}
+
+.crop-editor-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.crop-editor-zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.crop-editor-zoom-row input[type='range'] {
+  flex: 1;
+}
+
+.crop-editor-zoom-value {
+  width: 40px;
+  text-align: right;
+}
+
 .settings-subsection {
   margin-top: 20px;
   padding-top: 16px;

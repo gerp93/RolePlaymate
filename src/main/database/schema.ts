@@ -155,6 +155,30 @@ export function initDatabase(dbPath?: string): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_scenario_images_scenario ON scenario_images(scenario_id);
 
+    -- Per-(image, display location) pan/zoom -- the same portrait can need a different crop as
+    -- a small circular chat avatar than as a tall detail-page portrait, so this is keyed on
+    -- both rather than storing one crop per image. \`image_id\` points into character_images,
+    -- persona_images, or scenario_images depending on \`image_owner\`; there's no single table to
+    -- declare a FOREIGN KEY against (no polymorphic FKs in SQLite), so cascade cleanup when an
+    -- image or its owning character/persona/scenario is deleted is handled explicitly by the
+    -- callers in main.ts rather than ON DELETE CASCADE. A missing row means "default" (zoom 1,
+    -- centered), which renders identically to today's plain \`object-fit: cover\` -- see
+    -- ImageCropService.
+    CREATE TABLE IF NOT EXISTS image_crops (
+      id TEXT PRIMARY KEY,
+      image_id TEXT NOT NULL,
+      image_owner TEXT NOT NULL,
+      location TEXT NOT NULL,
+      zoom REAL NOT NULL DEFAULT 1,
+      offset_x REAL NOT NULL DEFAULT 50,
+      offset_y REAL NOT NULL DEFAULT 50,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (image_id, location)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_image_crops_image ON image_crops(image_id);
+
     -- One row (id = 1): the salted hash of the "reveal hidden items" PIN, plus key_salt, used
     -- to derive the AES-256 key that actually encrypts hidden characters/personas/lorebooks at
     -- rest -- see securityService.ts. The PIN itself is never stored, and the verification

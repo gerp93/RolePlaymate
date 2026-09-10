@@ -48,6 +48,7 @@ import { PersonaImageService } from './database/personaImageService';
 import { PersonaFieldVersionService } from './database/personaFieldVersionService';
 import { ScenarioService } from './database/scenarioService';
 import { ScenarioImageService } from './database/scenarioImageService';
+import { ImageCropService } from './database/imageCropService';
 import { ModelSamplerService } from './database/modelSamplerService';
 import { ConversationService } from './database/conversationService';
 import { LorebookService } from './database/lorebookService';
@@ -110,6 +111,7 @@ import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/char
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
 import { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
+import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
 import {
   ChatSendRequest,
@@ -367,6 +369,7 @@ let personaImageService: PersonaImageService;
 let personaFieldVersionService: PersonaFieldVersionService;
 let scenarioService: ScenarioService;
 let scenarioImageService: ScenarioImageService;
+let imageCropService: ImageCropService;
 let modelSamplerService: ModelSamplerService;
 let conversationService: ConversationService;
 let promptBuilder: PromptBuilder;
@@ -793,6 +796,7 @@ app.whenReady().then(() => {
   personaFieldVersionService = new PersonaFieldVersionService(db, securityService);
   scenarioService = new ScenarioService(db, securityService);
   scenarioImageService = new ScenarioImageService(db);
+  imageCropService = new ImageCropService(db);
   conversationService = new ConversationService(db, securityService, personaFieldVersionService);
   promptSettingsService = new PromptSettingsService(db);
   promptFieldVersionService = new PromptFieldVersionService(db);
@@ -960,6 +964,7 @@ function registerIPCHandlers() {
     const images = characterImageService.getImagesByCharacter(id);
     conversationService.deleteTtsFilesForCharacter(id);
     characterService.deleteCharacter(id);
+    imageCropService.deleteCropsForImages(images.map((image) => image.id));
     for (const image of images) deleteCharacterImage(image.path);
     return { success: true };
   });
@@ -1067,6 +1072,7 @@ function registerIPCHandlers() {
   ipcMain.handle('characterImages:remove', (_, id: string) => {
     const existing = characterImageService.getImageById(id);
     characterImageService.removeImage(id);
+    imageCropService.deleteCropsForImage(id);
     if (existing) deleteCharacterImage(existing.path);
     return { success: true };
   });
@@ -1087,11 +1093,25 @@ function registerIPCHandlers() {
   ipcMain.handle('personaImages:remove', (_, id: string) => {
     const existing = personaImageService.getImageById(id);
     personaImageService.removeImage(id);
+    imageCropService.deleteCropsForImage(id);
     if (existing) deleteCharacterImage(existing.path);
     return { success: true };
   });
   ipcMain.handle('personaImages:setCover', (_, id: string) => {
     personaImageService.setCoverImage(id);
+    return { success: true };
+  });
+
+  // Per-(image, display location) crop handlers -- see shared/types/imageCrop.ts and
+  // ImageCropService. Cascade cleanup for removed/deleted images lives alongside each of
+  // those delete handlers rather than here (no FK to hang an ON DELETE CASCADE off, since
+  // image_id can point into three different tables).
+  ipcMain.handle('imageCrops:getForImages', (_, imageIds: string[]) =>
+    imageCropService.getCropsForImages(imageIds)
+  );
+  ipcMain.handle('imageCrops:set', (_, input: SetImageCropInput) => imageCropService.setCrop(input));
+  ipcMain.handle('imageCrops:reset', (_, imageId: string, location: ImageCropLocation) => {
+    imageCropService.resetCrop(imageId, location);
     return { success: true };
   });
 
@@ -1120,6 +1140,7 @@ function registerIPCHandlers() {
   ipcMain.handle('scenarios:delete', (_, id: string) => {
     const images = scenarioImageService.getImagesByScenario(id);
     scenarioService.deleteScenario(id);
+    imageCropService.deleteCropsForImages(images.map((image) => image.id));
     for (const image of images) deleteCharacterImage(image.path);
     return { success: true };
   });
@@ -1170,6 +1191,7 @@ function registerIPCHandlers() {
   ipcMain.handle('scenarioImages:remove', (_, id: string) => {
     const existing = scenarioImageService.getImageById(id);
     scenarioImageService.removeImage(id);
+    imageCropService.deleteCropsForImage(id);
     if (existing) deleteCharacterImage(existing.path);
     return { success: true };
   });
@@ -1597,7 +1619,9 @@ function registerIPCHandlers() {
     conversationService.setPersonaHidden(id, hidden)
   );
   ipcMain.handle('personas:delete', (_, id: string) => {
+    const images = personaImageService.getImagesByPersona(id);
     conversationService.deletePersona(id);
+    imageCropService.deleteCropsForImages(images.map((image) => image.id));
     return { success: true };
   });
 

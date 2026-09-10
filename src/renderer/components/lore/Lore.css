@@ -396,6 +396,7 @@
 /* --- scenario editor -------------------------------------------------------------------- */
 
 .scenario-image-thumb {
+  position: relative;
   width: 64px;
   height: 64px;
   border-radius: var(--radius);

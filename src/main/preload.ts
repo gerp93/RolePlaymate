@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
+import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   characters: {
@@ -39,6 +40,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     add: (personaId: string) => ipcRenderer.invoke('personaImages:add', personaId),
     remove: (id: string) => ipcRenderer.invoke('personaImages:remove', id),
     setCover: (id: string) => ipcRenderer.invoke('personaImages:setCover', id),
+  },
+
+  imageCrops: {
+    getForImages: (imageIds: string[]) => ipcRenderer.invoke('imageCrops:getForImages', imageIds),
+    set: (input: SetImageCropInput) => ipcRenderer.invoke('imageCrops:set', input),
+    reset: (imageId: string, location: ImageCropLocation) =>
+      ipcRenderer.invoke('imageCrops:reset', imageId, location),
   },
 
   scenarios: {

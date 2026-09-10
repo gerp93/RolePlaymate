@@ -9,6 +9,8 @@ import { useSecurity } from '../context/SecurityContext';
 import LockedPlaceholder from '../components/LockedPlaceholder';
 import LimitedInput from '../components/LimitedInput';
 import CharacterVoicePicker from '../components/CharacterVoicePicker';
+import CroppableImage from '../components/CroppableImage';
+import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { CharacterTtsVoice } from '../../shared/types/tts';
 import { useVoicePreview } from '../hooks/useVoicePreview';
@@ -25,6 +27,7 @@ export default function PersonaDetail() {
   const [imageBusy, setImageBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const voicePreview = useVoicePreview();
+  const { crops, refresh: refreshCrops } = useImageCrops(images.map((img) => img.id));
 
   // hiddenUnlocked: a persona already fetched under the previous lock state holds ciphertext
   // when hidden -- re-fetch on every lock/unlock so content updates immediately instead of
@@ -189,7 +192,19 @@ export default function PersonaDetail() {
 
       <div className="character-detail-portrait-panel">
         <div className="character-detail-portrait-large">
-          {currentImage ? <img src={toImageUrl(currentImage.path)} alt={persona.name} /> : <span>?</span>}
+          {currentImage ? (
+            <CroppableImage
+              src={toImageUrl(currentImage.path)}
+              alt={persona.name}
+              imageId={currentImage.id}
+              imageOwner="persona"
+              location="detail"
+              crop={crops[currentImage.id]?.detail}
+              onCropSaved={refreshCrops}
+            />
+          ) : (
+            <span>?</span>
+          )}
 
           {images.length > 1 && (
             <>

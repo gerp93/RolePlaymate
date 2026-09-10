@@ -5,6 +5,8 @@ import { CharacterImage } from '../../shared/types/characterImage';
 import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LimitedInput from '../components/LimitedInput';
+import CroppableImage from '../components/CroppableImage';
+import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
@@ -25,6 +27,10 @@ export default function CharacterList() {
   const [nameError, setNameError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const coverImageIds = Object.values(coverImages)
+    .map((images) => images[0]?.id)
+    .filter((id): id is string => !!id);
+  const { crops, refresh: refreshCrops } = useImageCrops(coverImageIds);
 
   // hiddenUnlocked: characters already fetched under the previous lock state hold ciphertext
   // for anything hidden -- re-fetch on every lock/unlock so names update immediately instead
@@ -144,7 +150,19 @@ export default function CharacterList() {
               return (
                 <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
                   <div className="character-card-portrait">
-                    {cover ? <img src={toImageUrl(cover.path)} alt={character.name} /> : <span>?</span>}
+                    {cover ? (
+                      <CroppableImage
+                        src={toImageUrl(cover.path)}
+                        alt={character.name}
+                        imageId={cover.id}
+                        imageOwner="character"
+                        location="card"
+                        crop={crops[cover.id]?.card}
+                        onCropSaved={refreshCrops}
+                      />
+                    ) : (
+                      <span>?</span>
+                    )}
                   </div>
                   <div className="character-card-body">
                     <p className="character-card-name">{character.name}</p>

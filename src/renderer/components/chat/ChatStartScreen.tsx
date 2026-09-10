@@ -9,7 +9,16 @@ import {
 } from '../../utils/chatPickerOptions';
 import { StartPickerOption } from './StartScreenPicker';
 import { toImageUrl } from '../../utils/imageUrl';
+import { ImageCrop, ImageCropLocation, ImageCropOwner } from '../../../shared/types/imageCrop';
+import CroppableImage from '../CroppableImage';
 import StartScreenPicker from './StartScreenPicker';
+
+/** What one of the three main start-screen bubbles needs to render a real portrait -- the
+ * underlying image's id (for the crop editor) alongside its already-resolved display url. */
+export interface StartPortrait {
+  id: string;
+  url: string;
+}
 /** SVG viewBox coords — keep in sync with bubble positions/sizes in Chat.css. */
 const CHAR_X = 18;
 const CHAR_Y = 16;
@@ -49,12 +58,16 @@ interface Props {
   personaId: string;
   scenarioId: string;
   model: string;
-  characterPortraitUrl: string | null;
-  personaPortraitUrl: string | null;
-  scenarioPortraitUrl: string | null;
+  characterPortrait: StartPortrait | null;
+  personaPortrait: StartPortrait | null;
+  scenarioPortrait: StartPortrait | null;
   characterCoverUrls: Record<string, string | null>;
   personaCoverUrls: Record<string, string | null>;
   scenarioCoverUrls: Record<string, string | null>;
+  /** Every crop known for any image that could appear here -- shared with Chat.tsx's margin
+   * portraits rather than fetched separately, since it's the same underlying galleries. */
+  crops: Record<string, Partial<Record<ImageCropLocation, ImageCrop>>>;
+  onCropSaved: () => void;
   onCharacterChange: (id: string) => void;
   onPersonaChange: (id: string) => void;
   onScenarioChange: (id: string) => void;
@@ -63,18 +76,30 @@ interface Props {
 }
 
 function ScenarioBubble({
-  imageUrl,
+  portrait,
   name,
   unselected,
+  crop,
+  onCropSaved,
 }: {
-  imageUrl: string | null;
+  portrait: StartPortrait | null;
   name: string;
   unselected: boolean;
+  crop?: ImageCrop | null;
+  onCropSaved: () => void;
 }) {
   return (
     <div className={`chat-start-portrait${unselected ? ' chat-start-portrait-unselected' : ''}`}>
-      {imageUrl ? (
-        <img src={imageUrl} alt={name} />
+      {portrait ? (
+        <CroppableImage
+          src={portrait.url}
+          alt={name}
+          imageId={portrait.id}
+          imageOwner="scenario"
+          location="chatStart"
+          crop={crop}
+          onCropSaved={onCropSaved}
+        />
       ) : (
         <span className="chat-start-portrait-glyph" aria-hidden>
           ◈
@@ -94,10 +119,36 @@ function ModelBubble() {
   );
 }
 
-function PortraitFrame({ src, alt, fallback }: { src: string | null; alt: string; fallback: string }) {
+function PortraitFrame({
+  portrait,
+  alt,
+  fallback,
+  imageOwner,
+  crop,
+  onCropSaved,
+}: {
+  portrait: StartPortrait | null;
+  alt: string;
+  fallback: string;
+  imageOwner: ImageCropOwner;
+  crop?: ImageCrop | null;
+  onCropSaved: () => void;
+}) {
   return (
     <div className="chat-start-portrait">
-      {src ? <img src={src} alt={alt} /> : <span className="chat-start-portrait-fallback">{fallback}</span>}
+      {portrait ? (
+        <CroppableImage
+          src={portrait.url}
+          alt={alt}
+          imageId={portrait.id}
+          imageOwner={imageOwner}
+          location="chatStart"
+          crop={crop}
+          onCropSaved={onCropSaved}
+        />
+      ) : (
+        <span className="chat-start-portrait-fallback">{fallback}</span>
+      )}
     </div>
   );
 }
@@ -147,12 +198,14 @@ export default function ChatStartScreen({
   personaId,
   scenarioId,
   model,
-  characterPortraitUrl,
-  personaPortraitUrl,
-  scenarioPortraitUrl,
+  characterPortrait,
+  personaPortrait,
+  scenarioPortrait,
   characterCoverUrls,
   personaCoverUrls,
   scenarioCoverUrls,
+  crops,
+  onCropSaved,
   onCharacterChange,
   onPersonaChange,
   onScenarioChange,
@@ -255,9 +308,12 @@ export default function ChatStartScreen({
           }
         >
           <PortraitFrame
-            src={characterPortraitUrl}
+            portrait={characterPortrait}
             alt={character?.name ?? 'Character'}
             fallback={character?.name?.charAt(0).toUpperCase() ?? '?'}
+            imageOwner="character"
+            crop={characterPortrait ? crops[characterPortrait.id]?.chatStart : undefined}
+            onCropSaved={onCropSaved}
           />
         </StartNode>
 
@@ -276,9 +332,12 @@ export default function ChatStartScreen({
           }
         >
           <PortraitFrame
-            src={personaPortraitUrl}
+            portrait={personaPortrait}
             alt={selectedPersona?.name ?? 'Persona'}
             fallback={selectedPersona?.name?.charAt(0).toUpperCase() ?? '◎'}
+            imageOwner="persona"
+            crop={personaPortrait ? crops[personaPortrait.id]?.chatStart : undefined}
+            onCropSaved={onCropSaved}
           />
         </StartNode>
 
@@ -301,9 +360,11 @@ export default function ChatStartScreen({
             }
           >
             <ScenarioBubble
-              imageUrl={scenarioPortraitUrl}
+              portrait={scenarioPortrait}
               name={selectedScenario?.name ?? 'Scenario'}
               unselected={!scenarioId}
+              crop={scenarioPortrait ? crops[scenarioPortrait.id]?.chatStart : undefined}
+              onCropSaved={onCropSaved}
             />
           </StartNode>
         ) : (
@@ -360,4 +421,14 @@ export function startScreenPortraitUrl(images: { path: string; position: number 
   if (images.length === 0) return null;
   const cover = images.find((i) => i.position === 0) ?? images[0];
   return toImageUrl(cover.path);
+}
+
+/** Same cover-image resolution as startScreenPortraitUrl, but for the three main bubbles
+ * (character/persona/scenario), which also need the image's id to open its crop editor. */
+export function startScreenPortraitImage(
+  images: { id: string; path: string; position: number }[]
+): StartPortrait | null {
+  if (images.length === 0) return null;
+  const cover = images.find((i) => i.position === 0) ?? images[0];
+  return { id: cover.id, url: toImageUrl(cover.path) };
 }
