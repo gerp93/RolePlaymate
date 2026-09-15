@@ -1,5 +1,6 @@
 import { MouseEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { Message, MessageVariant, ttsPathForMessage } from '../../../shared/types/message';
+import { ChatDebugInfo } from '../../../shared/types/chat';
 import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
 import { ImageCrop, ImageCropOwner } from '../../../shared/types/imageCrop';
@@ -48,11 +49,15 @@ interface Props {
   variants: MessageVariant[];
   onRegenerate: () => void;
   onSelectVariant: (variantId: string) => void;
+  /** Bookmarks (or un-bookmarks) one of the last message's redo candidates -- persists across
+   * restarts, independent of which variant is currently selected. */
+  onToggleVariantStar: (variantId: string, starred: boolean) => void;
   /** Commits an edit of the last assistant message -- Save only, never when the textarea opens. */
   onEditLast: (content: string) => void;
-  /** Commits an edit of the user turn behind the pending reply and regenerates that reply --
-   * Save only, never when the textarea opens. See chatSession.editPriorUserMessage. */
-  onEditPrior: (messageId: string, content: string) => void;
+  /** Commits an edit of the user turn behind the pending reply (and its stored directions) and
+   * regenerates that reply -- Save only, never when the textarea opens. See
+   * chatSession.editPriorUserMessage. */
+  onEditPrior: (messageId: string, content: string, directions: string) => void;
   onDeleteLast: () => void;
   onViewPrompt: (messageId: string) => void;
   /** Have the character take another turn with no new user message. Omitted when Continue
@@ -80,6 +85,7 @@ export default function MessageList({
   variants,
   onRegenerate,
   onSelectVariant,
+  onToggleVariantStar,
   onEditLast,
   onEditPrior,
   onDeleteLast,
@@ -98,6 +104,9 @@ export default function MessageList({
   // canEditPriorUser) -- never both at once, and never anything earlier.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  // Only meaningful when editing the prior-user slot (see canEditPriorUser) -- the assistant
+  // edit slot has no directions of its own to edit.
+  const [editDirectionsDraft, setEditDirectionsDraft] = useState('');
   // The bubble's own rendered width just before switching into edit mode, frozen as an inline
   // style for the duration of the edit. Bubbles shrink-wrap to their content by default (see
   // .chat-bubble-assistant's align-self: flex-start), so without this a short reply's bubble
@@ -105,6 +114,21 @@ export default function MessageList({
   // back out as text is typed -- measured off the clicked button's own bubble ancestor at click
   // time rather than a persistent ref, since which bubble can start an edit now varies.
   const [editWidth, setEditWidth] = useState<number | null>(null);
+
+  // Which message's "Sources" panel (lore/memories used for that reply) is expanded, and a
+  // fetch-once cache of chat:getMessageDebug results keyed by message id -- reused rather than
+  // re-derived, since the full debug payload is already computed and stored per turn (see
+  // DebugConsole, which shows the same data plus rejected/scan-window detail this panel omits).
+  const [sourcesOpenId, setSourcesOpenId] = useState<string | null>(null);
+  const [sourcesCache, setSourcesCache] = useState<Record<string, ChatDebugInfo | null | undefined>>({});
+  const toggleSources = (messageId: string) => {
+    setSourcesOpenId((current) => (current === messageId ? null : messageId));
+    if (!(messageId in sourcesCache)) {
+      void window.electronAPI.chat.getMessageDebug(messageId).then((debug) => {
+        setSourcesCache((c) => ({ ...c, [messageId]: debug }));
+      });
+    }
+  };
 
   // A message bubble's avatar is always the gallery's cover image -- no per-message variation
   // (that's what the large margin portraits' carousel is for). Cheap to compute once per role.
@@ -166,6 +190,7 @@ export default function MessageList({
     const bubble = e.currentTarget.closest('.chat-bubble') as HTMLElement | null;
     setEditWidth(bubble?.getBoundingClientRect().width ?? null);
     setEditDraft(message.content);
+    setEditDirectionsDraft(message.role === 'user' ? (message.directions ?? '') : '');
     setEditingId(message.id);
   };
 
@@ -192,7 +217,10 @@ export default function MessageList({
           ((canActOnLast && i === lastIndex && message.role === 'assistant' && !isGreeting) ||
             (canEditPriorUser && i === lastIndex - 1));
         const showDelete = !isEditing && canActOnLast && i === lastIndex && !isGreeting;
-        const showFooter = showTts || showVariantNav || showEdit || showDelete;
+        // Available on every real reply, not just the last -- unlike edit/delete/redo, browsing
+        // what fed an older reply is just as useful once the conversation has moved on from it.
+        const showSources = !isEditing && message.role === 'assistant' && !!message.model;
+        const showFooter = showTts || showVariantNav || showEdit || showDelete || showSources;
         return (
           <Bubble
             key={message.id}
@@ -202,15 +230,19 @@ export default function MessageList({
             avatar={avatarFor(message.role)}
             onAvatarCropSaved={refreshAvatarCrops}
             content={message.content}
+            directions={message.role === 'user' ? message.directions : null}
             model={message.role === 'assistant' ? message.model : null}
             generationMs={message.role === 'assistant' ? message.generationMs : null}
             onViewPrompt={message.model ? () => onViewPrompt(message.id) : undefined}
             isEditing={isEditing}
             editDraft={editDraft}
             onEditDraftChange={setEditDraft}
+            showDirectionsField={isEditing && message.role === 'user' && i === lastIndex - 1}
+            editDirectionsDraft={editDirectionsDraft}
+            onEditDirectionsDraftChange={setEditDirectionsDraft}
             onSaveEdit={() => {
               if (i === lastIndex) onEditLast(editDraft);
-              else onEditPrior(message.id, editDraft);
+              else onEditPrior(message.id, editDraft, editDirectionsDraft);
               setEditingId(null);
               setEditWidth(null);
             }}
@@ -227,6 +259,7 @@ export default function MessageList({
                     selectedId={message.selectedVariantId}
                     onSelect={onSelectVariant}
                     onRegenerate={onRegenerate}
+                    onToggleStar={onToggleVariantStar}
                   />
                 )}
                 {showTts && tts && (
@@ -269,7 +302,22 @@ export default function MessageList({
                     🗑️
                   </button>
                 )}
+                {showSources && (
+                  <button
+                    type="button"
+                    className={`chat-variant-btn chat-message-sources-toggle${sourcesOpenId === message.id ? ' chat-message-sources-toggle-open' : ''}`}
+                    onClick={() => toggleSources(message.id)}
+                    title="Show lore and memories used for this reply"
+                    aria-label="Show lore and memories used for this reply"
+                    aria-expanded={sourcesOpenId === message.id}
+                  >
+                    📚 Sources
+                  </button>
+                )}
               </div>
+            )}
+            {showSources && sourcesOpenId === message.id && (
+              <SourcesPanel debug={sourcesCache[message.id]} />
             )}
           </Bubble>
         );
@@ -345,16 +393,20 @@ function VariantNav({
   selectedId,
   onSelect,
   onRegenerate,
+  onToggleStar,
 }: {
   variants: MessageVariant[];
   selectedId: string | null;
   onSelect: (variantId: string) => void;
   onRegenerate: () => void;
+  onToggleStar: (variantId: string, starred: boolean) => void;
 }) {
   const index = Math.max(
     0,
     variants.findIndex((v) => v.id === selectedId)
   );
+  const selected = variants[index] as MessageVariant | undefined;
+  const starredVariants = variants.filter((v) => v.starred);
 
   const step = (delta: number) => {
     const next = variants[(index + delta + variants.length) % variants.length];
@@ -363,19 +415,9 @@ function VariantNav({
 
   return (
     <div className="chat-variant-nav">
-      {variants.length > 1 && (
-        <>
-          <button type="button" className="chat-variant-btn" onClick={() => step(-1)} aria-label="Previous response">
-            ‹
-          </button>
-          <span className="chat-variant-count">
-            {index + 1}/{variants.length}
-          </span>
-          <button type="button" className="chat-variant-btn" onClick={() => step(1)} aria-label="Next response">
-            ›
-          </button>
-        </>
-      )}
+      {/* Always the first child so it never shifts position -- the nav-group after it only
+          renders when there's more than one variant, so this button alone occupies the left
+          edge whether or not that group is showing. */}
       <button
         type="button"
         className="chat-variant-btn chat-variant-redo"
@@ -385,6 +427,99 @@ function VariantNav({
       >
         ↻
       </button>
+      {selected && (
+        <button
+          type="button"
+          className={`chat-variant-btn chat-variant-star-btn${selected.starred ? ' chat-variant-star-btn-active' : ''}`}
+          onClick={() => onToggleStar(selected.id, !selected.starred)}
+          title={selected.starred ? 'Unstar this response' : 'Star this response'}
+          aria-label={selected.starred ? 'Unstar this response' : 'Star this response'}
+          aria-pressed={selected.starred}
+        >
+          {selected.starred ? '★' : '☆'}
+        </button>
+      )}
+      {variants.length > 1 && (
+        <div className="chat-variant-nav-group">
+          <button type="button" className="chat-variant-btn" onClick={() => step(-1)} aria-label="Previous response">
+            ‹
+          </button>
+          <span className="chat-variant-count">
+            {index + 1}/{variants.length}
+          </span>
+          <button type="button" className="chat-variant-btn" onClick={() => step(1)} aria-label="Next response">
+            ›
+          </button>
+        </div>
+      )}
+      {starredVariants.length > 0 && (
+        <div className="chat-variant-star-chips">
+          {starredVariants.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className={`chat-variant-star-chip${v.id === selectedId ? ' chat-variant-star-chip-active' : ''}`}
+              onClick={() => onSelect(v.id)}
+              title="Jump to this starred response"
+            >
+              ★ {variants.findIndex((x) => x.id === v.id) + 1}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Condensed view of what fed one reply -- selected lore entries and memories only, reusing
+ * chat:getMessageDebug's already-computed payload rather than a new IPC call or re-derivation.
+ * Deliberately omits rejected entries and the lore scan window (DebugConsole's full Lore/
+ * Memories sections still own that detail); this is a quick "why did it say that" glance, not
+ * a diagnostic tool.
+ */
+function SourcesPanel({ debug }: { debug: ChatDebugInfo | null | undefined }) {
+  if (debug === undefined) {
+    return <div className="chat-sources-panel chat-sources-empty text-muted">Loading…</div>;
+  }
+  if (debug === null) {
+    return <div className="chat-sources-panel chat-sources-empty text-muted">No prompt data recorded for this reply.</div>;
+  }
+
+  const loreSelected = debug.lore?.selected ?? [];
+  const scoredMemories = debug.retrieval?.selected ?? null;
+  const memoryTexts = debug.memories;
+  const hasLore = loreSelected.length > 0;
+  const hasMemories = (scoredMemories ?? memoryTexts).length > 0;
+
+  if (!hasLore && !hasMemories) {
+    return <div className="chat-sources-panel chat-sources-empty text-muted">No lore or memories were used for this reply.</div>;
+  }
+
+  return (
+    <div className="chat-sources-panel">
+      {hasLore && (
+        <div className="chat-sources-group">
+          <span className="chat-sources-group-title">Lore</span>
+          <ul>
+            {loreSelected.map((entry) => (
+              <li key={entry.entryId}>
+                {entry.title} <span className="text-muted">({entry.lorebookName})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {hasMemories && (
+        <div className="chat-sources-group">
+          <span className="chat-sources-group-title">Memories</span>
+          <ul>
+            {scoredMemories
+              ? scoredMemories.map((entry) => <li key={entry.memory.id}>{entry.memory.content}</li>)
+              : memoryTexts.map((content, index) => <li key={index}>{content}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -395,6 +530,7 @@ function Bubble({
   avatar,
   onAvatarCropSaved,
   content,
+  directions,
   streaming = false,
   model,
   generationMs,
@@ -402,6 +538,9 @@ function Bubble({
   isEditing = false,
   editDraft = '',
   onEditDraftChange,
+  showDirectionsField = false,
+  editDirectionsDraft = '',
+  onEditDirectionsDraftChange,
   onSaveEdit,
   onCancelEdit,
   containerStyle,
@@ -412,6 +551,10 @@ function Bubble({
   avatar: AvatarInfo;
   onAvatarCropSaved?: () => void;
   content: string;
+  /** Per-turn scene directions stored on this user message, if any -- null for assistant/system
+   * messages and for a user message with none attached. Shown as its own section, separate from
+   * the message content it accompanied. */
+  directions?: string | null;
   streaming?: boolean;
   /** Shown in a hover tooltip below the bubble. Undefined/null for user messages and for an
    * assistant message that predates this column -- nothing to report either way. */
@@ -425,6 +568,11 @@ function Bubble({
   isEditing?: boolean;
   editDraft?: string;
   onEditDraftChange?: (value: string) => void;
+  /** Only true for the one editable prior-user-message slot -- the assistant edit slot never
+   * shows a directions field, since directions belong to the user turn, not the reply. */
+  showDirectionsField?: boolean;
+  editDirectionsDraft?: string;
+  onEditDirectionsDraftChange?: (value: string) => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
   /** Freezes the bubble at its pre-edit width -- see editWidth. */
@@ -471,6 +619,19 @@ function Bubble({
               onChange={(e) => onEditDraftChange?.(e.target.value)}
               autoFocus
             />
+            {showDirectionsField && (
+              <div className="chat-bubble-edit-directions">
+                <label className="chat-bubble-edit-directions-label">Scene directions</label>
+                <LimitedTextarea
+                  className="chat-bubble-edit-textarea"
+                  limit={FIELD_LIMITS.directions}
+                  compactCount
+                  value={editDirectionsDraft}
+                  onChange={(e) => onEditDirectionsDraftChange?.(e.target.value)}
+                  placeholder="No directions"
+                />
+              </div>
+            )}
             <div className="chat-bubble-edit-actions">
               <button type="button" className="btn btn-primary" disabled={!editDraft.trim()} onClick={onSaveEdit}>
                 Save
@@ -484,6 +645,12 @@ function Bubble({
           <div className="chat-bubble-body">
             <FormattedContent text={content} />
             {streaming && <span className="chat-caret" aria-hidden="true" />}
+            {role === 'user' && directions?.trim() && (
+              <div className="chat-bubble-directions" title="Scene directions sent with this message">
+                <span className="chat-bubble-directions-label">Directions</span>
+                <FormattedContent text={directions} />
+              </div>
+            )}
           </div>
         )}
         {children}

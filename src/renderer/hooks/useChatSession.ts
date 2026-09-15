@@ -47,6 +47,9 @@ export interface UseChatSession {
   regenerate: (samplers?: Partial<SamplerParams>, model?: string) => Promise<void>;
   /** Switches which variant of the last message is shown. Instant -- no model call. */
   selectVariant: (variantId: string) => Promise<void>;
+  /** Bookmarks (or un-bookmarks) one of the last message's redo candidates. Persists across
+   * restarts and doesn't change which variant is selected. */
+  toggleVariantStar: (variantId: string, starred: boolean) => Promise<void>;
   /** Hand-edits the last message's content -- assistant only, see chatSession.editMessage.
    * Records the edit as a new variant rather than overwriting, so the original stays reachable
    * through the same variant switcher a redo would leave behind. */
@@ -295,6 +298,7 @@ export function useChatSession(
         model: null,
         generationMs: null,
         ttsAudioPath: null,
+        directions: input.directions ?? null,
         seq: Number.MAX_SAFE_INTEGER,
         createdAt: new Date().toISOString(),
       };
@@ -386,6 +390,13 @@ export function useChatSession(
     },
     [conversationId, messages]
   );
+
+  /** Bookmarks (or un-bookmarks) a redo candidate -- a pure flag flip, doesn't select it or
+   * touch generation state, so it's a direct passthrough with no optimistic-update dance. */
+  const toggleVariantStar = useCallback(async (variantId: string, starred: boolean) => {
+    const updated = await window.electronAPI.chat.toggleVariantStar(variantId, starred);
+    setVariants((current) => current.map((v) => (v.id === updated.id ? updated : v)));
+  }, []);
 
   const editLastMessage = useCallback(
     async (content: string) => {
@@ -491,6 +502,7 @@ export function useChatSession(
     continueAsCharacter,
     regenerate,
     selectVariant,
+    toggleVariantStar,
     editLastMessage,
     editPriorMessage,
     deleteLastMessage,

@@ -225,6 +225,7 @@ declare global {
           messageId: string,
           variantId: string
         ) => Promise<Message>;
+        toggleVariantStar: (variantId: string, starred: boolean) => Promise<MessageVariant>;
         editMessage: (conversationId: string, messageId: string, content: string) => Promise<Message>;
         deleteMessage: (conversationId: string, messageId: string) => Promise<{ success: boolean }>;
         cancel: (conversationId: string) => Promise<{ cancelled: boolean }>;
@@ -296,6 +297,8 @@ declare global {
         getById: (id: string) => Promise<Conversation | null>;
         getMessages: (id: string) => Promise<Message[]>;
         create: (input: CreateConversationInput) => Promise<Conversation>;
+        duplicate: (sourceId: string) => Promise<Conversation>;
+        branch: (sourceId: string) => Promise<Conversation>;
         rename: (id: string, title: string) => Promise<Conversation>;
         setPersona: (id: string, userPersonaId: string | null) => Promise<Conversation>;
         setScenario: (id: string, scenarioId: string | null) => Promise<Conversation>;

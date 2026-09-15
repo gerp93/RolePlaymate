@@ -70,13 +70,22 @@ async function launchChatterbox(resolved: string): Promise<{ status: 'ok' } | { 
 
   if (process.platform === 'win32') {
     const embedded = embeddedPython(resolved);
-    // `start "title" /D dir cmd...` needs the title as the first quoted token.
-    const inner = embedded
-      ? `"${embedded}" start.py ${WINDOWS_START_ARGS.join(' ')}`
-      : `start.bat ${WINDOWS_START_ARGS.join(' ')}`;
+    // Pass the executable and its args as separate tokens. Do NOT build a quoted
+    // command string for `cmd /k` -- Node's spawn quoting turns \"path\" into a
+    // literal that cmd fails to run (the bug that produced the \"python.exe\" error).
+    // `start "title" /D dir exe args...` needs the title as its own argv entry.
     spawnDetached(
       'cmd.exe',
-      ['/c', 'start', 'Chatterbox TTS', '/D', resolved, 'cmd.exe', '/k', inner],
+      [
+        '/c',
+        'start',
+        'Chatterbox TTS',
+        '/D',
+        resolved,
+        ...(embedded
+          ? [embedded, 'start.py', ...WINDOWS_START_ARGS]
+          : [path.join(resolved, 'start.bat'), ...WINDOWS_START_ARGS]),
+      ],
       resolved
     );
     return { status: 'ok' };

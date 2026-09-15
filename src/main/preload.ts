@@ -166,6 +166,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     suggestReply: (request: unknown) => ipcRenderer.invoke('chat:suggestReply', request),
     selectVariant: (conversationId: string, messageId: string, variantId: string) =>
       ipcRenderer.invoke('chat:selectVariant', conversationId, messageId, variantId),
+    toggleVariantStar: (variantId: string, starred: boolean) =>
+      ipcRenderer.invoke('chat:toggleVariantStar', variantId, starred),
     editMessage: (conversationId: string, messageId: string, content: string) =>
       ipcRenderer.invoke('chat:editMessage', conversationId, messageId, content),
     deleteMessage: (conversationId: string, messageId: string) =>
@@ -257,6 +259,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getById: (id: string) => ipcRenderer.invoke('conversations:getById', id),
     getMessages: (id: string) => ipcRenderer.invoke('conversations:getMessages', id),
     create: (input: unknown) => ipcRenderer.invoke('conversations:create', input),
+    duplicate: (sourceId: string) => ipcRenderer.invoke('conversations:duplicate', sourceId),
+    branch: (sourceId: string) => ipcRenderer.invoke('conversations:branch', sourceId),
     rename: (id: string, title: string) => ipcRenderer.invoke('conversations:rename', id, title),
     setPersona: (id: string, userPersonaId: string | null) =>
       ipcRenderer.invoke('conversations:setPersona', id, userPersonaId),

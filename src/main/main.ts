@@ -1687,6 +1687,28 @@ function registerIPCHandlers() {
     return conversationService.createConversation({ ...input, greeting: built.greeting });
   });
 
+  // "Duplicate as new chat": same character/persona/scenario/model/image picks, no transcript --
+  // resolves a fresh greeting exactly like conversations:create above, since this is a brand new
+  // conversation, just pre-filled from an existing one instead of the picker's defaults.
+  ipcMain.handle('conversations:duplicate', (_, sourceId: string) => {
+    const source = conversationService.getConversation(sourceId);
+    if (!source?.characterId) throw new Error('Cannot duplicate a conversation with no character');
+    const persona = source.userPersonaId ? conversationService.getPersona(source.userPersonaId) : null;
+    const scenarioGreeting = source.scenarioId ? scenarioService.getActiveGreeting(source.scenarioId) : null;
+    const built = promptBuilder.buildSystemPrompt(source.characterId, {
+      personaName: persona?.name ?? null,
+      personaBackground: persona?.background ?? null,
+      scenarioGreeting,
+    });
+    return conversationService.duplicateConversation(sourceId, built.greeting);
+  });
+
+  // "Branch from here": same settings, plus the full transcript/variants/memories copied so
+  // far -- see conversationService.branchConversation for why copied rows get fresh TTS paths.
+  ipcMain.handle('conversations:branch', (_, sourceId: string) =>
+    conversationService.branchConversation(sourceId)
+  );
+
   ipcMain.handle('conversations:rename', (_, id: string, title: string) => {
     guardConversationTitle(title);
     return conversationService.renameConversation(id, title);
@@ -2459,6 +2481,13 @@ function registerChatHandlers() {
     'chat:selectVariant',
     (_, conversationId: string, messageId: string, variantId: string) =>
       chatSessions.chooseVariant(conversationId, messageId, variantId)
+  );
+
+  // Bookmarking a redo candidate is a pure flag flip with no effect on generation state, so it
+  // goes straight to the service rather than through ChatSessionManager (unlike selecting or
+  // editing a variant, which must stay consistent with the session's pending/history state).
+  ipcMain.handle('chat:toggleVariantStar', (_, variantId: string, starred: boolean) =>
+    conversationService.setVariantStarred(variantId, starred)
   );
 
   // Hand-edits the last (pending) assistant message -- see ChatSessionManager.editMessage for

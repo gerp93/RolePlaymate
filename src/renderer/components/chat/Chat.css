@@ -298,6 +298,66 @@
   min-width: 0;
 }
 
+/* The one persistent per-conversation control -- unlike the scenario header (only when a
+   scenario's selected) or the sidebar reveal buttons (only while their sidebar is collapsed),
+   this is always available whenever a conversation is open. */
+.chat-conversation-menu {
+  position: relative;
+  align-self: flex-end;
+}
+
+.chat-conversation-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.chat-conversation-menu-trigger:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.chat-conversation-menu-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--color-bg) 50%, transparent);
+}
+
+.chat-conversation-menu-item {
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-conversation-menu-item:hover {
+  background: var(--color-bg-hover);
+}
+
 .chat-column-side {
   flex: 0 0 auto;
   align-items: stretch;
@@ -982,6 +1042,16 @@
   right: auto;
 }
 
+/* Character column (left portrait): without this, this trigger's default bottom-right position
+   stacks directly on top of CroppableImage's own crop/zoom-adjust button (also bottom-right,
+   see .croppable-image-adjust-btn in index.css -- a global class, so it isn't overridden here,
+   it's this trigger that moves instead). Mirrors the persona override above onto the opposite
+   side, since that column has no such override and is otherwise identical. */
+.chat-portrait-margin:not(.chat-portrait-margin-persona) .image-picker-overlay-trigger {
+  left: 8px;
+  right: auto;
+}
+
 .image-picker-overlay-trigger:hover {
   opacity: 1;
 }
@@ -1499,6 +1569,42 @@
   margin-top: 6px;
 }
 
+/* Displayed section for a user message's stored per-turn directions -- visually separate from
+   the message content it accompanied, since it's a different kind of text (a stage direction
+   to the model, not something said in-scene). */
+.chat-bubble-directions {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--color-border);
+  font-size: 0.9em;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.chat-bubble-directions-label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.chat-bubble-edit-directions {
+  margin-top: 8px;
+}
+
+.chat-bubble-edit-directions-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
 /* Blinking caret so a slow first token doesn't read as a hang. */
 .chat-caret {
   display: inline-block;
@@ -1552,8 +1658,103 @@
   gap: 4px;
 }
 
+/* The prev/count/next group, and (see below) the star chips -- kept as a sibling after the
+   redo button rather than flattened into .chat-variant-nav, so redo stays the first flex child
+   and never shifts position whether or not this group is rendered (only shows for >1 variant). */
+.chat-variant-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-variant-star-btn {
+  color: var(--color-text-muted);
+}
+
+.chat-variant-star-btn-active {
+  color: var(--color-accent-yellow, #e0b800);
+}
+
+/* Quick-jump chips for starred variants -- deliberately a filled pill rather than
+   .chat-variant-btn's bordered square, so they read as bookmarks, not as prev/next controls. */
+.chat-variant-star-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.chat-variant-star-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-accent-yellow, #e0b800);
+  background: color-mix(in srgb, var(--color-accent-yellow, #e0b800) 15%, transparent);
+  cursor: pointer;
+}
+
+.chat-variant-star-chip:hover {
+  background: color-mix(in srgb, var(--color-accent-yellow, #e0b800) 25%, transparent);
+}
+
+.chat-variant-star-chip-active {
+  outline: 1px solid var(--color-accent-yellow, #e0b800);
+}
+
 .chat-message-delete {
   margin-left: auto;
+}
+
+.chat-message-sources-toggle {
+  width: auto;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.chat-message-sources-toggle-open {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+/* Condensed lore/memory summary for one reply -- lighter-weight than the full Debug Console's
+   .debug-body panels, since this is a quick glance, not a diagnostic tool. */
+.chat-sources-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-hover);
+  font-size: 12px;
+}
+
+.chat-sources-empty {
+  margin-top: 8px;
+  padding: 6px 10px;
+}
+
+.chat-sources-group-title {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+.chat-sources-group ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.chat-sources-group li {
+  margin: 2px 0;
 }
 
 /* Model + "view prompt" tooltip, revealed on hover below any assistant bubble that has one --
