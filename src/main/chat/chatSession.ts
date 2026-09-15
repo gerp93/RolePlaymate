@@ -375,6 +375,7 @@ export class ChatSessionManager {
       conversationId: request.conversationId,
       role: 'user',
       content: request.userMessage,
+      directions: request.directions ?? null,
     });
 
     const controller = new AbortController();
@@ -667,7 +668,11 @@ export class ChatSessionManager {
     ];
     const options = toOllamaOptions(samplers, built.stopPhrases);
 
-    const userMessage = this.conversations.updateMessageContent(priorUserMessage.id, trimmed);
+    const userMessage = this.conversations.updateMessageContent(
+      priorUserMessage.id,
+      trimmed,
+      request.directions ?? null
+    );
 
     const controller = new AbortController();
     session.abort = controller;

@@ -266,10 +266,12 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'messages', 'model', 'TEXT');
   ensureColumn(db, 'messages', 'generation_ms', 'INTEGER');
   ensureColumn(db, 'messages', 'tts_audio_path', 'TEXT');
+  ensureColumn(db, 'messages', 'directions', 'TEXT');
   ensureColumn(db, 'message_variants', 'model', 'TEXT');
   ensureColumn(db, 'message_variants', 'generation_ms', 'INTEGER');
   ensureColumn(db, 'message_variants', 'tts_audio_path', 'TEXT');
   ensureColumn(db, 'message_variants', 'debug', 'TEXT');
+  ensureColumn(db, 'message_variants', 'starred', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'model_sampler_defaults', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'conversation_memories', 'message_id', 'TEXT REFERENCES messages(id) ON DELETE CASCADE');
   ensureColumn(db, 'lorebooks', 'owner_persona_id', 'TEXT REFERENCES user_personas(id) ON DELETE CASCADE');

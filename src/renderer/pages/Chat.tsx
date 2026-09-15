@@ -19,6 +19,7 @@ import MessagePromptDialog from '../components/chat/MessagePromptDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
+import ConversationMenu from '../components/chat/ConversationMenu';
 import CroppableImage from '../components/CroppableImage';
 import ChatStartScreen, { startScreenPortraitUrl, startScreenPortraitImage } from '../components/chat/ChatStartScreen';
 import StartScreenPicker from '../components/chat/StartScreenPicker';
@@ -636,6 +637,20 @@ export default function Chat() {
     navigate(`/chat/${conversation.id}`);
   }, [characterId, conversationId, discardDraftConversation, model, personaId, scenarioId, navigate]);
 
+  const handleDuplicateConversation = useCallback(async () => {
+    if (!conversationId) return;
+    const duplicated = await window.electronAPI.conversations.duplicate(conversationId);
+    await refreshConversations();
+    navigate(`/chat/${duplicated.id}`);
+  }, [conversationId, navigate, refreshConversations]);
+
+  const handleBranchConversation = useCallback(async () => {
+    if (!conversationId) return;
+    const branched = await window.electronAPI.conversations.branch(conversationId);
+    await refreshConversations();
+    navigate(`/chat/${branched.id}`);
+  }, [conversationId, navigate, refreshConversations]);
+
   const handleSend = useCallback(
     async (message: string, directions: string) => {
       if (!characterId || !model) return;
@@ -686,6 +701,13 @@ export default function Chat() {
     [session, tts.stop]
   );
 
+  const handleToggleVariantStar = useCallback(
+    (variantId: string, starred: boolean) => {
+      void session.toggleVariantStar(variantId, starred);
+    },
+    [session]
+  );
+
   /** Save of the last assistant bubble -- stop speech here, not when the textarea opens. */
   const handleEditLast = useCallback(
     (content: string) => {
@@ -696,13 +718,14 @@ export default function Chat() {
   );
 
   const handleEditPrior = useCallback(
-    (messageId: string, content: string) => {
+    (messageId: string, content: string, directions: string) => {
       if (!characterId || !model) return;
       tts.stop();
       void session.editPriorMessage(messageId, content, {
         characterId,
         model,
         personaId: personaId || undefined,
+        directions: directions || undefined,
         samplers,
       });
       void refreshConversations();
@@ -1127,6 +1150,12 @@ export default function Chat() {
           <div
             className={`chat-column chat-column-center${portraitsActive ? ' chat-column-center-capped' : ''}`}
           >
+            {conversationId && (
+              <ConversationMenu
+                onDuplicate={() => void handleDuplicateConversation()}
+                onBranch={() => void handleBranchConversation()}
+              />
+            )}
             {selectedScenario && (
               <header
                 className={`chat-scenario-header${portraitsActive ? ' chat-scenario-header-cast' : ''}`}
@@ -1153,6 +1182,7 @@ export default function Chat() {
                   variants={session.variants}
                   onRegenerate={handleRegenerate}
                   onSelectVariant={handleSelectVariant}
+                  onToggleVariantStar={handleToggleVariantStar}
                   onEditLast={handleEditLast}
                   onEditPrior={handleEditPrior}
                   onDeleteLast={() => void session.deleteLastMessage()}

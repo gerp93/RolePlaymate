@@ -22,6 +22,12 @@ export interface Message {
    * (assistant). Null until speech has been generated once. Replay reads this file instead of
    * calling Chatterbox again. */
   ttsAudioPath: string | null;
+  /** Per-turn scene directions attached when this user message was sent, or null. Unlike the
+   * debug log's directions (what was actually injected into that turn's prompt, never itself
+   * editable after the fact), this is the stored, editable value on the message row -- editing
+   * it re-injects the new text when the reply is regenerated. Null for assistant/system
+   * messages and for a user message that predates this column. */
+  directions: string | null;
   /** Monotonic within a conversation, allocated inside the insert transaction. */
   seq: number;
   createdAt: string;
@@ -47,6 +53,9 @@ export interface MessageVariant {
   /** Saved spoken WAV for this redo candidate. Independent of other variants -- switching
    * back to one that was already spoken replays it without regenerating. */
   ttsAudioPath: string | null;
+  /** User-bookmarked, independent of which variant is currently selected -- lets a good redo
+   * candidate stay reachable via a quick-jump chip even after browsing past it. */
+  starred: boolean;
   createdAt: string;
 }
 

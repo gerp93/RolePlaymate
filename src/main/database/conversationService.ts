@@ -63,6 +63,7 @@ const MESSAGE_COLUMNS = `
   model,
   generation_ms as generationMs,
   tts_audio_path as ttsAudioPath,
+  directions,
   seq,
   created_at as createdAt
 `;
@@ -74,6 +75,7 @@ const VARIANT_COLUMNS = `
   model,
   generation_ms as generationMs,
   tts_audio_path as ttsAudioPath,
+  starred,
   created_at as createdAt
 `;
 
@@ -154,6 +156,7 @@ function rowToMessage(row: Record<string, unknown>): Message {
     model: (row.model as string | null) ?? null,
     generationMs: (row.generationMs as number | null) ?? null,
     ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
+    directions: (row.directions as string | null) ?? null,
     seq: row.seq as number,
     createdAt: row.createdAt as string,
   };
@@ -167,6 +170,7 @@ function rowToVariant(row: Record<string, unknown>): MessageVariant {
     model: (row.model as string | null) ?? null,
     generationMs: (row.generationMs as number | null) ?? null,
     ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
+    starred: !!row.starred,
     createdAt: row.createdAt as string,
   };
 }
@@ -392,6 +396,169 @@ export class ConversationService {
     return { mode: 'carousel', characterImageId: null, scenarioImageId: null };
   }
 
+  /** Same settings (character/persona/scenario/model + image picks) as `sourceId`, but no
+   * messages/variants/memories -- same as any brand-new conversation, just pre-filled from an
+   * existing one instead of the picker's defaults. `greeting` is resolved by the caller exactly
+   * like conversations:create does (PromptBuilder owns that), keeping this service purely about
+   * storage. */
+  duplicateConversation(sourceId: string, greeting?: string): Conversation {
+    const source = this.getConversation(sourceId);
+    if (!source) throw new Error(`Conversation ${sourceId} not found`);
+    if (!source.characterId) throw new Error('Cannot duplicate a conversation with no character');
+
+    const created = this.createConversation({
+      characterId: source.characterId,
+      model: source.model,
+      userPersonaId: source.userPersonaId ?? undefined,
+      scenarioId: source.scenarioId ?? undefined,
+      greeting,
+    });
+
+    return this.setImageMode(created.id, {
+      characterImageMode: source.characterImageMode,
+      characterImageId: source.characterImageId,
+      scenarioImageId: source.scenarioImageId,
+      personaImageMode: source.personaImageMode,
+      personaImageId: source.personaImageId,
+    });
+  }
+
+  /** Same settings as duplicateConversation, plus a full copy of the transcript (messages +
+   * every redo variant, not just the selected ones) and every extracted/pinned memory, so the
+   * branch continues exactly where the source conversation currently stands. Each copied
+   * message/variant gets a fresh id and its own `tts_audio_path` cleared -- if both
+   * conversations pointed at the same WAV file, deleting a message in either one would unlink
+   * a file the other still references (see deleteTtsFilesForMessage/Conversation). */
+  branchConversation(sourceId: string): Conversation {
+    const source = this.getConversation(sourceId);
+    if (!source) throw new Error(`Conversation ${sourceId} not found`);
+
+    return transaction(this.db, () => {
+      const newId = uuidv4();
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          `INSERT INTO conversations
+             (id, title, model, character_id, user_persona_id, scenario_id,
+              character_image_mode, character_image_id, scenario_image_id,
+              persona_image_mode, persona_image_id, keep_forever, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          newId,
+          DEFAULT_CONVERSATION_TITLE,
+          source.model,
+          source.characterId,
+          source.userPersonaId,
+          source.scenarioId,
+          source.characterImageMode,
+          source.characterImageId,
+          source.scenarioImageId,
+          source.personaImageMode,
+          source.personaImageId,
+          0,
+          now,
+          now
+        );
+
+      const messages = this.getMessages(sourceId);
+      const messageIdMap = new Map<string, string>();
+
+      for (const message of messages) {
+        const newMessageId = uuidv4();
+        messageIdMap.set(message.id, newMessageId);
+        this.db
+          .prepare(
+            `INSERT INTO messages (id, conversation_id, role, content, directions, seq, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(newMessageId, newId, message.role, message.content, message.directions, message.seq, message.createdAt);
+
+        const variantRows = this.db
+          .prepare(
+            `SELECT id, content, model, generation_ms as generationMs, debug, starred, created_at as createdAt
+             FROM message_variants WHERE message_id = ? ORDER BY created_at`
+          )
+          .all(message.id) as unknown as {
+          id: string;
+          content: string;
+          model: string | null;
+          generationMs: number | null;
+          debug: string | null;
+          starred: number;
+          createdAt: string;
+        }[];
+
+        let newSelectedVariantId: string | null = null;
+        for (const variant of variantRows) {
+          const newVariantId = uuidv4();
+          this.db
+            .prepare(
+              `INSERT INTO message_variants
+                 (id, message_id, content, model, generation_ms, debug, starred, tts_audio_path, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+            )
+            .run(
+              newVariantId,
+              newMessageId,
+              variant.content,
+              variant.model,
+              variant.generationMs,
+              variant.debug,
+              variant.starred,
+              variant.createdAt
+            );
+          if (variant.id === message.selectedVariantId) {
+            newSelectedVariantId = newVariantId;
+          }
+        }
+
+        if (newSelectedVariantId) {
+          this.db
+            .prepare(`UPDATE messages SET selected_variant_id = ?, model = ?, generation_ms = ? WHERE id = ?`)
+            .run(newSelectedVariantId, message.model, message.generationMs, newMessageId);
+        }
+      }
+
+      const memories = this.db
+        .prepare(
+          `SELECT id, content, source, embedding, embedding_model as embeddingModel,
+                  message_id as messageId, created_at as createdAt
+           FROM conversation_memories WHERE conversation_id = ?`
+        )
+        .all(sourceId) as unknown as {
+        id: string;
+        content: string;
+        source: MemorySource;
+        embedding: Uint8Array | null;
+        embeddingModel: string | null;
+        messageId: string | null;
+        createdAt: string;
+      }[];
+
+      for (const memory of memories) {
+        this.db
+          .prepare(
+            `INSERT INTO conversation_memories
+               (id, conversation_id, content, source, embedding, embedding_model, message_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            uuidv4(),
+            newId,
+            memory.content,
+            memory.source,
+            memory.embedding,
+            memory.embeddingModel,
+            memory.messageId ? messageIdMap.get(memory.messageId) ?? null : null,
+            memory.createdAt
+          );
+      }
+
+      return this.getConversation(newId)!;
+    });
+  }
+
   renameConversation(id: string, title: string): Conversation {
     const existing = this.getConversation(id);
     if (!existing) {
@@ -585,11 +752,16 @@ export class ConversationService {
    * role, and unlike the assistant-side edit flow (message_variants), keeps no history of
    * prior text: this is for correcting the user's own words, not swapping between AI
    * generations. Callers decide which messages are safe to touch this way -- see
-   * ChatSessionManager.editPriorUserMessage, currently the only caller. */
-  updateMessageContent(id: string, content: string): Message {
+   * ChatSessionManager.editPriorUserMessage, currently the only caller. `directions` is
+   * left untouched when omitted (same "omitted = keep existing" convention as setImageMode) --
+   * only passed explicitly (including `null`, to clear it) does it get overwritten. */
+  updateMessageContent(id: string, content: string, directions?: string | null): Message {
     const current = this.getMessage(id);
     if (current?.ttsAudioPath) deleteTtsAudioFile(current.ttsAudioPath);
-    this.db.prepare(`UPDATE messages SET content = ?, tts_audio_path = NULL WHERE id = ?`).run(content, id);
+    const nextDirections = directions !== undefined ? directions : (current?.directions ?? null);
+    this.db
+      .prepare(`UPDATE messages SET content = ?, tts_audio_path = NULL, directions = ? WHERE id = ?`)
+      .run(content, nextDirections, id);
     const message = this.getMessage(id);
     if (!message) throw new Error(`Message with id ${id} not found`);
     return message;
@@ -597,7 +769,12 @@ export class ConversationService {
 
   /** Allocates `seq` and bumps the conversation's `updated_at` in one transaction, so two
    * concurrent appends can't claim the same slot (the unique index would reject the second). */
-  appendMessage(input: { conversationId: string; role: MessageRole; content: string }): Message {
+  appendMessage(input: {
+    conversationId: string;
+    role: MessageRole;
+    content: string;
+    directions?: string | null;
+  }): Message {
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -610,10 +787,10 @@ export class ConversationService {
 
       this.db
         .prepare(
-          `INSERT INTO messages (id, conversation_id, role, content, seq, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT INTO messages (id, conversation_id, role, content, directions, seq, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(id, input.conversationId, input.role, input.content, nextSeq, now);
+        .run(id, input.conversationId, input.role, input.content, input.directions ?? null, nextSeq, now);
 
       this.db
         .prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
@@ -805,6 +982,16 @@ export class ConversationService {
 
       return this.getMessage(messageId)!;
     });
+  }
+
+  /** Bookmarks (or un-bookmarks) a redo candidate, independent of which variant is currently
+   * selected -- starring doesn't select and doesn't touch generation state, it's purely a flag
+   * so a good variant stays reachable via a quick-jump chip after browsing past it. */
+  setVariantStarred(variantId: string, starred: boolean): MessageVariant {
+    this.db.prepare(`UPDATE message_variants SET starred = ? WHERE id = ?`).run(starred ? 1 : 0, variantId);
+    const row = this.db.prepare(`SELECT ${VARIANT_COLUMNS} FROM message_variants WHERE id = ?`).get(variantId);
+    if (!row) throw new Error(`Variant ${variantId} not found`);
+    return rowToVariant(row);
   }
 
   // --- Memories ------------------------------------------------------------------------
