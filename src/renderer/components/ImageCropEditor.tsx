@@ -104,12 +104,28 @@ export default function ImageCropEditor({ imageSrc, location, initialCrop, onSav
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onClick={(e) => {
+        // This modal isn't portaled -- CroppableImage renders it inline wherever the image
+        // itself sits, which on a list tile is inside that tile's own <Link>. stopPropagation
+        // alone keeps the click from reaching the Link's onClick handler, but does nothing
+        // about the anchor's native href-follow default action, which still fires unless
+        // something calls preventDefault -- without it, any click in here (including just
+        // dismissing the modal) also navigated into the record underneath.
+        e.preventDefault();
+        onClose();
+      }}
+    >
       <div
         className="modal-dialog crop-editor-dialog"
         role="dialog"
         aria-label={`Adjust crop for ${LOCATION_LABELS[location]}`}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
       >
         <h2>Adjust crop — {LOCATION_LABELS[location]}</h2>
         <p className="text-muted crop-editor-hint">Drag to pan, scroll to zoom.</p>
