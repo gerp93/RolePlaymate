@@ -263,6 +263,42 @@ textarea {
   padding: 12px 14px;
 }
 
+/* Wraps instead of overflowing -- .character-card clips overflow, so on narrow tiles
+   (many cards) an unwrapped Unhide/Clone/Delete row got silently cut off at the edge. */
+.character-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.character-card-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.character-card-issue {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--color-bg-hover);
+  color: var(--color-accent-red);
+  white-space: nowrap;
+}
+
+.library-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.library-search-input {
+  flex: 1;
+  min-width: 160px;
+}
+
 .character-card-name {
   font-weight: 700;
   font-size: 15px;

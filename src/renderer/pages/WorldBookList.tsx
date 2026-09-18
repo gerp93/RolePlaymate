@@ -6,7 +6,9 @@ import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LorebookJsonImport from '../components/lore/LorebookJsonImport';
 import LimitedInput from '../components/LimitedInput';
+import LibraryFilterBar from '../components/LibraryFilterBar';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import { filterAndSortLibrary, LibrarySort } from '../utils/librarySort';
 import '../components/lore/Lore.css';
 
 // Same sizing rule as the character grid, so the three library pages read as one family.
@@ -33,6 +35,8 @@ export default function WorldBookList() {
   const [nameError, setNameError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<LibrarySort>('name-asc');
 
   // hiddenUnlocked: books already fetched under the previous lock state hold ciphertext for
   // anything hidden -- re-fetch on every lock/unlock so names update immediately instead of
@@ -156,41 +160,61 @@ export default function WorldBookList() {
           when one of their trigger keys appears in the recent conversation.
         </div>
       ) : (
-        <div
-          className="character-grid"
-          style={{ '--tile-min-width': `${tileMinWidthFor(books.length)}px` } as React.CSSProperties}
-        >
-          {books
-            .filter((book) => hiddenUnlocked || !book.isHidden)
-            .map((book) => (
-              <Link key={book.id} to={`/world-books/${book.id}`} className="card character-card">
-                <div className="character-card-portrait">
-                  {book.image ? <img src={toImageUrl(book.image)} alt={book.name} /> : <span>📖</span>}
-                </div>
-                <div className="character-card-body">
-                  <p className="character-card-name">{book.name}</p>
-                  {book.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
-                  {book.description && <p className="character-card-snippet">{book.description}</p>}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {hiddenUnlocked && (
-                      <button
-                        className="btn"
-                        onClick={(e) => void handleToggleHidden(e, book.id, book.isHidden)}
-                      >
-                        {book.isHidden ? 'Unhide' : 'Hide'}
-                      </button>
-                    )}
-                    <button className="btn" onClick={(e) => void handleClone(e, book.id)}>
-                      Clone
-                    </button>
-                    <button className="btn btn-danger" onClick={(e) => void handleDelete(e, book.id)}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </Link>
-            ))}
-        </div>
+        <>
+          <LibraryFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            sort={sort}
+            onSortChange={setSort}
+            placeholder="Search world books…"
+          />
+          {(() => {
+            const visible = filterAndSortLibrary(
+              books.filter((book) => hiddenUnlocked || !book.isHidden),
+              search,
+              sort,
+              (book) => book.name
+            );
+            if (visible.length === 0) {
+              return <div className="text-muted">No world books match "{search}".</div>;
+            }
+            return (
+              <div
+                className="character-grid"
+                style={{ '--tile-min-width': `${tileMinWidthFor(visible.length)}px` } as React.CSSProperties}
+              >
+                {visible.map((book) => (
+                  <Link key={book.id} to={`/world-books/${book.id}`} className="card character-card">
+                    <div className="character-card-portrait">
+                      {book.image ? <img src={toImageUrl(book.image)} alt={book.name} /> : <span>📖</span>}
+                    </div>
+                    <div className="character-card-body">
+                      <p className="character-card-name">{book.name}</p>
+                      {book.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                      {book.description && <p className="character-card-snippet">{book.description}</p>}
+                      <div className="character-card-actions">
+                        {hiddenUnlocked && (
+                          <button
+                            className="btn"
+                            onClick={(e) => void handleToggleHidden(e, book.id, book.isHidden)}
+                          >
+                            {book.isHidden ? 'Unhide' : 'Hide'}
+                          </button>
+                        )}
+                        <button className="btn" onClick={(e) => void handleClone(e, book.id)}>
+                          Clone
+                        </button>
+                        <button className="btn btn-danger" onClick={(e) => void handleDelete(e, book.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            );
+          })()}
+        </>
       )}
     </div>
   );
