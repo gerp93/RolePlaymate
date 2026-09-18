@@ -6,8 +6,10 @@ import { toImageUrl } from '../utils/imageUrl';
 import { useSecurity } from '../context/SecurityContext';
 import LimitedInput from '../components/LimitedInput';
 import CroppableImage from '../components/CroppableImage';
+import LibraryFilterBar from '../components/LibraryFilterBar';
 import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
+import { filterAndSortLibrary, LibrarySort } from '../utils/librarySort';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
 // instead of shrinking further.
@@ -27,6 +29,10 @@ export default function CharacterList() {
   const [nameError, setNameError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<LibrarySort>('name-asc');
+  const [showIssues, setShowIssues] = useState(false);
+  const [issues, setIssues] = useState<Record<string, string[]>>({});
   const coverImageIds = Object.values(coverImages)
     .map((images) => images[0]?.id)
     .filter((id): id is string => !!id);
@@ -36,7 +42,7 @@ export default function CharacterList() {
   // for anything hidden -- re-fetch on every lock/unlock so names update immediately instead
   // of only after a manual reload.
   useEffect(() => {
-    load();
+    reload();
   }, [hiddenUnlocked]);
 
   async function load() {
@@ -50,6 +56,23 @@ export default function CharacterList() {
     setLoading(false);
   }
 
+  // Issues are only fetched while the toggle is on, so a mutation elsewhere (create/delete/
+  // clone/hide) doesn't pay for a computation nobody's looking at.
+  async function reload() {
+    await load();
+    if (showIssues) {
+      setIssues(await window.electronAPI.characters.getIssues());
+    }
+  }
+
+  async function handleToggleIssues() {
+    const next = !showIssues;
+    setShowIssues(next);
+    if (next) {
+      setIssues(await window.electronAPI.characters.getIssues());
+    }
+  }
+
   async function handleCreate() {
     const name = newName.trim();
     if (!name) {
@@ -59,7 +82,7 @@ export default function CharacterList() {
     setNameError(false);
     await window.electronAPI.characters.create({ name });
     setNewName('');
-    await load();
+    await reload();
   }
 
   async function handleDelete(e: React.MouseEvent, id: string) {
@@ -67,21 +90,21 @@ export default function CharacterList() {
     e.stopPropagation();
     if (!confirm('Delete this character and all its field history? This cannot be undone.')) return;
     await window.electronAPI.characters.delete(id);
-    await load();
+    await reload();
   }
 
   async function handleClone(e: React.MouseEvent, id: string) {
     e.preventDefault();
     e.stopPropagation();
     await window.electronAPI.characters.clone(id);
-    await load();
+    await reload();
   }
 
   async function handleToggleHidden(e: React.MouseEvent, id: string, hidden: boolean) {
     e.preventDefault();
     e.stopPropagation();
     await window.electronAPI.characters.setHidden(id, !hidden);
-    await load();
+    await reload();
   }
 
   async function handleImport() {
@@ -89,7 +112,7 @@ export default function CharacterList() {
     try {
       const result = await window.electronAPI.characters.importFromHtml();
       if (!result) return;
-      await load();
+      await reload();
       if (result.warnings.length > 0) {
         alert(`Imported "${result.character.name}" with some gaps:\n\n${result.warnings.join('\n')}`);
       }
@@ -139,55 +162,94 @@ export default function CharacterList() {
       ) : characters.length === 0 ? (
         <div className="text-muted">No characters yet -- create one above.</div>
       ) : (
-        <div
-          className="character-grid"
-          style={{ '--tile-min-width': `${tileMinWidthFor(characters.length)}px` } as React.CSSProperties}
-        >
-          {characters
-            .filter((character) => hiddenUnlocked || !character.isHidden)
-            .map((character) => {
-              const cover = coverImages[character.id]?.[0];
-              return (
-                <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
-                  <div className="character-card-portrait">
-                    {cover ? (
-                      <CroppableImage
-                        src={toImageUrl(cover.path)}
-                        alt={character.name}
-                        imageId={cover.id}
-                        imageOwner="character"
-                        location="card"
-                        crop={crops[cover.id]?.card}
-                        onCropSaved={refreshCrops}
-                      />
-                    ) : (
-                      <span>?</span>
-                    )}
-                  </div>
-                  <div className="character-card-body">
-                    <p className="character-card-name">{character.name}</p>
-                    {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {hiddenUnlocked && (
-                        <button
-                          className="btn"
-                          onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
-                        >
-                          {character.isHidden ? 'Unhide' : 'Hide'}
-                        </button>
-                      )}
-                      <button className="btn" onClick={(e) => handleClone(e, character.id)}>
-                        Clone
-                      </button>
-                      <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-        </div>
+        <>
+          <LibraryFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            sort={sort}
+            onSortChange={setSort}
+            placeholder="Search characters…"
+            after={
+              <button
+                type="button"
+                className={`btn${showIssues ? ' btn-primary' : ''}`}
+                onClick={() => void handleToggleIssues()}
+              >
+                {showIssues ? 'Hide Issues' : 'Show Issues'}
+              </button>
+            }
+          />
+          {(() => {
+            const visible = filterAndSortLibrary(
+              characters.filter((character) => hiddenUnlocked || !character.isHidden),
+              search,
+              sort,
+              (character) => character.name
+            );
+            if (visible.length === 0) {
+              return <div className="text-muted">No characters match "{search}".</div>;
+            }
+            return (
+              <div
+                className="character-grid"
+                style={{ '--tile-min-width': `${tileMinWidthFor(visible.length)}px` } as React.CSSProperties}
+              >
+                {visible.map((character) => {
+                  const cover = coverImages[character.id]?.[0];
+                  const characterIssues = issues[character.id];
+                  return (
+                    <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
+                      <div className="character-card-portrait">
+                        {cover ? (
+                          <CroppableImage
+                            src={toImageUrl(cover.path)}
+                            alt={character.name}
+                            imageId={cover.id}
+                            imageOwner="character"
+                            location="card"
+                            crop={crops[cover.id]?.card}
+                            onCropSaved={refreshCrops}
+                          />
+                        ) : (
+                          <span>?</span>
+                        )}
+                      </div>
+                      <div className="character-card-body">
+                        <p className="character-card-name">{character.name}</p>
+                        {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                        {showIssues && characterIssues && characterIssues.length > 0 && (
+                          <div className="character-card-issues">
+                            {characterIssues.map((issue) => (
+                              <span key={issue} className="character-card-issue">
+                                {issue}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="character-card-actions">
+                          {hiddenUnlocked && (
+                            <button
+                              className="btn"
+                              onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
+                            >
+                              {character.isHidden ? 'Unhide' : 'Hide'}
+                            </button>
+                          )}
+                          <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                            Clone
+                          </button>
+                          <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </>
       )}
     </div>
   );

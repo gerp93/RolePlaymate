@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clone: (id: string) => ipcRenderer.invoke('characters:clone', id),
     delete: (id: string) => ipcRenderer.invoke('characters:delete', id),
     importFromHtml: () => ipcRenderer.invoke('characters:importFromHtml'),
+    getIssues: () => ipcRenderer.invoke('characters:getIssues'),
   },
 
   fields: {

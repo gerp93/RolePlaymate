@@ -883,6 +883,68 @@ function registerIPCHandlers() {
   ipcMain.handle('characters:getAll', () => characterService.getAllCharacters());
   ipcMain.handle('characters:getById', (_, id: string) => characterService.getCharacterById(id));
 
+  // Backs the Characters page's "Show Issues" toggle -- computed on demand rather than kept
+  // live on every card, so a library with a lot of characters doesn't pay this on every load.
+  // Only flags things a real conversation would notice missing, plus placeholder names left
+  // over from HTML import ("Imported Character"/"Imported Scenario") or the old scenario/
+  // greeting migration ("Default") that the user likely never got around to renaming.
+  ipcMain.handle('characters:getIssues', () => {
+    const issues: Record<string, string[]> = {};
+
+    for (const character of characterService.getAllCharacters()) {
+      const list: string[] = [];
+
+      if (character.name.trim() === 'Imported Character') {
+        list.push('Name not detected on import');
+      }
+
+      if (characterImageService.getImagesByCharacter(character.id).length === 0) {
+        list.push('No portrait');
+      }
+
+      const fields = fieldService.getFieldsByCharacter(character.id);
+      for (const fieldType of FIELD_TYPES) {
+        const field = fields.find((f) => f.fieldType === fieldType);
+        const active = field && fieldVersionService.getVersionsByField(field.id).find((v) => v.isActive);
+        if (!active?.content.trim()) {
+          list.push(fieldType === 'personality' ? 'No personality text' : 'No example dialogue');
+        }
+      }
+
+      // Individually-hidden scenarios are skipped while locked -- their decrypted content
+      // would just be raw ciphertext, which would misreport as present or missing at random.
+      const scenarios = scenarioService
+        .getScenariosByCharacter(character.id)
+        .filter((s) => !s.isHidden || securityService.isUnlocked());
+
+      if (scenarios.length === 0) {
+        list.push('No scenario');
+      } else {
+        let missingText = 0;
+        let missingGreeting = 0;
+        let missingImage = 0;
+        let placeholderName = 0;
+        for (const scenario of scenarios) {
+          if (!scenarioService.getActiveContent(scenario.id).trim()) missingText++;
+          if (!scenarioService.getActiveGreeting(scenario.id).trim()) missingGreeting++;
+          if (scenarioImageService.getImagesByScenario(scenario.id).length === 0) missingImage++;
+          if (scenario.name === 'Imported Scenario' || scenario.name === 'Default') placeholderName++;
+        }
+        if (missingText > 0) list.push(`${missingText} scenario${missingText === 1 ? '' : 's'} missing text`);
+        if (missingGreeting > 0)
+          list.push(`${missingGreeting} scenario${missingGreeting === 1 ? '' : 's'} missing greeting`);
+        if (missingImage > 0)
+          list.push(`${missingImage} scenario${missingImage === 1 ? '' : 's'} missing an image`);
+        if (placeholderName > 0)
+          list.push(`${placeholderName} scenario${placeholderName === 1 ? '' : 's'} still has a placeholder name`);
+      }
+
+      if (list.length > 0) issues[character.id] = list;
+    }
+
+    return issues;
+  });
+
   // Creating a character also creates its fixed fields (personality/greeting/dialogue), each
   // with a blank first version -- unlike TrackDraft's freely-added Parts, a character's fields
   // are a fixed set, so there's no separate "add field" action. Scenario is not among them --
