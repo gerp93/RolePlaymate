@@ -9,6 +9,7 @@ const TTS_PERSONA_TRACK_KEY = 'roleplaymate-chat-tts-persona-track';
 const TTS_READING_KEY = 'roleplaymate-chat-tts-reading';
 const TTS_PERSONA_READING_KEY = 'roleplaymate-chat-tts-persona-reading';
 const TTS_OVERLAP_KEY = 'roleplaymate-chat-tts-overlap';
+const TTS_SKIP_ITALICS_KEY = 'roleplaymate-chat-tts-skip-italics';
 const EQ_FFT_SIZE = 64;
 const MAX_SPEAK_QUEUE = 8;
 
@@ -94,6 +95,22 @@ function saveStoredOverlapMode(value: TtsOverlapMode): void {
   }
 }
 
+function getStoredSkipItalics(): boolean {
+  try {
+    return localStorage.getItem(TTS_SKIP_ITALICS_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveStoredSkipItalics(value: boolean): void {
+  try {
+    localStorage.setItem(TTS_SKIP_ITALICS_KEY, String(value));
+  } catch {
+    // localStorage not available
+  }
+}
+
 function decodeBase64Audio(data: string): ArrayBuffer {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
@@ -161,6 +178,7 @@ export function useTtsPlayback() {
     getStoredReadingMode(TTS_PERSONA_READING_KEY)
   );
   const [overlapMode, setOverlapModeState] = useState(getStoredOverlapMode);
+  const [skipItalics, setSkipItalicsState] = useState(getStoredSkipItalics);
   const [generating, setGenerating] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -260,6 +278,25 @@ export function useTtsPlayback() {
   const setOverlapMode = useCallback((value: TtsOverlapMode) => {
     setOverlapModeState(value);
     saveStoredOverlapMode(value);
+  }, []);
+
+  const setSkipItalics = useCallback((value: boolean) => {
+    setSkipItalicsState(value);
+    saveStoredSkipItalics(value);
+    // Split has nothing to split once italics are dropped entirely -- fall back to the
+    // speaker's own voice rather than leaving an invalid mode selected.
+    if (value) {
+      setReadingModeState((prev) => {
+        if (prev !== 'split') return prev;
+        saveStoredReadingMode(TTS_READING_KEY, 'character');
+        return 'character';
+      });
+      setPersonaReadingModeState((prev) => {
+        if (prev !== 'split') return prev;
+        saveStoredReadingMode(TTS_PERSONA_READING_KEY, 'character');
+        return 'character';
+      });
+    }
   }, []);
 
   const pause = useCallback(() => {
@@ -447,7 +484,13 @@ export function useTtsPlayback() {
       }
     }
 
-    const clips = planSpeechClips(job.text, job.readingMode, job.voices.speakerVoice, job.voices.narratorVoice);
+    const clips = planSpeechClips(
+      job.text,
+      job.readingMode,
+      job.voices.speakerVoice,
+      job.voices.narratorVoice,
+      skipItalics
+    );
     if (clips.length === 0) {
       if (job.reportErrors) {
         if (!job.voices.speakerVoice && !job.voices.narratorVoice) {
@@ -574,7 +617,7 @@ export function useTtsPlayback() {
       if (!text.trim()) return;
       const reading = opts?.readingMode ?? readingMode;
       if (!opts?.savedPath) {
-        const clips = planSpeechClips(text, reading, voices.speakerVoice, voices.narratorVoice);
+        const clips = planSpeechClips(text, reading, voices.speakerVoice, voices.narratorVoice, skipItalics);
         if (clips.length === 0) {
           if (opts?.reportErrors) {
             if (!voices.speakerVoice && !voices.narratorVoice) {
@@ -611,7 +654,7 @@ export function useTtsPlayback() {
       queueRef.current.push(job);
       drainQueue();
     },
-    [readingMode, overlapMode, stop]
+    [readingMode, overlapMode, skipItalics, stop]
   );
 
   const rebindPersistedAudio = useCallback(async (fromId: string, toId: string) => {
@@ -646,6 +689,8 @@ export function useTtsPlayback() {
     setPersonaReadingMode,
     overlapMode,
     setOverlapMode,
+    skipItalics,
+    setSkipItalics,
     generating,
     playing,
     paused,

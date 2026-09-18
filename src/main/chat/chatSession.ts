@@ -12,6 +12,7 @@ import {
   MemoryWithEmbedding,
 } from './memoryRetrieval';
 import { extractMemories } from './memoryExtraction';
+import { normalizeReplyFormatting } from './replyFormatting';
 import { suggestPersonaReply } from './suggestReply';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
@@ -33,6 +34,11 @@ export interface PendingTurn {
   assistantMessageId: string;
   model: string;
   systemPrompt: string;
+  /** Just the character-identity slice of systemPrompt (name/description/personality/scenario/
+   * example dialogue) -- what extraction's redundancy check is scored against, so a long
+   * instructions/lore/memories preamble can't push personality traits out of view. See
+   * PromptBuilder.baseSystemPrompt. */
+  baseSystemPrompt: string;
   stopPhrases: string[];
   shouldExtract: boolean;
 }
@@ -235,6 +241,7 @@ export class ChatSessionManager {
         assistantMessageId,
         model: conversation.model,
         systemPrompt: built.prompt,
+        baseSystemPrompt: built.baseSystemPrompt,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
       };
@@ -394,7 +401,7 @@ export class ChatSessionManager {
 
       // Post-processing is trim() only, as in the source. Anything more (stripping name
       // prefixes, collapsing whitespace) silently mangles legitimate output.
-      const content = result.content.trim();
+      const content = normalizeReplyFormatting(result.content.trim());
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -437,6 +444,7 @@ export class ChatSessionManager {
         assistantMessageId: message.id,
         model: request.model,
         systemPrompt: built.prompt,
+        baseSystemPrompt: built.baseSystemPrompt,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
       };
@@ -504,7 +512,7 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = result.content.trim();
+      const content = normalizeReplyFormatting(result.content.trim());
 
       // A message from before redo support has no variant of its own yet -- back one out of
       // its current content first, or selecting the new variant below would lose it for good.
@@ -687,7 +695,7 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = result.content.trim();
+      const content = normalizeReplyFormatting(result.content.trim());
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -734,6 +742,7 @@ export class ChatSessionManager {
         assistantMessageId: pending.assistantMessageId,
         model: request.model,
         systemPrompt: built.prompt,
+        baseSystemPrompt: built.baseSystemPrompt,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
       };
@@ -846,7 +855,7 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = result.content.trim();
+      const content = normalizeReplyFormatting(result.content.trim());
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -884,6 +893,7 @@ export class ChatSessionManager {
         assistantMessageId: message.id,
         model: request.model,
         systemPrompt: built.prompt,
+        baseSystemPrompt: built.baseSystemPrompt,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
       };
@@ -1027,7 +1037,7 @@ export class ChatSessionManager {
           userMessage: pending.userMessage ?? '',
           messageId: pending.assistantMessageId,
         },
-        pending.systemPrompt,
+        pending.baseSystemPrompt,
         finalContent
       );
     }
@@ -1084,7 +1094,7 @@ export class ChatSessionManager {
    */
   private async extract(
     turn: { conversationId: string; model: string; userMessage: string; messageId: string },
-    systemPrompt: string,
+    characterSheet: string,
     aiResponse: string
   ): Promise<ConversationMemory[]> {
     try {
@@ -1093,7 +1103,7 @@ export class ChatSessionManager {
         userMessage: turn.userMessage,
         aiResponse,
         existingMemories: existing.map((memory) => memory.content),
-        systemPrompt,
+        systemPrompt: characterSheet,
       });
 
       const added = facts.map((content) =>

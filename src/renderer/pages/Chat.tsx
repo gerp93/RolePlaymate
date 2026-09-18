@@ -239,6 +239,26 @@ export default function Chat() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
+  // Global reply-style toggles (Chat Settings) -- not per-conversation, so they can be flipped
+  // live and compared against the same chat rather than needing a fresh conversation per test.
+  const [conciseReplies, setConciseRepliesState] = useState(false);
+  const [narrationPov, setNarrationPovState] = useState<'first' | 'third' | null>(null);
+
+  useEffect(() => {
+    void window.electronAPI.chatStyle.getConcise().then(setConciseRepliesState);
+    void window.electronAPI.chatStyle.getPov().then(setNarrationPovState);
+  }, []);
+
+  const handleConciseRepliesChange = (value: boolean) => {
+    setConciseRepliesState(value);
+    void window.electronAPI.chatStyle.setConcise(value);
+  };
+
+  const handleNarrationPovChange = (value: 'first' | 'third' | null) => {
+    setNarrationPovState(value);
+    void window.electronAPI.chatStyle.setPov(value);
+  };
+
   const session = useChatSession(conversationId ?? null, {
     onUserMessage: (message) => {
       if (ttsPersonaTrackRef.current !== 'auto') return;
@@ -1403,6 +1423,8 @@ export default function Chat() {
               onPersonaReadingModeChange={tts.setPersonaReadingMode}
               overlapMode={tts.overlapMode}
               onOverlapModeChange={tts.setOverlapMode}
+              skipItalics={tts.skipItalics}
+              onSkipItalicsChange={tts.setSkipItalics}
               narratorVoice={narratorVoice}
               canSplitCharacter={canSplitCharacter}
               canSplitPersona={canSplitPersona}
@@ -1411,6 +1433,10 @@ export default function Chat() {
               onSamplersChange={setSamplers}
               keepForever={keepForever}
               onKeepForeverChange={(keep) => void handleKeepForeverChange(keep)}
+              conciseReplies={conciseReplies}
+              onConciseRepliesChange={handleConciseRepliesChange}
+              narrationPov={narrationPov}
+              onNarrationPovChange={handleNarrationPovChange}
             />
           }
         />

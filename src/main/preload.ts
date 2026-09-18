@@ -127,6 +127,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (voice: unknown) => ipcRenderer.invoke('narratorVoice:set', voice),
   },
 
+  chatStyle: {
+    getConcise: () => ipcRenderer.invoke('chatStyle:getConcise'),
+    setConcise: (value: boolean) => ipcRenderer.invoke('chatStyle:setConcise', value),
+    getPov: () => ipcRenderer.invoke('chatStyle:getPov'),
+    setPov: (value: 'first' | 'third' | null) => ipcRenderer.invoke('chatStyle:setPov', value),
+  },
+
   tts: {
     status: () => ipcRenderer.invoke('tts:status'),
     speak: (request: unknown) => ipcRenderer.invoke('tts:speak', request),

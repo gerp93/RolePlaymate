@@ -37,6 +37,13 @@ interface AppConfig {
   chatRetentionRules?: unknown;
   chatRetentionLastRunAt?: string;
   chatRetentionLastDeletedCount?: number;
+  /** When true, an extra prompt instruction nudges replies toward shorter, more conversational
+   * turns. Global rather than per-conversation on purpose -- toggled live from Chat Settings so
+   * the same conversation can be A/B tested against itself without an app restart. */
+  conciseReplies?: boolean;
+  /** Narration point-of-view nudge for character replies. Unset leaves the model's own default
+   * alone. Global for the same reason conciseReplies is. */
+  narrationPov?: 'first' | 'third';
 }
 
 function getConfigPath(): string {
@@ -350,6 +357,35 @@ export function setNarratorVoice(voice: CharacterTtsVoice | null): void {
     delete config.narratorVoice;
   } else {
     config.narratorVoice = { mode: voice.mode, id: voice.id };
+  }
+  writeConfig(config);
+}
+
+export function getConciseReplies(): boolean {
+  return readConfig().conciseReplies === true;
+}
+
+export function setConciseReplies(value: boolean): void {
+  const config = readConfig();
+  if (value) {
+    config.conciseReplies = true;
+  } else {
+    delete config.conciseReplies;
+  }
+  writeConfig(config);
+}
+
+export function getNarrationPov(): 'first' | 'third' | null {
+  const raw = readConfig().narrationPov;
+  return raw === 'first' || raw === 'third' ? raw : null;
+}
+
+export function setNarrationPov(value: 'first' | 'third' | null): void {
+  const config = readConfig();
+  if (value === 'first' || value === 'third') {
+    config.narrationPov = value;
+  } else {
+    delete config.narrationPov;
   }
   writeConfig(config);
 }

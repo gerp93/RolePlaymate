@@ -18,9 +18,14 @@ export const EXTRACTION_OPTIONS = {
   stop: ['\nUser:', '\nAssistant:', '\n\n\n'],
 };
 
-/** The system prompt is truncated before being shown to the extractor: it is there to say
- * "don't re-record this", and the whole thing would dominate the request. */
-const SYSTEM_PROMPT_PREVIEW_LENGTH = 600;
+/** The caller passes just the character-identity slice of the prompt (name/description/
+ * personality/scenario/example dialogue -- see PromptBuilder.baseSystemPrompt), not the full
+ * assembled system prompt with instructions/lore/memories/style directions layered on top. That
+ * scoping is what keeps this cheap; this cap is only a safety valve against a pathologically
+ * long character sheet, not the primary control -- it used to be 600 chars against the *whole*
+ * prompt, which routinely cut personality traits before the extractor ever saw them, so it kept
+ * "recording" them as new memories every turn. */
+const SYSTEM_PROMPT_PREVIEW_LENGTH = 4000;
 
 const MIN_FACT_LENGTH = 5;
 const MAX_FACT_LENGTH = 300;
