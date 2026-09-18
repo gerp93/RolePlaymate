@@ -36,6 +36,10 @@ import {
   setConfiguredMemoryEmbeddingModel,
   resetMemoryEmbeddingModel,
   getChatRetentionState,
+  getConciseReplies,
+  setConciseReplies,
+  getNarrationPov,
+  setNarrationPov,
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
 import { migrateImagePathsToCanonicalDir } from './imagePathMigration';
@@ -1343,6 +1347,20 @@ function registerIPCHandlers() {
   ipcMain.handle('narratorVoice:set', (_, voice: CharacterTtsVoice | null) => {
     guardTtsVoice(voice);
     setNarratorVoice(voice);
+    return { success: true };
+  });
+
+  ipcMain.handle('chatStyle:getConcise', () => getConciseReplies());
+
+  ipcMain.handle('chatStyle:setConcise', (_, value: boolean) => {
+    setConciseReplies(value === true);
+    return { success: true };
+  });
+
+  ipcMain.handle('chatStyle:getPov', () => getNarrationPov());
+
+  ipcMain.handle('chatStyle:setPov', (_, value: 'first' | 'third' | null) => {
+    setNarrationPov(value === 'first' || value === 'third' ? value : null);
     return { success: true };
   });
 

@@ -80,12 +80,21 @@ export function splitItalicNarration(content: string): Array<{ role: TtsSpeechRo
  * Builds the Chatterbox queue. One speaker (or split that collapses to one speaker) stays a
  * single request so Chatterbox can stitch the whole reply. Split only queues when both voices
  * exist, they differ, and there is at least one italic run and one non-italic run.
+ *
+ * `skipItalics` drops every `*italic*` run before synthesis -- the "thoughts/actions never
+ * spoken" mode -- and repurposes `mode` to mean "which single voice reads what's left" rather
+ * than "route by content type": 'narrator' reads the remaining dialogue in the narrator voice
+ * instead of reading everything (there's nothing left to read but dialogue). Split makes no
+ * sense once there's only one role's worth of content, so the caller is expected to keep
+ * `mode` out of 'split' whenever this is true (see ChatSettingsPanel, which disables that
+ * option while the skip toggle is on).
  */
 export function planSpeechClips(
   content: string,
   mode: TtsReadingMode,
   speakerVoice: CharacterTtsVoice | null,
-  narratorVoice: CharacterTtsVoice | null
+  narratorVoice: CharacterTtsVoice | null,
+  skipItalics = false
 ): TtsSpeechClip[] {
   if (!textForSpeech(content)) return [];
 
@@ -93,6 +102,18 @@ export function planSpeechClips(
   const narrator = narratorVoice;
   const fallback = speaker ?? narrator;
   if (!fallback) return [];
+
+  if (skipItalics) {
+    const dialogueOnly = splitItalicNarration(content)
+      .filter((part) => part.role === 'character')
+      .map((part) => part.text)
+      .join('');
+    if (!textForSpeech(dialogueOnly)) return [];
+    if (mode === 'narrator') {
+      return [{ role: 'narrator', text: dialogueOnly, voice: narrator ?? fallback }];
+    }
+    return [{ role: 'character', text: dialogueOnly, voice: fallback }];
+  }
 
   if (mode === 'narrator') {
     return [{ role: 'narrator', text: content, voice: narrator ?? fallback }];

@@ -32,6 +32,8 @@ interface Props {
   onPersonaReadingModeChange: (value: TtsReadingMode) => void;
   overlapMode: TtsOverlapMode;
   onOverlapModeChange: (value: TtsOverlapMode) => void;
+  skipItalics: boolean;
+  onSkipItalicsChange: (value: boolean) => void;
   narratorVoice: CharacterTtsVoice | null;
   canSplitCharacter: boolean;
   canSplitPersona: boolean;
@@ -40,6 +42,10 @@ interface Props {
   onSamplersChange: (next: Samplers) => void;
   keepForever: boolean;
   onKeepForeverChange: (keep: boolean) => void;
+  conciseReplies: boolean;
+  onConciseRepliesChange: (value: boolean) => void;
+  narrationPov: 'first' | 'third' | null;
+  onNarrationPovChange: (value: 'first' | 'third' | null) => void;
 }
 
 /** Hover/focus card — Electron's native `title` tooltips look dated and often don't show. */
@@ -92,6 +98,8 @@ export default function ChatSettingsPanel({
   onPersonaReadingModeChange,
   overlapMode,
   onOverlapModeChange,
+  skipItalics,
+  onSkipItalicsChange,
   narratorVoice,
   canSplitCharacter,
   canSplitPersona,
@@ -100,6 +108,10 @@ export default function ChatSettingsPanel({
   onSamplersChange,
   keepForever,
   onKeepForeverChange,
+  conciseReplies,
+  onConciseRepliesChange,
+  narrationPov,
+  onNarrationPovChange,
 }: Props) {
   const speechAvailable = characterSpeechAvailable || personaSpeechAvailable;
   const speechActive =
@@ -201,6 +213,15 @@ export default function ChatSettingsPanel({
             </label>
           )}
 
+          <label className="chat-settings-checkbox" title="Thoughts and actions in *asterisks* are never spoken -- only spoken dialogue is">
+            <input
+              type="checkbox"
+              checked={skipItalics}
+              onChange={(e) => onSkipItalicsChange(e.target.checked)}
+            />
+            Skip reading italicized thoughts/actions
+          </label>
+
           {characterSpeechAvailable && (
             <label className="chat-settings-field">
               <span className="chat-settings-field-label chat-settings-field-label-row">
@@ -265,7 +286,7 @@ export default function ChatSettingsPanel({
                 <option value="narrator" disabled={!narratorVoice}>
                   Narrator (all)
                 </option>
-                <option value="split" disabled={!canSplitCharacter}>
+                <option value="split" disabled={!canSplitCharacter || skipItalics}>
                   Split italics
                 </option>
               </select>
@@ -336,7 +357,7 @@ export default function ChatSettingsPanel({
                 <option value="narrator" disabled={!narratorVoice}>
                   Narrator (all)
                 </option>
-                <option value="split" disabled={!canSplitPersona}>
+                <option value="split" disabled={!canSplitPersona || skipItalics}>
                   Split italics
                 </option>
               </select>
@@ -364,6 +385,37 @@ export default function ChatSettingsPanel({
           </p>
         </section>
       )}
+
+      <section className="chat-settings-section">
+        <h3 className="chat-settings-section-title">
+          Reply style
+          <SettingsInfoTip ariaLabel="About reply style">
+            Global, not per-conversation -- these apply to every chat so you can flip them and
+            compare against the same conversation instead of needing a fresh one to test.
+          </SettingsInfoTip>
+        </h3>
+
+        <label className="chat-settings-checkbox">
+          <input
+            type="checkbox"
+            checked={conciseReplies}
+            onChange={(e) => onConciseRepliesChange(e.target.checked)}
+          />
+          Nudge replies to be shorter and more conversational
+        </label>
+
+        <label className="chat-settings-field">
+          <span className="chat-settings-field-label">Narration point of view</span>
+          <select
+            value={narrationPov ?? ''}
+            onChange={(e) => onNarrationPovChange((e.target.value || null) as 'first' | 'third' | null)}
+          >
+            <option value="">Model's default</option>
+            <option value="first">First person ("I" / "you")</option>
+            <option value="third">Third person actions, first-person dialogue</option>
+          </select>
+        </label>
+      </section>
 
       <section className="chat-settings-section">
         <h3 className="chat-settings-section-title">AI model tuning</h3>

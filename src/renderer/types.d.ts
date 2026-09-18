@@ -172,6 +172,12 @@ declare global {
         get: () => Promise<CharacterTtsVoice | null>;
         set: (voice: CharacterTtsVoice | null) => Promise<{ success: boolean }>;
       };
+      chatStyle: {
+        getConcise: () => Promise<boolean>;
+        setConcise: (value: boolean) => Promise<{ success: boolean }>;
+        getPov: () => Promise<'first' | 'third' | null>;
+        setPov: (value: 'first' | 'third' | null) => Promise<{ success: boolean }>;
+      };
       tts: {
         status: () => Promise<ChatterboxStatus>;
         speak: (request: TtsSpeakRequest) => Promise<TtsSpeakResult>;
