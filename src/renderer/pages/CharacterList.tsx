@@ -10,6 +10,7 @@ import LibraryFilterBar from '../components/LibraryFilterBar';
 import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { filterAndSortLibrary, LibrarySort } from '../utils/librarySort';
+import { formatCount, formatTokenRange } from '../utils/usageStats';
 
 // Fewer characters get bigger tiles; past a point tiles bottom out and the grid scrolls
 // instead of shrinking further.
@@ -33,6 +34,7 @@ export default function CharacterList() {
   const [sort, setSort] = useState<LibrarySort>('name-asc');
   const [showIssues, setShowIssues] = useState(false);
   const [issues, setIssues] = useState<Record<string, string[]>>({});
+  const [tokenEstimates, setTokenEstimates] = useState<Record<string, { low: number; high: number }>>({});
   const coverImageIds = Object.values(coverImages)
     .map((images) => images[0]?.id)
     .filter((id): id is string => !!id);
@@ -54,6 +56,8 @@ export default function CharacterList() {
     setCharacters(characterList);
     setCoverImages(images);
     setLoading(false);
+    // Not awaited -- the estimates fill in after the grid is already showing.
+    void window.electronAPI.characters.getAllTokenEstimates().then(setTokenEstimates);
   }
 
   // Issues are only fetched while the toggle is on, so a mutation elsewhere (create/delete/
@@ -217,6 +221,14 @@ export default function CharacterList() {
                       <div className="character-card-body">
                         <p className="character-card-name">{character.name}</p>
                         {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                        <div className="character-card-stats">
+                          <span>{formatCount(character.messageCount, 'message')}</span>
+                          {tokenEstimates[character.id] && (
+                            <span title="Estimated base-prompt tokens, across this character's scenarios">
+                              {formatTokenRange(tokenEstimates[character.id].low, tokenEstimates[character.id].high)} tokens
+                            </span>
+                          )}
+                        </div>
                         {showIssues && characterIssues && characterIssues.length > 0 && (
                           <div className="character-card-issues">
                             {characterIssues.map((issue) => (

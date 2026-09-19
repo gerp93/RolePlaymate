@@ -954,7 +954,7 @@ function registerIPCHandlers() {
   // folding them in would turn an already-approximate number into a meaningless spread. No
   // real tokenizer is available (the app works with Ollama absent), so this is the same
   // chars/4 heuristic loreMatcher already uses to budget lore.
-  ipcMain.handle('characters:getTokenEstimate', (_, characterId: string) => {
+  const characterTokenRange = (characterId: string) => {
     const scenarios = scenarioService
       .getScenariosByCharacter(characterId)
       .filter((s) => !s.isHidden || securityService.isUnlocked());
@@ -964,6 +964,19 @@ function registerIPCHandlers() {
       estimateTokens(promptBuilder.buildSystemPrompt(characterId, { scenarioContent }).prompt)
     );
     return { low: Math.min(...estimates), high: Math.max(...estimates) };
+  };
+  ipcMain.handle('characters:getTokenEstimate', (_, characterId: string) => characterTokenRange(characterId));
+
+  // Same estimate for every character at once, for the Characters grid -- one round trip
+  // instead of one per card. Hidden characters are skipped while locked (their content is
+  // ciphertext and the grid doesn't show them anyway).
+  ipcMain.handle('characters:getAllTokenEstimates', () => {
+    const result: Record<string, { low: number; high: number }> = {};
+    for (const character of characterService.getAllCharacters()) {
+      if (character.isHidden && !securityService.isUnlocked()) continue;
+      result[character.id] = characterTokenRange(character.id);
+    }
+    return result;
   });
 
   // Creating a character also creates its fixed fields (personality/greeting/dialogue), each
@@ -1711,11 +1724,22 @@ function registerIPCHandlers() {
   // Same chars/4 heuristic as characters:getTokenEstimate, but a single number rather than a
   // range: a persona doesn't own scenarios, so its only static contribution to a prompt is its
   // own [PERSONA] block (name + background), which doesn't vary by anything else selected.
+  const personaTokens = (persona: { name: string; background: string | null }) => {
+    const text = promptBuilder.buildPersonaContextText(persona.name, persona.background ?? '');
+    return text ? estimateTokens(text) : 0;
+  };
   ipcMain.handle('personas:getTokenEstimate', (_, personaId: string) => {
     const persona = conversationService.getPersona(personaId);
     if (!persona) throw new Error(`Persona with id ${personaId} not found`);
-    const text = promptBuilder.buildPersonaContextText(persona.name, persona.background ?? '');
-    return { tokens: text ? estimateTokens(text) : 0 };
+    return { tokens: personaTokens(persona) };
+  });
+  ipcMain.handle('personas:getAllTokenEstimates', () => {
+    const result: Record<string, number> = {};
+    for (const persona of conversationService.listPersonas()) {
+      if (persona.isHidden && !securityService.isUnlocked()) continue;
+      result[persona.id] = personaTokens(persona);
+    }
+    return result;
   });
   ipcMain.handle('personas:create', (_, input: CreateUserPersonaInput) => {
     guardPersonaCreate(input);
@@ -2089,6 +2113,31 @@ function registerIPCHandlers() {
 
 function registerLorebookHandlers() {
   ipcMain.handle('lorebooks:getWorldBooks', () => lorebookService.listWorldBooks());
+
+  // Per-book usage for the World Books grid: total times its entries were selected into a
+  // prompt, and a token range for its enabled entries -- low is the always-on entries alone
+  // (what every turn pays), high is every enabled entry (if all of them fired). Same chars/4
+  // heuristic as the character/persona estimates.
+  ipcMain.handle('lorebooks:getWorldBookStats', () => {
+    const result: Record<string, { hits: number; tokensLow: number; tokensHigh: number }> = {};
+    for (const book of lorebookService.listWorldBooks()) {
+      if (book.isHidden && !securityService.isUnlocked()) continue;
+      let hits = 0;
+      let tokensLow = 0;
+      let tokensHigh = 0;
+      for (const entry of lorebookService.listEntries(book.id)) {
+        hits += entry.hitCount;
+        if (!entry.enabled) continue;
+        const content = lorebookService.getActiveContent(entry.id).trim();
+        if (!content) continue;
+        const tokens = estimateTokens(content);
+        tokensHigh += tokens;
+        if (entry.alwaysOn) tokensLow += tokens;
+      }
+      result[book.id] = { hits, tokensLow, tokensHigh };
+    }
+    return result;
+  });
   ipcMain.handle('lorebooks:getById', (_, id: string) => lorebookService.getBook(id));
   ipcMain.handle('lorebooks:create', (_, input: CreateLorebookInput) => {
     guardLorebookCreate(input);

@@ -10,6 +10,7 @@ import LibraryFilterBar from '../components/LibraryFilterBar';
 import { useImageCrops } from '../hooks/useImageCrops';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { filterAndSortLibrary, LibrarySort } from '../utils/librarySort';
+import { formatCount, formatTokenRange } from '../utils/usageStats';
 
 // Same sizing rule as the character grid -- fewer tiles get bigger, more tiles bottom out and
 // scroll instead of shrinking further. Kept identical on purpose: the two grids should read as
@@ -37,6 +38,7 @@ export default function PersonaList() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<LibrarySort>('name-asc');
+  const [tokenEstimates, setTokenEstimates] = useState<Record<string, number>>({});
   const coverImageIds = Object.values(coverImages)
     .map((images) => images[0]?.id)
     .filter((id): id is string => !!id);
@@ -58,6 +60,7 @@ export default function PersonaList() {
     setPersonas(personaList);
     setCoverImages(images);
     setLoading(false);
+    void window.electronAPI.personas.getAllTokenEstimates().then(setTokenEstimates);
   }
 
   async function handleCreate() {
@@ -171,6 +174,14 @@ export default function PersonaList() {
                       <div className="character-card-body">
                         <p className="character-card-name">{persona.name}</p>
                         {persona.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                        <div className="character-card-stats">
+                          <span>{formatCount(persona.messageCount, 'message')}</span>
+                          {tokenEstimates[persona.id] > 0 && (
+                            <span title="Estimated tokens when this persona is included in a prompt">
+                              {formatTokenRange(tokenEstimates[persona.id], tokenEstimates[persona.id])} tokens
+                            </span>
+                          )}
+                        </div>
                         {!persona.background?.trim() && (
                           <p className="text-muted persona-warning">No background yet</p>
                         )}
