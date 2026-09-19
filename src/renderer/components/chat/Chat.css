@@ -3046,10 +3046,12 @@
    read as a footnote under the picker rather than competing with the name/description above. */
 .start-picker-worldbook-badges {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
   gap: 4px;
   margin-top: 2px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .start-picker-worldbook-badge {
@@ -3059,6 +3061,14 @@
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
   white-space: nowrap;
+  min-width: 0;
+  max-width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-picker-worldbook-badge-more {
+  flex-shrink: 0;
 }
 
 .start-picker-selected-subtext {
