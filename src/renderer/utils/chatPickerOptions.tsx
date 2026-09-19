@@ -23,15 +23,25 @@ import {
 /** Small pill row naming which World Books a character/persona taps into -- shown only for
  * whichever one is currently selected (see worldBookNames below), so a library with many
  * shared books never turns the picker's dropdown list noisy. */
+const MAX_VISIBLE_WORLD_BOOK_BADGES = 2;
+
+/** Capped to a single line -- the start screen's panels are absolutely positioned, so a
+ * pill row that wraps grows downward into the scenario bubble. Overflow collapses into a
+ * "+N" pill, with the full list on hover. */
 function worldBookBadges(names: string[]) {
   if (names.length === 0) return undefined;
+  const visible = names.slice(0, MAX_VISIBLE_WORLD_BOOK_BADGES);
+  const hiddenCount = names.length - visible.length;
   return (
-    <span className="start-picker-worldbook-badges">
-      {names.map((name) => (
+    <span className="start-picker-worldbook-badges" title={names.join(', ')}>
+      {visible.map((name) => (
         <span key={name} className="start-picker-worldbook-badge">
           {name}
         </span>
       ))}
+      {hiddenCount > 0 && (
+        <span className="start-picker-worldbook-badge start-picker-worldbook-badge-more">+{hiddenCount}</span>
+      )}
     </span>
   );
 }
