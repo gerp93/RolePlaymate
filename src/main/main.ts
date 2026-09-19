@@ -17,6 +17,7 @@ import {
   setOllamaHost,
   resetOllamaHost,
   getOllamaLaunchDir,
+  setOllamaLaunchDir,
   getEffectiveChatterboxHost,
   isUsingDefaultChatterboxHost,
   setChatterboxHost,
@@ -83,8 +84,10 @@ import {
 } from './chat/chatterboxClient';
 import {
   chooseOllamaLaunchDir,
+  detectDefaultOllamaLaunchDir,
   forgetOllamaLaunchDir,
   maybeStartOllamaOnAppLaunch,
+  resolveOllamaLaunchDir,
   startOllamaFromDir,
   stopOllama,
 } from './ollamaLaunch';
@@ -1377,9 +1380,15 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('ollamaLaunch:get', () => ({
-    dir: getOllamaLaunchDir(),
-  }));
+  ipcMain.handle('ollamaLaunch:get', () => {
+    const saved = getOllamaLaunchDir();
+    const suggested = detectDefaultOllamaLaunchDir();
+    return {
+      dir: saved,
+      suggestedDir: suggested,
+      effectiveDir: saved ?? suggested,
+    };
+  });
 
   ipcMain.handle('ollamaLaunch:choose', () => chooseOllamaLaunchDir(mainWindow));
 
@@ -1389,9 +1398,15 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('ollamaLaunch:startNow', async () => {
-    const dir = getOllamaLaunchDir();
-    if (!dir) return { status: 'error' as const, message: 'Choose an Ollama folder first.' };
+    const dir = resolveOllamaLaunchDir();
+    if (!dir) {
+      return {
+        status: 'error' as const,
+        message: 'Choose an Ollama folder first (the one that contains ollama.exe).',
+      };
+    }
     if (await ollamaClient.isReachable()) return { status: 'already-running' as const };
+    if (!getOllamaLaunchDir()) setOllamaLaunchDir(dir);
     return startOllamaFromDir(dir);
   });
 
