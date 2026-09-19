@@ -9,6 +9,7 @@ import LimitedInput from '../components/LimitedInput';
 import LibraryFilterBar from '../components/LibraryFilterBar';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { filterAndSortLibrary, LibrarySort } from '../utils/librarySort';
+import { formatCount, formatTokenRange } from '../utils/usageStats';
 import '../components/lore/Lore.css';
 
 // Same sizing rule as the character grid, so the three library pages read as one family.
@@ -37,6 +38,7 @@ export default function WorldBookList() {
   const [importing, setImporting] = useState(false);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<LibrarySort>('name-asc');
+  const [stats, setStats] = useState<Record<string, { hits: number; tokensLow: number; tokensHigh: number }>>({});
 
   // hiddenUnlocked: books already fetched under the previous lock state hold ciphertext for
   // anything hidden -- re-fetch on every lock/unlock so names update immediately instead of
@@ -49,6 +51,7 @@ export default function WorldBookList() {
     setLoading(true);
     setBooks(await window.electronAPI.lorebooks.getWorldBooks());
     setLoading(false);
+    void window.electronAPI.lorebooks.getWorldBookStats().then(setStats);
   }
 
   async function handleCreate() {
@@ -191,6 +194,18 @@ export default function WorldBookList() {
                     <div className="character-card-body">
                       <p className="character-card-name">{book.name}</p>
                       {book.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                      {stats[book.id] && (
+                        <div className="character-card-stats">
+                          <span title="Times this book's entries were selected into a prompt">
+                            {formatCount(stats[book.id].hits, 'use')}
+                          </span>
+                          {stats[book.id].tokensHigh > 0 && (
+                            <span title="Estimated tokens: always-on entries alone up to every enabled entry firing">
+                              {formatTokenRange(stats[book.id].tokensLow, stats[book.id].tokensHigh)} tokens
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {book.description && <p className="character-card-snippet">{book.description}</p>}
                       <div className="character-card-actions">
                         {hiddenUnlocked && (

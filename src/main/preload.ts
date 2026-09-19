@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     importFromHtml: () => ipcRenderer.invoke('characters:importFromHtml'),
     getIssues: () => ipcRenderer.invoke('characters:getIssues'),
     getTokenEstimate: (id: string) => ipcRenderer.invoke('characters:getTokenEstimate', id),
+    getAllTokenEstimates: () => ipcRenderer.invoke('characters:getAllTokenEstimates'),
   },
 
   fields: {
@@ -216,6 +217,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   lorebooks: {
     getWorldBooks: () => ipcRenderer.invoke('lorebooks:getWorldBooks'),
+    getWorldBookStats: () => ipcRenderer.invoke('lorebooks:getWorldBookStats'),
     getById: (id: string) => ipcRenderer.invoke('lorebooks:getById', id),
     create: (input: unknown) => ipcRenderer.invoke('lorebooks:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('lorebooks:update', id, input),
@@ -323,6 +325,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('personas:delete', id),
     clone: (id: string) => ipcRenderer.invoke('personas:clone', id),
     getTokenEstimate: (id: string) => ipcRenderer.invoke('personas:getTokenEstimate', id),
+    getAllTokenEstimates: () => ipcRenderer.invoke('personas:getAllTokenEstimates'),
   },
 
   personaFieldVersions: {

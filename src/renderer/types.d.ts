@@ -73,6 +73,7 @@ declare global {
         importFromHtml: () => Promise<{ character: Character; warnings: string[] } | null>;
         getIssues: () => Promise<Record<string, string[]>>;
         getTokenEstimate: (id: string) => Promise<{ low: number; high: number }>;
+        getAllTokenEstimates: () => Promise<Record<string, { low: number; high: number }>>;
       };
       fields: {
         getByCharacter: (characterId: string) => Promise<CharacterField[]>;
@@ -257,6 +258,7 @@ declare global {
       };
       lorebooks: {
         getWorldBooks: () => Promise<Lorebook[]>;
+        getWorldBookStats: () => Promise<Record<string, { hits: number; tokensLow: number; tokensHigh: number }>>;
         getById: (id: string) => Promise<Lorebook | null>;
         create: (input: CreateLorebookInput) => Promise<Lorebook>;
         update: (id: string, input: UpdateLorebookInput) => Promise<Lorebook>;
@@ -363,6 +365,7 @@ declare global {
         delete: (id: string) => Promise<{ success: true }>;
         clone: (id: string) => Promise<UserPersona>;
         getTokenEstimate: (id: string) => Promise<{ tokens: number }>;
+        getAllTokenEstimates: () => Promise<Record<string, number>>;
       };
       personaFieldVersions: {
         getByPersona: (personaId: string) => Promise<PersonaBackgroundVersion[]>;
