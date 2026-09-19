@@ -30,6 +30,36 @@ function binaryInDir(dir: string): string | null {
   return binary;
 }
 
+/** Usual install folders when the user hasn't picked one yet. */
+export function detectDefaultOllamaLaunchDir(): string | null {
+  const candidates: string[] = [];
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA;
+    if (local) candidates.push(path.join(local, 'Programs', 'Ollama'));
+    const pf = process.env.ProgramFiles;
+    if (pf) candidates.push(path.join(pf, 'Ollama'));
+  } else if (process.platform === 'darwin') {
+    candidates.push('/Applications/Ollama.app/Contents/Resources');
+    candidates.push('/usr/local/bin');
+  } else {
+    candidates.push('/usr/local/bin');
+    candidates.push('/usr/bin');
+  }
+  for (const dir of candidates) {
+    try {
+      if (binaryInDir(dir)) return path.resolve(dir);
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+/** Saved folder, or a detected default install if one exists on this machine. */
+export function resolveOllamaLaunchDir(): string | null {
+  return getOllamaLaunchDir() ?? detectDefaultOllamaLaunchDir();
+}
+
 export function assertOllamaLaunchDir(dir: string): string {
   const trimmed = dir.trim();
   assertMaxLength(trimmed, FIELD_LIMITS.ollamaLaunchDir, 'Ollama folder');
@@ -78,16 +108,17 @@ export async function startOllamaFromDir(dir: string): Promise<{ status: 'ok' } 
   }
 }
 
-/** If the user has pointed us at an Ollama folder and nothing is listening, start it.
+/** If a folder is configured (or a default install is found) and nothing is listening, start it.
  * Failures are silent -- chat still shows the usual unreachable banner. */
 export async function maybeStartOllamaOnAppLaunch(client: OllamaClient): Promise<void> {
-  const dir = getOllamaLaunchDir();
+  const dir = resolveOllamaLaunchDir();
   if (!dir || launchedThisSession) return;
   try {
     if (await client.isReachable()) return;
   } catch {
     // Treat as down and try to start.
   }
+  if (!getOllamaLaunchDir()) setOllamaLaunchDir(dir);
   await startOllamaFromDir(dir);
 }
 
@@ -119,7 +150,7 @@ export async function stopOllama(
   const result = await stopLocalServer({
     hostUrl: client.host,
     fallbackPort: Number(new URL(DEFAULT_OLLAMA_HOST).port) || 11434,
-    launchDir: getOllamaLaunchDir(),
+    launchDir: resolveOllamaLaunchDir(),
   });
   launchedThisSession = false;
   if (result.status === 'error') return result;
