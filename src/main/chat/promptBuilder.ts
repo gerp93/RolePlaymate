@@ -7,14 +7,11 @@ import { FieldType } from '../../shared/types/characterField';
 import { BuiltPrompt } from '../../shared/types/chat';
 import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import {
-  CONCISE_INSTRUCTION,
   DEFAULT_STOP_PHRASES,
-  POV_INSTRUCTIONS,
   PromptTemplates,
   StopPhraseSettings,
   TEMPLATE_TAGS,
 } from './promptTemplates';
-import { getConciseReplies, getNarrationPov } from '../dbLocation';
 
 export interface PromptBuildOptions {
   personaName?: string | null;
@@ -184,18 +181,6 @@ export class PromptBuilder {
 
     const characterInstructions = wrappedSection('characterInstructions', templates, baseValues);
     if (characterInstructions) parts.push(characterInstructions);
-
-    // Global, live-toggleable nudges (Chat Settings), independent of the editable
-    // characterInstructions template above -- see dbLocation.ts's conciseReplies/narrationPov.
-    // Kept as their own section rather than folded into characterInstructions so flipping them
-    // has nothing to do with whatever the user has customized in Prompt Settings.
-    const styleLines: string[] = [];
-    if (getConciseReplies()) styleLines.push(fill(CONCISE_INSTRUCTION, baseValues));
-    const pov = getNarrationPov();
-    if (pov) styleLines.push(fill(POV_INSTRUCTIONS[pov], baseValues));
-    if (styleLines.length > 0) {
-      parts.push(section('STYLE DIRECTIONS', styleLines.join('\n\n')));
-    }
 
     // Persona context still only fires when BOTH a name and background are present -- a
     // persona with no background contributes nothing worth a section for.
