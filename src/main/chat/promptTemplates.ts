@@ -32,11 +32,6 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
     "End your response as soon as {char} is done speaking or acting. Do not write a line",
     'starting with "{persona}:", and do not describe what {persona} says, does,',
     'thinks, or feels next. Stop and wait for {persona} to take their own turn.',
-    '',
-    "Format every reply consistently: wrap {char}'s internal thoughts in single asterisks,",
-    'like *this*. Wrap everything else -- spoken dialogue and narrated actions alike -- in',
-    'double asterisks, like **this**. Every sentence should be in one of these two styles;',
-    'do not leave plain, unmarked text in the reply.',
   ].join('\n'),
 
   personaContext: [
@@ -75,32 +70,6 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
     'knows or lived through, NOT common knowledge to anyone else including {char}. Let them',
     "colour how {persona} is portrayed rather than being stated outright.",
     '{lore}',
-  ].join('\n'),
-};
-
-/**
- * Style nudges gated behind the global toggles in dbLocation.ts (conciseReplies/narrationPov)
- * rather than baked into DEFAULT_TEMPLATES -- these are meant to be flipped live from Chat
- * Settings and A/B tested against the same conversation, not permanent behaviour yet. Filled
- * with the same {char}/{persona} placeholder set as every other template section.
- */
-export const CONCISE_INSTRUCTION = [
-  'Keep replies short and conversational -- aim for 2 to 4 sentences per turn. Do not stack',
-  'multiple questions in one reply; ask at most one, and only when it fits naturally. Avoid',
-  'long expository paragraphs -- let the scene unfold turn by turn instead of explaining',
-  'everything at once.',
-].join('\n');
-
-export const POV_INSTRUCTIONS: Record<'first' | 'third', string> = {
-  first: [
-    'Write strictly in first person. {char} refers to themself as "I" in dialogue, actions,',
-    'and inner thoughts, and refers to {persona} as "you" -- never narrate {char} in the',
-    'third person.',
-  ].join('\n'),
-  third: [
-    "Narrate {char}'s actions and description in the third person (e.g. \"{char} walks",
-    "over...\"), while keeping {char}'s spoken dialogue and inner thoughts in the first",
-    'person, exactly as the character would actually think or say them.',
   ].join('\n'),
 };
 

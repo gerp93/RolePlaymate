@@ -13,13 +13,14 @@ import {
   MemoryWithEmbedding,
 } from './memoryRetrieval';
 import { extractMemories } from './memoryExtraction';
-import { normalizeReplyFormatting } from './replyFormatting';
+import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply } from './suggestReply';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
-import { getConfiguredMemoryEmbeddingModel } from '../dbLocation';
+import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
+import { buildStyleReminder } from './styleReminder';
 
 /**
  * A generated reply that hasn't been folded into the model's context or mined for memories
@@ -40,6 +41,10 @@ export interface PendingTurn {
    * instructions/lore/memories preamble can't push personality traits out of view. See
    * PromptBuilder.baseSystemPrompt. */
   baseSystemPrompt: string;
+  /** What the end-of-prompt reply guidance is written around -- kept so a redo can rebuild it
+   * from the *current* Chat Settings toggles instead of replaying whatever was on at send time. */
+  characterName: string;
+  personaName: string | null;
   stopPhrases: string[];
   shouldExtract: boolean;
 }
@@ -132,6 +137,41 @@ export function toOllamaOptions(samplers: SamplerParams, stop: string[]): Ollama
     num_predict: samplers.maxTokens,
     ...(stop.length > 0 ? { stop } : {}),
   };
+}
+
+/** Concise mode's hard length cap -- see CONCISE_MAX_TOKENS. Never raises a lower user setting. */
+function capForConcise(options: OllamaOptions, concise: boolean): OllamaOptions {
+  if (!concise) return options;
+  return { ...options, num_predict: Math.min(options.num_predict ?? CONCISE_MAX_TOKENS, CONCISE_MAX_TOKENS) };
+}
+
+/**
+ * Appends the reply guidance (formatting, plus the live Chat Settings length/POV toggles) to the
+ * end of the request -- the last user turn if there is one, otherwise (a continuation, which has
+ * no trailing user turn) the system prompt. Read from the settings on every call so it always
+ * reflects what's toggled right now, redo included.
+ */
+export function withStyleReminder(
+  messages: OllamaChatMessage[],
+  charName: string,
+  personaName: string | null | undefined
+): OllamaChatMessage[] {
+  const reminder = buildStyleReminder({
+    charName,
+    personaName: personaName?.trim() || 'User',
+    concise: getConciseReplies(),
+    pov: getNarrationPov(),
+  });
+
+  const last = messages[messages.length - 1];
+  if (last?.role === 'user') {
+    return [...messages.slice(0, -1), { ...last, content: `${last.content}\n\n${reminder}` }];
+  }
+  const first = messages[0];
+  if (first?.role === 'system') {
+    return [{ ...first, content: `${first.content}\n\n${reminder}` }, ...messages.slice(1)];
+  }
+  return [{ role: 'system', content: reminder }, ...messages];
 }
 
 /** Renders the outgoing request the way the debug console shows it. */
@@ -250,6 +290,8 @@ export class ChatSessionManager {
         model: conversation.model,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
+        characterName: built.characterName,
+        personaName: persona?.name ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
       };
@@ -380,12 +422,17 @@ export class ChatSessionManager {
       personalLore,
       personaLore,
     });
-    const messages: OllamaChatMessage[] = [
-      ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-      ...historyTurns,
-      { role: 'user' as const, content: request.userMessage },
-    ];
-    const options = toOllamaOptions(samplers, built.stopPhrases);
+    const messages = withStyleReminder(
+      [
+        ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
+        ...historyTurns,
+        { role: 'user' as const, content: request.userMessage },
+      ],
+      built.characterName,
+      request.personaName
+    );
+    const concise = getConciseReplies();
+    const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
 
     const userMessage = this.conversations.appendMessage({
       conversationId: request.conversationId,
@@ -410,7 +457,11 @@ export class ChatSessionManager {
 
       // Post-processing is trim() only, as in the source. Anything more (stripping name
       // prefixes, collapsing whitespace) silently mangles legitimate output.
-      const content = normalizeReplyFormatting(result.content.trim());
+      const content = finalizeReply(result.content, {
+        concise,
+        evalCount: result.evalCount,
+        numPredict: options.num_predict,
+      });
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -454,6 +505,8 @@ export class ChatSessionManager {
         model: request.model,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
+        characterName: built.characterName,
+        personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
       };
@@ -496,17 +549,25 @@ export class ChatSessionManager {
     }
     const effectiveModel = model || pending.model;
 
-    const options = toOllamaOptions(
-      { ...this.modelSamplers.getEffective(effectiveModel, DEFAULT_SAMPLERS), ...samplers },
-      pending.stopPhrases
+    const concise = getConciseReplies();
+    const options = capForConcise(
+      toOllamaOptions(
+        { ...this.modelSamplers.getEffective(effectiveModel, DEFAULT_SAMPLERS), ...samplers },
+        pending.stopPhrases
+      ),
+      concise
     );
     // A continuation turn (see continueAsCharacter) has no user message to replay here either --
     // same "no trailing user turn" shape its own generation used.
-    const messages: OllamaChatMessage[] = [
-      ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
-      ...session.history,
-      ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
-    ];
+    const messages = withStyleReminder(
+      [
+        ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
+        ...session.history,
+        ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
+      ],
+      pending.characterName,
+      pending.personaName
+    );
 
     const controller = new AbortController();
     session.abort = controller;
@@ -521,7 +582,11 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = normalizeReplyFormatting(result.content.trim());
+      const content = finalizeReply(result.content, {
+        concise,
+        evalCount: result.evalCount,
+        numPredict: options.num_predict,
+      });
 
       // A message from before redo support has no variant of its own yet -- back one out of
       // its current content first, or selecting the new variant below would lose it for good.
@@ -679,12 +744,17 @@ export class ChatSessionManager {
       personalLore,
       personaLore,
     });
-    const messages: OllamaChatMessage[] = [
-      ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-      ...historyTurns,
-      { role: 'user' as const, content: trimmed },
-    ];
-    const options = toOllamaOptions(samplers, built.stopPhrases);
+    const messages = withStyleReminder(
+      [
+        ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
+        ...historyTurns,
+        { role: 'user' as const, content: trimmed },
+      ],
+      built.characterName,
+      request.personaName
+    );
+    const concise = getConciseReplies();
+    const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
 
     const userMessage = this.conversations.updateMessageContent(
       priorUserMessage.id,
@@ -705,7 +775,11 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = normalizeReplyFormatting(result.content.trim());
+      const content = finalizeReply(result.content, {
+        concise,
+        evalCount: result.evalCount,
+        numPredict: options.num_predict,
+      });
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -753,6 +827,8 @@ export class ChatSessionManager {
         model: request.model,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
+        characterName: built.characterName,
+        personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
       };
@@ -847,11 +923,16 @@ export class ChatSessionManager {
     // No trailing `{ role: 'user', ... }` -- that's the whole point. Whatever chat template the
     // model uses gets to decide how it handles two turns from the same role in a row; most
     // roleplay-tuned models handle this fine, same as SillyTavern's "Continue" does.
-    const messages: OllamaChatMessage[] = [
-      ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-      ...historyTurns,
-    ];
-    const options = toOllamaOptions(samplers, built.stopPhrases);
+    const messages = withStyleReminder(
+      [
+        ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
+        ...historyTurns,
+      ],
+      built.characterName,
+      request.personaName
+    );
+    const concise = getConciseReplies();
+    const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
 
     const controller = new AbortController();
     session.abort = controller;
@@ -866,7 +947,11 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = normalizeReplyFormatting(result.content.trim());
+      const content = finalizeReply(result.content, {
+        concise,
+        evalCount: result.evalCount,
+        numPredict: options.num_predict,
+      });
 
       const debug: ChatDebugInfo = {
         baseSystemPrompt: built.baseSystemPrompt,
@@ -905,6 +990,8 @@ export class ChatSessionManager {
         model: request.model,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
+        characterName: built.characterName,
+        personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
       };
