@@ -76,6 +76,28 @@
   background: var(--color-top-bar-hover);
 }
 
+/* Chat is the whole point of the app, so it gets a pill-shaped call-to-action instead of
+   blending into the regular nav links -- first thing in the bar, not tucked into a section. */
+.topbar a.topbar-chat-cta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: var(--color-primary-action);
+  color: white;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.topbar a.topbar-chat-cta:hover,
+.topbar a.topbar-chat-cta.active {
+  background: var(--color-primary-action);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+
 .topbar-spacer {
   flex: 1;
 }

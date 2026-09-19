@@ -3,6 +3,7 @@ import { PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
 import { ScenarioService } from '../database/scenarioService';
 import { scanLore, splitByScope } from './loreMatcher';
+import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
 import {
   retrieveMemories,
@@ -169,6 +170,13 @@ export class ChatSessionManager {
     const conversation = this.conversations.getConversation(conversationId);
     if (!conversation?.scenarioId) return null;
     return this.scenarios.getActiveContent(conversation.scenarioId);
+  }
+
+  /** Bumps each fired entry's durable hit counter -- called once per lore scan, right after
+   * selection, regardless of whether the generation that follows succeeds. "Used in context"
+   * means it made it into the prompt sent to the model, not that a reply came back. */
+  private recordLoreHits(entries: MatchedLoreEntry[]): void {
+    this.lorebooks.incrementHitCounts(entries.map((entry) => entry.entryId));
   }
 
   /**
@@ -360,6 +368,7 @@ export class ChatSessionManager {
           scanText: characterLore.scanText,
         }
       : characterLore;
+    this.recordLoreHits(lore.selected);
 
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
@@ -658,6 +667,7 @@ export class ChatSessionManager {
           scanText: characterLore.scanText,
         }
       : characterLore;
+    this.recordLoreHits(lore.selected);
 
     const built = this.prompts.buildSystemPrompt(request.characterId, {
       personaName: request.personaName,
@@ -817,6 +827,7 @@ export class ChatSessionManager {
           scanText: characterLore.scanText,
         }
       : characterLore;
+    this.recordLoreHits(lore.selected);
 
     // Falls back to a built-in nudge rather than leaving the section empty -- a blank
     // directions section reads to a smaller model as "nothing special," and it'll often just
@@ -984,6 +995,7 @@ export class ChatSessionManager {
     const personaEntries = personaId
       ? scanLore(this.lorebooks.getEntriesForPersonaWithWorldBooks(personaId), recentTurns, '').selected
       : [];
+    this.recordLoreHits(personaEntries);
     const { world: personaWorldLore, personal: personaLore } = splitByScope(personaEntries);
 
     const built = this.prompts.buildSystemPrompt(characterId, {

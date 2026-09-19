@@ -120,6 +120,11 @@ export default function LoreEntryEditor({
           {entry.alwaysOn && <span className="lore-badge lore-badge-always">always on</span>}
           {!entry.alwaysOn && <span className="lore-badge">{keyCount} keys</span>}
           {entry.priority !== 0 && <span className="lore-badge">p{entry.priority}</span>}
+          {entry.hitCount > 0 && (
+            <span className="lore-badge" title="Times this entry has been selected into a prompt">
+              used {entry.hitCount.toLocaleString()}×
+            </span>
+          )}
           {!entry.enabled && <span className="lore-badge lore-badge-off">disabled</span>}
         </span>
         {moveTargets && moveTargets.length > 0 && onMove && (

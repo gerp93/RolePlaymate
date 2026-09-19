@@ -26,6 +26,7 @@ export default function PersonaDetail() {
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [imageBusy, setImageBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [tokenEstimate, setTokenEstimate] = useState<number | null>(null);
   const voicePreview = useVoicePreview();
   const { crops, refresh: refreshCrops } = useImageCrops(images.map((img) => img.id));
 
@@ -52,6 +53,9 @@ export default function PersonaDetail() {
     setImages(imageList);
     const preferredIndex = preferImageId ? imageList.findIndex((img) => img.id === preferImageId) : -1;
     setImageIndex(preferredIndex >= 0 ? preferredIndex : 0);
+    // Separate call, not awaited alongside the rest -- it's a nice-to-have estimate, not
+    // something the rest of the page should wait on.
+    void window.electronAPI.personas.getTokenEstimate(id).then((r) => setTokenEstimate(r.tokens));
   }
 
   async function handleNameBlur() {
@@ -167,6 +171,13 @@ export default function PersonaDetail() {
             }}
           />
         </div>
+
+        <p className="text-muted character-detail-stats">
+          {persona.messageCount.toLocaleString()} message{persona.messageCount === 1 ? '' : 's'}
+          {tokenEstimate !== null && tokenEstimate > 0 && (
+            <>{` · ~${tokenEstimate.toLocaleString()} tokens when included in a prompt`}</>
+          )}
+        </p>
 
         <CharacterVoicePicker
           value={persona.ttsVoice}

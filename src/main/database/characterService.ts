@@ -28,6 +28,7 @@ export class CharacterService {
       name: this.security.decryptIfHidden(row.name as string, isHidden),
       description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
       ttsVoice,
+      messageCount: Number(row.messageCount ?? 0),
       isHidden,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
@@ -40,6 +41,7 @@ export class CharacterService {
     description,
     tts_voice_mode as ttsVoiceMode,
     tts_voice_id as ttsVoiceId,
+    message_count as messageCount,
     is_hidden as isHidden,
     created_at as createdAt,
     updated_at as updatedAt

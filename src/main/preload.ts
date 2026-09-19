@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('characters:delete', id),
     importFromHtml: () => ipcRenderer.invoke('characters:importFromHtml'),
     getIssues: () => ipcRenderer.invoke('characters:getIssues'),
+    getTokenEstimate: (id: string) => ipcRenderer.invoke('characters:getTokenEstimate', id),
   },
 
   fields: {
@@ -321,6 +322,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setHidden: (id: string, hidden: boolean) => ipcRenderer.invoke('personas:setHidden', id, hidden),
     delete: (id: string) => ipcRenderer.invoke('personas:delete', id),
     clone: (id: string) => ipcRenderer.invoke('personas:clone', id),
+    getTokenEstimate: (id: string) => ipcRenderer.invoke('personas:getTokenEstimate', id),
   },
 
   personaFieldVersions: {

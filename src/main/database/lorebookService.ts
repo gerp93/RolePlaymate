@@ -49,6 +49,7 @@ const ENTRY_COLUMNS = `
   enabled,
   always_on as alwaysOn,
   priority,
+  hit_count as hitCount,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -75,6 +76,7 @@ function rowToEntry(row: Record<string, unknown>): LorebookEntry {
     enabled: !!row.enabled,
     alwaysOn: !!row.alwaysOn,
     priority: row.priority as number,
+    hitCount: Number(row.hitCount ?? 0),
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -532,6 +534,18 @@ export class LorebookService {
     const entry = rowToEntry(row);
     const isHidden = this.isBookHidden(entry.lorebookId);
     return { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) };
+  }
+
+  /** Bumps `hit_count` for every entry id actually selected into a turn's prompt -- called
+   * from chatSession.ts after each lore scan. No record of which turn matched which entry,
+   * just the running total, so a duplicate id in one turn (shouldn't happen -- an entry can
+   * only be selected once per scan) would double-count; callers pass a de-duplicated list. */
+  incrementHitCounts(entryIds: string[]): void {
+    if (entryIds.length === 0) return;
+    const stmt = this.db.prepare(`UPDATE lorebook_entries SET hit_count = hit_count + 1 WHERE id = ?`);
+    transaction(this.db, () => {
+      for (const id of entryIds) stmt.run(id);
+    });
   }
 
   createEntry(input: CreateLorebookEntryInput): LorebookEntry {
