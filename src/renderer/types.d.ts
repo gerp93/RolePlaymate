@@ -72,6 +72,7 @@ declare global {
         delete: (id: string) => Promise<{ success: boolean }>;
         importFromHtml: () => Promise<{ character: Character; warnings: string[] } | null>;
         getIssues: () => Promise<Record<string, string[]>>;
+        getTokenEstimate: (id: string) => Promise<{ low: number; high: number }>;
       };
       fields: {
         getByCharacter: (characterId: string) => Promise<CharacterField[]>;
@@ -361,6 +362,7 @@ declare global {
         setHidden: (id: string, hidden: boolean) => Promise<UserPersona>;
         delete: (id: string) => Promise<{ success: true }>;
         clone: (id: string) => Promise<UserPersona>;
+        getTokenEstimate: (id: string) => Promise<{ tokens: number }>;
       };
       personaFieldVersions: {
         getByPersona: (personaId: string) => Promise<PersonaBackgroundVersion[]>;

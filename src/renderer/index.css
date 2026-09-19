@@ -299,6 +299,11 @@ textarea {
   min-width: 160px;
 }
 
+.character-detail-stats {
+  font-size: 12px;
+  margin: -8px 0 16px;
+}
+
 .character-card-name {
   font-weight: 700;
   font-size: 15px;

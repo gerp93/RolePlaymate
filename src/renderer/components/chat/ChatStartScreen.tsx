@@ -64,6 +64,10 @@ interface Props {
   characterCoverUrls: Record<string, string | null>;
   personaCoverUrls: Record<string, string | null>;
   scenarioCoverUrls: Record<string, string | null>;
+  /** World Book names attached to the currently selected character/persona -- fetched only
+   * for whichever one is selected (see Chat.tsx), so this is always empty or a one-entry map. */
+  characterWorldBooks: string[];
+  personaWorldBooks: string[];
   /** Every crop known for any image that could appear here -- shared with Chat.tsx's margin
    * portraits rather than fetched separately, since it's the same underlying galleries. */
   crops: Record<string, Partial<Record<ImageCropLocation, ImageCrop>>>;
@@ -204,6 +208,8 @@ export default function ChatStartScreen({
   characterCoverUrls,
   personaCoverUrls,
   scenarioCoverUrls,
+  characterWorldBooks,
+  personaWorldBooks,
   crops,
   onCropSaved,
   onCharacterChange,
@@ -228,8 +234,16 @@ export default function ChatStartScreen({
   const branchClass = (active: boolean) =>
     `chat-start-line chat-start-line-branch${active ? ' chat-start-line-active' : ''}`;
 
-  const characterOptions = buildCharacterPickerOptions(characters, characterCoverUrls);
-  const personaOptions = buildPersonaPickerOptions(personas, personaCoverUrls);
+  const characterOptions = buildCharacterPickerOptions(
+    characters,
+    characterCoverUrls,
+    characterId ? { [characterId]: characterWorldBooks } : {}
+  );
+  const personaOptions = buildPersonaPickerOptions(
+    personas,
+    personaCoverUrls,
+    personaId ? { [personaId]: personaWorldBooks } : {}
+  );
   const scenarioOptions = buildScenarioPickerOptions(scenarios, scenarioCoverUrls);
 
   return (

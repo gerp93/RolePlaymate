@@ -20,9 +20,29 @@ import {
  * definition each keeps both surfaces showing identical option content instead of drifting.
  */
 
+/** Small pill row naming which World Books a character/persona taps into -- shown only for
+ * whichever one is currently selected (see worldBookNames below), so a library with many
+ * shared books never turns the picker's dropdown list noisy. */
+function worldBookBadges(names: string[]) {
+  if (names.length === 0) return undefined;
+  return (
+    <span className="start-picker-worldbook-badges">
+      {names.map((name) => (
+        <span key={name} className="start-picker-worldbook-badge">
+          {name}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function buildCharacterPickerOptions(
   characters: Character[],
-  coverUrls: Record<string, string | null>
+  coverUrls: Record<string, string | null>,
+  /** World Book names, keyed by character id -- only ever populated for the currently
+   * selected character (see ChatStartScreen), so this stays a single cheap fetch rather than
+   * one per character in the list. */
+  worldBookNames: Record<string, string[]> = {}
 ): StartPickerOption[] {
   return characters.map((c) => ({
     value: c.id,
@@ -30,12 +50,14 @@ export function buildCharacterPickerOptions(
     subtext: c.description,
     imageUrl: coverUrls[c.id] ?? null,
     fallbackGlyph: c.name.charAt(0).toUpperCase() || '?',
+    badges: worldBookBadges(worldBookNames[c.id] ?? []),
   }));
 }
 
 export function buildPersonaPickerOptions(
   personas: UserPersona[],
-  coverUrls: Record<string, string | null>
+  coverUrls: Record<string, string | null>,
+  worldBookNames: Record<string, string[]> = {}
 ): StartPickerOption[] {
   return personas.map((p) => ({
     value: p.id,
@@ -43,6 +65,7 @@ export function buildPersonaPickerOptions(
     subtext: p.description,
     imageUrl: coverUrls[p.id] ?? null,
     fallbackGlyph: p.name.charAt(0).toUpperCase() || '◎',
+    badges: worldBookBadges(worldBookNames[p.id] ?? []),
   }));
 }
 

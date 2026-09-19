@@ -152,7 +152,7 @@ export default function StartScreenPicker({
         )}
       </div>
 
-      {selected && (selected.subtext || selected.detail || selected.tier) ? (
+      {selected && (selected.subtext || selected.detail || selected.tier || selected.badges) ? (
         <div className="start-picker-selected-hint">
           {selected.tier ? (
             <span className="start-picker-tier" style={{ color: selected.tier.color }}>
@@ -163,6 +163,7 @@ export default function StartScreenPicker({
           {selected.subtext ? (
             <p className="start-picker-selected-subtext text-muted">{selected.subtext}</p>
           ) : null}
+          {selected.badges ?? null}
         </div>
       ) : null}
     </div>

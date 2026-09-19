@@ -239,6 +239,25 @@ export class PromptBuilder {
       greeting: resolve(options.scenarioGreeting ?? ''),
     };
   }
+
+  /** Just the [PERSONA] block a persona would contribute to any character's prompt -- for the
+   * Persona page's token estimate, which has no specific character to build a full prompt
+   * against. Empty when either name or background is blank, same rule buildSystemPrompt uses
+   * to decide whether the persona section appears at all. */
+  buildPersonaContextText(personaName: string, personaBackground: string): string {
+    const name = personaName.trim();
+    const background = personaBackground.trim();
+    if (!name || !background) return '';
+    const templates = this.promptFieldVersions.getActiveTemplates();
+    return wrappedSection('personaContext', templates, {
+      char: '',
+      persona: name,
+      persona_background: background,
+      directions: '',
+      memories: '',
+      lore: '',
+    });
+  }
 }
 
 /**

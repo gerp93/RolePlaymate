@@ -99,6 +99,7 @@ const PERSONA_COLUMNS = `
   up.avatar as avatar,
   up.tts_voice_mode as ttsVoiceMode,
   up.tts_voice_id as ttsVoiceId,
+  up.message_count as messageCount,
   up.is_hidden as isHidden,
   up.created_at as createdAt
 `;
@@ -223,6 +224,7 @@ export class ConversationService {
       background: background == null ? null : this.security.decryptIfHidden(background, isHidden),
       ttsVoice: parseTtsVoice(ttsVoiceMode ?? null, ttsVoiceId ?? null),
       avatar: (row.avatar as string | null) ?? null,
+      messageCount: Number(row.messageCount ?? 0),
       isHidden,
       createdAt: row.createdAt as string,
     };
@@ -795,6 +797,25 @@ export class ConversationService {
       this.db
         .prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
         .run(now, input.conversationId);
+
+      // Durable per-character/persona counters (characters.message_count,
+      // user_personas.message_count) -- bumped here, the one place every real message (user
+      // or assistant, from a fresh send or a continue) gets inserted, so redo/edit paths that
+      // only touch message_variants never double-count. Never decremented, so deleting this
+      // message or its conversation later doesn't erase the tally.
+      const owner = this.db
+        .prepare(`SELECT character_id as characterId, user_persona_id as userPersonaId FROM conversations WHERE id = ?`)
+        .get(input.conversationId) as unknown as { characterId: string | null; userPersonaId: string | null };
+      if (owner.characterId) {
+        this.db
+          .prepare(`UPDATE characters SET message_count = message_count + 1 WHERE id = ?`)
+          .run(owner.characterId);
+      }
+      if (owner.userPersonaId) {
+        this.db
+          .prepare(`UPDATE user_personas SET message_count = message_count + 1 WHERE id = ?`)
+          .run(owner.userPersonaId);
+      }
 
       return this.db
         .prepare(`SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ?`)

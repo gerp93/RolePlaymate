@@ -15,15 +15,9 @@ interface NavSection {
   items: NavItem[];
 }
 
+// Chat isn't in here -- it's the app's whole point, so it gets its own call-to-action button
+// at the front of the nav rather than blending into a labeled section (see CHAT_NAV_ITEM).
 const NAV_SECTIONS: NavSection[] = [
-  {
-    label: 'Chat',
-    items: [
-      { to: '/chat', label: 'Chat' },
-      { to: '/prompt-tuning', label: 'Prompt Tuning' },
-      { to: '/model-tuning', label: 'Model Tuning' },
-    ],
-  },
   {
     label: 'Library',
     items: [
@@ -32,7 +26,16 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/world-books', label: 'World Books' },
     ],
   },
+  {
+    label: 'Tuning',
+    items: [
+      { to: '/prompt-tuning', label: 'Prompt Tuning' },
+      { to: '/model-tuning', label: 'Model Tuning' },
+    ],
+  },
 ];
+
+const CHAT_NAV_ITEM: NavItem = { to: '/chat', label: 'Chat' };
 
 const NAV_TRAILING: NavItem[] = [
   { to: '/about', label: 'About', end: true },
@@ -61,6 +64,12 @@ export default function Layout({ children }: { children: ReactNode }) {
           RolePlaymate
         </div>
         <nav className="topbar-nav" aria-label="Main">
+          <NavLink
+            to={CHAT_NAV_ITEM.to}
+            className={({ isActive }) => `topbar-chat-cta${isActive ? ' active' : ''}`}
+          >
+            <span aria-hidden>💬</span> {CHAT_NAV_ITEM.label}
+          </NavLink>
           {NAV_SECTIONS.map((section) => (
             <div key={section.label} className="topbar-section">
               <span className="topbar-section-label">{section.label}</span>

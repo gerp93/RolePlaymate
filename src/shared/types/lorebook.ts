@@ -49,6 +49,10 @@ export interface LorebookEntry {
   alwaysOn: boolean;
   /** Higher wins when matched entries don't all fit the token budget. */
   priority: number;
+  /** Durable count of turns this entry was actually selected into the prompt (not just
+   * matched -- see loreMatcher's `selected` vs `rejected`), counted at scan time and never
+   * decremented. No record of which turn matched it, just the running total. */
+  hitCount: number;
   createdAt: string;
   updatedAt: string;
 }

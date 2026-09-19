@@ -135,6 +135,11 @@ export default function Chat() {
   const [characterImages, setCharacterImages] = useState<CharacterImage[]>([]);
   const [personaImages, setPersonaImages] = useState<PersonaImage[]>([]);
   const [scenarioImages, setScenarioImages] = useState<ScenarioImage[]>([]);
+  // World Book names for the start screen's "which lore is this character/persona tapped
+  // into" hint -- only the selected one is ever fetched, not the whole library (see
+  // ChatStartScreen/chatPickerOptions).
+  const [characterWorldBooks, setCharacterWorldBooks] = useState<string[]>([]);
+  const [personaWorldBooks, setPersonaWorldBooks] = useState<string[]>([]);
   // Every image any of the margin/start-screen portraits could show -- fetched once as a flat
   // set rather than only whichever's currently displayed, so carousel mode and the static
   // picker don't need a refetch on every tick/switch.
@@ -496,6 +501,26 @@ export default function Chat() {
       return;
     }
     void window.electronAPI.personaImages.getByPersona(personaId).then(setPersonaImages);
+  }, [personaId]);
+
+  useEffect(() => {
+    if (!characterId) {
+      setCharacterWorldBooks([]);
+      return;
+    }
+    void window.electronAPI.lorebooks
+      .getForCharacter(characterId)
+      .then((books) => setCharacterWorldBooks(books.world.map((b) => b.name)));
+  }, [characterId]);
+
+  useEffect(() => {
+    if (!personaId) {
+      setPersonaWorldBooks([]);
+      return;
+    }
+    void window.electronAPI.lorebooks
+      .getForPersona(personaId)
+      .then((books) => setPersonaWorldBooks(books.world.map((b) => b.name)));
   }, [personaId]);
 
   // A character's scenario list, loaded alongside its images -- same convention.
@@ -1086,6 +1111,8 @@ export default function Chat() {
             characterCoverUrls={startCharacterCoverUrls}
             personaCoverUrls={startPersonaCoverUrls}
             scenarioCoverUrls={startScenarioCoverUrls}
+            characterWorldBooks={characterWorldBooks}
+            personaWorldBooks={personaWorldBooks}
             crops={portraitCrops}
             onCropSaved={refreshPortraitCrops}
             onCharacterChange={(id) => {

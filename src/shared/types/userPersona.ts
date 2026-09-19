@@ -24,6 +24,10 @@ export interface UserPersona {
    * so migrateLegacyPersonaAvatars in schema.ts can still read pre-existing single avatars on
    * upgrade, same convention as characters.image_url. */
   avatar: string | null;
+  /** Durable total of messages (both roles) sent in any conversation with this persona
+   * selected, counted at send time and never decremented -- same convention as
+   * Character.messageCount. */
+  messageCount: number;
   isHidden: boolean;
   createdAt: string;
 }

@@ -66,6 +66,7 @@ import {
   setRetentionActiveConversation,
 } from './chatRetention';
 import { PromptBuilder } from './chat/promptBuilder';
+import { estimateTokens } from './chat/loreMatcher';
 import { PromptSettingsService, ResettableField } from './database/promptSettingsService';
 import { PromptFieldVersionService } from './database/promptFieldVersionService';
 import { DEFAULT_STOP_PHRASES } from './chat/promptTemplates';
@@ -945,6 +946,26 @@ function registerIPCHandlers() {
     return issues;
   });
 
+  // A rough token-count range for this character's own contribution to the system prompt --
+  // character fields plus characterInstructions stay fixed, but [SCENARIO] varies by which of
+  // the character's scenarios (or none) ends up selected on a conversation, so the range spans
+  // every one of those combinations rather than a single number. Deliberately excludes
+  // persona/lore/memories/directions -- those are per-conversation, not per-character, and
+  // folding them in would turn an already-approximate number into a meaningless spread. No
+  // real tokenizer is available (the app works with Ollama absent), so this is the same
+  // chars/4 heuristic loreMatcher already uses to budget lore.
+  ipcMain.handle('characters:getTokenEstimate', (_, characterId: string) => {
+    const scenarios = scenarioService
+      .getScenariosByCharacter(characterId)
+      .filter((s) => !s.isHidden || securityService.isUnlocked());
+    const scenarioContents: (string | null)[] = [null, ...scenarios.map((s) => scenarioService.getActiveContent(s.id))];
+
+    const estimates = scenarioContents.map((scenarioContent) =>
+      estimateTokens(promptBuilder.buildSystemPrompt(characterId, { scenarioContent }).prompt)
+    );
+    return { low: Math.min(...estimates), high: Math.max(...estimates) };
+  });
+
   // Creating a character also creates its fixed fields (personality/greeting/dialogue), each
   // with a blank first version -- unlike TrackDraft's freely-added Parts, a character's fields
   // are a fixed set, so there's no separate "add field" action. Scenario is not among them --
@@ -1686,6 +1707,16 @@ function registerIPCHandlers() {
   );
 
   ipcMain.handle('personas:getAll', () => conversationService.listPersonas());
+
+  // Same chars/4 heuristic as characters:getTokenEstimate, but a single number rather than a
+  // range: a persona doesn't own scenarios, so its only static contribution to a prompt is its
+  // own [PERSONA] block (name + background), which doesn't vary by anything else selected.
+  ipcMain.handle('personas:getTokenEstimate', (_, personaId: string) => {
+    const persona = conversationService.getPersona(personaId);
+    if (!persona) throw new Error(`Persona with id ${personaId} not found`);
+    const text = promptBuilder.buildPersonaContextText(persona.name, persona.background ?? '');
+    return { tokens: text ? estimateTokens(text) : 0 };
+  });
   ipcMain.handle('personas:create', (_, input: CreateUserPersonaInput) => {
     guardPersonaCreate(input);
     return conversationService.createPersona(input);

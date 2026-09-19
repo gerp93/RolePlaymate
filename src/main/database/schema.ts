@@ -277,6 +277,13 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   ensureColumn(db, 'lorebooks', 'owner_persona_id', 'TEXT REFERENCES user_personas(id) ON DELETE CASCADE');
   ensureColumn(db, 'lorebooks', 'image', 'TEXT');
   ensureColumn(db, 'app_security', 'key_salt', 'BLOB');
+  // Durable usage counters -- incremented at write time (conversationService.appendMessage,
+  // chatSession's lore-scan call sites) rather than derived from COUNT(*), so deleting the
+  // messages/conversations/matches that earned them never erases the tally. Mirrors
+  // generation_stats' "holds no reference to what produced it" convention above.
+  ensureColumn(db, 'characters', 'message_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'user_personas', 'message_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'lorebook_entries', 'hit_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'conversations', 'character_image_mode', `TEXT NOT NULL DEFAULT 'carousel'`);
   ensureColumn(db, 'conversations', 'character_image_id', 'TEXT REFERENCES character_images(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'persona_image_mode', `TEXT NOT NULL DEFAULT 'carousel'`);
