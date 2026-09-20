@@ -1,12 +1,36 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import * as path from 'path';
 
-const UNLOCK_HTML = `<!doctype html>
+export interface PromptOptions {
+  heading: string;
+  body: string;
+  placeholder: string;
+  submitLabel: string;
+  /** Label for the button that gives up. */
+  cancelLabel: string;
+  wrongMessage: string;
+}
+
+const LAUNCH_OPTIONS: PromptOptions = {
+  heading: 'Unlock RolePlaymate',
+  body: 'Your library is encrypted. Enter your password to open it.',
+  placeholder: 'Password',
+  submitLabel: 'Unlock',
+  cancelLabel: 'Quit',
+  wrongMessage: 'Incorrect password.',
+};
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function buildHtml(o: PromptOptions): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>Unlock RolePlaymate</title>
+<title>${escapeHtml(o.heading)}</title>
 <style>
   :root { color-scheme: light dark; --bg:#f5f5f5; --fg:#1c1c1e; --muted:#6b6b70; --card:#fff; --line:#d4d4d8; --accent:#4f46e5; --err:#c62828; }
   @media (prefers-color-scheme: dark) { :root { --bg:#17171a; --fg:#ececf0; --muted:#9a9aa3; --card:#222227; --line:#3a3a42; --accent:#8b83ff; --err:#ef7a7a; } }
@@ -25,14 +49,14 @@ const UNLOCK_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>Unlock RolePlaymate</h1>
-  <p>Your library is encrypted. Enter your password to open it.</p>
+  <h1>${escapeHtml(o.heading)}</h1>
+  <p>${escapeHtml(o.body)}</p>
   <form id="f">
-    <input id="pw" type="password" autocomplete="off" spellcheck="false" placeholder="Password" autofocus>
+    <input id="pw" type="password" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(o.placeholder)}" autofocus>
     <div id="err" role="alert"></div>
     <div class="row">
-      <button type="button" id="quit">Quit</button>
-      <button type="submit" class="primary" id="go">Unlock</button>
+      <button type="button" id="quit">${escapeHtml(o.cancelLabel)}</button>
+      <button type="submit" class="primary" id="go" data-wrong="${escapeHtml(o.wrongMessage)}">${escapeHtml(o.submitLabel)}</button>
     </div>
   </form>
 </main>
@@ -44,11 +68,12 @@ const UNLOCK_HTML = `<!doctype html>
     if (!pw.value) return;
     go.disabled = true; err.textContent = '';
     const ok = await window.unlock.submit(pw.value);
-    if (!ok) { err.textContent = 'Incorrect password.'; pw.select(); go.disabled = false; }
+    if (!ok) { err.textContent = go.dataset.wrong; pw.select(); go.disabled = false; }
   });
 </script>
 </body>
 </html>`;
+}
 
 /**
  * Shows the launch-time password prompt and resolves with the password once `verify` accepts
@@ -59,7 +84,10 @@ const UNLOCK_HTML = `<!doctype html>
  * rather than a route in the React app -- nothing the app normally exposes (IPC handlers,
  * services, the library) exists yet, and none of it is reachable from here.
  */
-export function promptForPassword(verify: (password: string) => boolean): Promise<string | null> {
+export function promptForPassword(
+  verify: (password: string) => boolean,
+  options: PromptOptions = LAUNCH_OPTIONS
+): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false;
     const win = new BrowserWindow({
@@ -69,7 +97,7 @@ export function promptForPassword(verify: (password: string) => boolean): Promis
       minimizable: false,
       maximizable: false,
       autoHideMenuBar: true,
-      title: 'Unlock RolePlaymate',
+      title: options.heading,
       icon: path.join(__dirname, '../../../assets/icon.png'),
       webPreferences: {
         preload: path.join(__dirname, 'unlockPreload.js'),
@@ -101,6 +129,6 @@ export function promptForPassword(verify: (password: string) => boolean): Promis
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());
 
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(UNLOCK_HTML)}`);
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildHtml(options))}`);
   });
 }

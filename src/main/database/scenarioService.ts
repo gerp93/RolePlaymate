@@ -63,14 +63,7 @@ export class ScenarioService {
   constructor(private db: DatabaseSync, private security: SecurityService) {}
 
   private rowToScenario(row: Record<string, unknown>): Scenario {
-    const isHidden = !!row.isHidden;
-    const description = row.description as string | null;
-    return {
-      ...rowToScenarioRaw(row),
-      name: this.security.decryptIfHidden(row.name as string, isHidden),
-      description:
-        description == null ? null : this.security.decryptIfHidden(description, isHidden),
-    };
+    return rowToScenarioRaw(row);
   }
 
   getScenariosByCharacter(characterId: string): Scenario[] {
@@ -123,8 +116,8 @@ export class ScenarioService {
     this.db
       .prepare(`UPDATE scenarios SET name = ?, description = ?, updated_at = ? WHERE id = ?`)
       .run(
-        this.security.encryptIfHidden(name, existing.isHidden),
-        description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
+        name,
+        description,
         new Date().toISOString(),
         id
       );
@@ -139,10 +132,8 @@ export class ScenarioService {
   }
 
   /**
-   * Same hide/unhide pivot as CharacterService.setHidden: `existing` already carries decrypted
-   * plaintext when currently hidden (requires unlock either way), so on hide it gets
-   * re-encrypted under the new flag, and on unhide it's already plaintext and just needs the
-   * flag flipped. Cascades to every version of both tables in the same transaction.
+   * Same as CharacterService.setHidden: a privacy-screen flag flip that still requires the PIN
+   * to have been entered. Versions of both tables are untouched -- hiding never rewrites content.
    */
   setHidden(id: string, hidden: boolean): Scenario {
     const existing = this.getScenario(id);
@@ -151,71 +142,10 @@ export class ScenarioService {
       throw new Error('Unlock with the PIN before hiding or unhiding an item');
     }
 
-    return transaction(this.db, () => {
-      const now = new Date().toISOString();
-      const name = hidden ? this.security.encrypt(existing.name) : existing.name;
-      const description =
-        existing.description == null
-          ? null
-          : hidden
-            ? this.security.encrypt(existing.description)
-            : existing.description;
-
-      this.db
-        .prepare(`UPDATE scenarios SET name = ?, description = ?, is_hidden = ?, updated_at = ? WHERE id = ?`)
-        .run(name, description, hidden ? 1 : 0, now, id);
-
-      this.setHiddenForVersions('scenario_versions', id, hidden);
-      this.setHiddenForVersions('scenario_greeting_versions', id, hidden);
-
-      return this.getScenario(id)!;
-    });
-  }
-
-  private setHiddenForVersions(table: VersionTable, scenarioId: string, hidden: boolean): void {
-    const rows = this.db
-      .prepare(`SELECT id, content FROM ${table} WHERE scenario_id = ?`)
-      .all(scenarioId) as { id: string; content: string }[];
-
-    const stmt = this.db.prepare(`UPDATE ${table} SET content = ? WHERE id = ?`);
-    for (const row of rows) {
-      const next = hidden
-        ? this.security.encrypt(row.content)
-        : this.security.isEncrypted(row.content)
-          ? this.security.decrypt(row.content)
-          : row.content;
-      stmt.run(next, row.id);
-    }
-  }
-
-  /** PIN-change rekey -- every version (both tables) of every currently-hidden scenario.
-   * Mirrors FieldVersionService.reencryptHiddenContent; scenario *names* are rekeyed alongside
-   * content here since, unlike character fields, a scenario's own name can itself be hidden
-   * text. */
-  reencryptHiddenContent(oldKey: Buffer, newKey: Buffer): void {
-    const scenarioRows = this.db
-      .prepare(`SELECT id, name, description FROM scenarios WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-    const rowStmt = this.db.prepare(`UPDATE scenarios SET name = ?, description = ? WHERE id = ?`);
-    for (const row of scenarioRows) {
-      const description =
-        row.description == null ? null : this.security.reencryptWithKeys(row.description, oldKey, newKey);
-      rowStmt.run(this.security.reencryptWithKeys(row.name, oldKey, newKey), description, row.id);
-    }
-
-    for (const table of ['scenario_versions', 'scenario_greeting_versions'] as const) {
-      const versionRows = this.db
-        .prepare(
-          `SELECT v.id, v.content FROM ${table} v
-           JOIN scenarios s ON s.id = v.scenario_id
-           WHERE s.is_hidden = 1`
-        )
-        .all() as { id: string; content: string }[];
-      const contentStmt = this.db.prepare(`UPDATE ${table} SET content = ? WHERE id = ?`);
-      for (const row of versionRows) {
-        contentStmt.run(this.security.reencryptWithKeys(row.content, oldKey, newKey), row.id);
-      }
-    }
+    this.db
+      .prepare(`UPDATE scenarios SET is_hidden = ?, updated_at = ? WHERE id = ?`)
+      .run(hidden ? 1 : 0, new Date().toISOString(), id);
+    return this.getScenario(id)!;
   }
 
   // --- Versions (shared engine for content + greeting) ----------------------------------
@@ -225,12 +155,10 @@ export class ScenarioService {
    * entries -- there is deliberately no "activate an older version" operation.
    */
   private getVersionsFromTable(table: VersionTable, scenarioId: string): ScenarioVersion[] {
-    const isHidden = !!this.getScenario(scenarioId)?.isHidden;
     const versions = this.db
       .prepare(`SELECT ${VERSION_COLUMNS} FROM ${table} WHERE scenario_id = ? ORDER BY version_number`)
       .all(scenarioId)
-      .map(rowToVersion)
-      .map((v) => ({ ...v, content: this.security.decryptIfHidden(v.content, isHidden) }));
+      .map(rowToVersion);
     return this.ensureLatestIsActive(table, scenarioId, versions);
   }
 
@@ -257,7 +185,6 @@ export class ScenarioService {
   private createVersionInTable(table: VersionTable, scenarioId: string, content: string): ScenarioVersion {
     const id = uuidv4();
     const now = new Date().toISOString();
-    const isHidden = !!this.getScenario(scenarioId)?.isHidden;
 
     return transaction(this.db, () => {
       const existing = this.getVersionsFromTable(table, scenarioId);
@@ -271,27 +198,23 @@ export class ScenarioService {
           `INSERT INTO ${table} (id, scenario_id, version_number, content, is_active, created_at, updated_at)
            VALUES (?, ?, ?, ?, 1, ?, ?)`
         )
-        .run(id, scenarioId, nextVersionNumber, this.security.encryptIfHidden(content, isHidden), now, now);
+        .run(id, scenarioId, nextVersionNumber, content, now, now);
 
       const row = this.db.prepare(`SELECT ${VERSION_COLUMNS} FROM ${table} WHERE id = ?`).get(id)!;
-      const version = rowToVersion(row);
-      return { ...version, content: this.security.decryptIfHidden(version.content, isHidden) };
+      return rowToVersion(row);
     });
   }
 
   private updateVersionContentInTable(table: VersionTable, versionId: string, content: string): ScenarioVersion {
     const row = this.db.prepare(`SELECT ${VERSION_COLUMNS} FROM ${table} WHERE id = ?`).get(versionId);
     if (!row) throw new Error(`Version with id ${versionId} not found`);
-    const scenarioId = rowToVersion(row).scenarioId;
-    const isHidden = !!this.getScenario(scenarioId)?.isHidden;
 
     this.db
       .prepare(`UPDATE ${table} SET content = ?, updated_at = ? WHERE id = ?`)
-      .run(this.security.encryptIfHidden(content, isHidden), new Date().toISOString(), versionId);
+      .run(content, new Date().toISOString(), versionId);
 
     const updated = this.db.prepare(`SELECT ${VERSION_COLUMNS} FROM ${table} WHERE id = ?`).get(versionId)!;
-    const version = rowToVersion(updated);
-    return { ...version, content: this.security.decryptIfHidden(version.content, isHidden) };
+    return rowToVersion(updated);
   }
 
   /** Blocked on the last remaining version, same as character fields and lorebook entries. */

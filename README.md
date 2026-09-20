@@ -7,8 +7,9 @@ AI chatbot characters are made of individually editable, versionable fields
 applied to character cards instead of lyrics -- each field has its own
 history, its own "active ★" version, and a word-level compare view, and any
 version can be saved forward again without losing the ones before it. No AI
-is used by the app itself. Data is stored locally in a `node:sqlite`-backed
-SQLite file (relocatable in Settings).
+is used by the app itself. Data is stored locally in a SQLite file (relocatable in
+Settings) that you can optionally encrypt, along with your portraits and audio,
+by turning on App encryption in Settings -> Security.
 
 ## Development
 

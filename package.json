@@ -65,6 +65,11 @@
             "x64"
           ]
         }
+      ],
+      "files": [
+        "!node_modules/better-sqlite3-multiple-ciphers/prebuilds/darwin-*.node",
+        "!node_modules/better-sqlite3-multiple-ciphers/prebuilds/linux*.node",
+        "!node_modules/better-sqlite3-multiple-ciphers/prebuilds/win32-arm64.node"
       ]
     },
     "nsis": {

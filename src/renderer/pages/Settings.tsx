@@ -12,6 +12,7 @@ import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddin
 import { CharacterTtsVoice, ChatterboxCloneVoice, ChatterboxPredefinedVoice } from '../../shared/types/tts';
 import { normalizeCloneVoices, stemFromVoiceName } from '../../shared/utils/ttsPreview';
 import { useVoicePreview, VoicePreviewState } from '../hooks/useVoicePreview';
+import EncryptionPanel from '../components/EncryptionPanel';
 
 function SettingsVoiceTable({
   rows,
@@ -650,14 +651,6 @@ export default function Settings() {
       setPinMessage({ kind: 'error', text: 'New PIN and confirmation do not match.' });
       return;
     }
-    if (
-      !confirm(
-        'Changing your PIN re-encrypts every hidden character, persona, and world book with the new one. ' +
-          'If you forget this new PIN, that content cannot be recovered. Continue?'
-      )
-    ) {
-      return;
-    }
     setPinBusy(true);
     const result = await window.electronAPI.security.setPin(currentPin, newPin);
     setPinBusy(false);
@@ -774,15 +767,18 @@ export default function Settings() {
             id="settings-panel-security"
             aria-labelledby="settings-tab-security"
           >
+      <EncryptionPanel />
+
       <div className="card">
         <h2 style={{ fontSize: 15, marginTop: 0 }}>Hidden Items PIN</h2>
         <p className="text-muted" style={{ marginTop: -8, fontSize: 13 }}>
-          Hidden characters, personas, and world books (and conversations that use them) stay
-          out of every list until you unlock them with this PIN from the topbar. 4-20 characters.
+          Hidden characters, personas, world books, and scenarios (and conversations that use them)
+          stay out of every list until you unlock them with this PIN from the topbar. 4-20 characters.
         </p>
-        <p style={{ color: 'var(--color-accent-red)', fontSize: 13, marginBottom: 12 }}>
-          ⚠️ Hidden content is encrypted with this PIN. If you forget a new PIN after changing
-          it, that content cannot be recovered.
+        <p className="text-muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          This is a privacy screen only: it hides items from view but doesn't encrypt them. To
+          encrypt your data, use App encryption above. There is no way to reset this PIN, so if you
+          forget it your hidden items stay hidden.
         </p>
         <div className="field">
           <label>Current PIN*</label>

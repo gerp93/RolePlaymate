@@ -109,22 +109,14 @@ const PERSONA_FROM = `
   LEFT JOIN persona_background_versions pbv ON pbv.persona_id = up.id AND pbv.is_active = 1
 `;
 
-function rowToConversationListItem(
-  row: Record<string, unknown>,
-  security: SecurityService
-): ConversationListItem {
+function rowToConversationListItem(row: Record<string, unknown>): ConversationListItem {
   const conversation = rowToConversation(row);
-  const scenarioNameRaw = row.scenarioName as string | null | undefined;
-  const scenarioIsHidden = !!row.scenarioIsHidden;
   return {
     ...conversation,
     messageCount: Number(row.messageCount ?? 0),
     userMessageCount: Number(row.userMessageCount ?? 0),
     lastMessageAt: (row.lastMessageAt as string | null) ?? null,
-    scenarioName:
-      scenarioNameRaw == null
-        ? null
-        : security.decryptIfHidden(scenarioNameRaw, scenarioIsHidden),
+    scenarioName: (row.scenarioName as string | null | undefined) ?? null,
   };
 }
 
@@ -209,23 +201,20 @@ export class ConversationService {
     private personaFieldVersions: PersonaFieldVersionService
   ) {}
 
-  /** Decrypts name/description/background when the persona is hidden -- same convention as
-   * CharacterService.rowToCharacter. */
   private rowToPersona(row: Record<string, unknown>): UserPersona {
-    const isHidden = !!row.isHidden;
     const description = row.description as string | null;
     const background = row.background as string | null;
     const ttsVoiceMode = (row.ttsVoiceMode ?? row.tts_voice_mode) as string | null | undefined;
     const ttsVoiceId = (row.ttsVoiceId ?? row.tts_voice_id) as string | null | undefined;
     return {
       id: row.id as string,
-      name: this.security.decryptIfHidden(row.name as string, isHidden),
-      description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
-      background: background == null ? null : this.security.decryptIfHidden(background, isHidden),
+      name: row.name as string,
+      description,
+      background,
       ttsVoice: parseTtsVoice(ttsVoiceMode ?? null, ttsVoiceId ?? null),
       avatar: (row.avatar as string | null) ?? null,
       messageCount: Number(row.messageCount ?? 0),
-      isHidden,
+      isHidden: !!row.isHidden,
       createdAt: row.createdAt as string,
     };
   }
@@ -249,7 +238,7 @@ export class ConversationService {
          LIMIT ?`
       )
       .all(limit)
-      .map((row) => rowToConversationListItem(row, this.security));
+      .map((row) => rowToConversationListItem(row));
   }
 
   isDraftConversation(conversationId: string): boolean {
@@ -1194,8 +1183,8 @@ export class ConversationService {
         `UPDATE user_personas SET name = ?, description = ?, avatar = ?, tts_voice_mode = ?, tts_voice_id = ? WHERE id = ?`
       )
       .run(
-        this.security.encryptIfHidden(name, existing.isHidden),
-        description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
+        name,
+        description,
         input.avatar ?? existing.avatar,
         ttsVoice?.mode ?? null,
         ttsVoice?.id ?? null,
@@ -1204,12 +1193,8 @@ export class ConversationService {
     return this.getPersona(id)!;
   }
 
-  /** Same shape as CharacterService.setHidden: `existing` is already plaintext (decrypted if
-   * currently hidden, since getPersona requires unlock to have decrypted it -- checked below
-   * for both directions), so hide encrypts it under the new flag and unhide just flips the
-   * flag back to plain columns. `background`'s own versions are cascaded separately via
-   * personaFieldVersions.setHiddenForPersona, same convention as
-   * CharacterService.setHidden -> FieldVersionService.setHiddenForCharacter. */
+  /** Same shape as CharacterService.setHidden: a privacy-screen flag flip that still requires
+   * the PIN to have been entered. */
   setPersonaHidden(id: string, hidden: boolean): UserPersona {
     const existing = this.getPersona(id);
     if (!existing) {
@@ -1219,55 +1204,8 @@ export class ConversationService {
       throw new Error('Unlock with the PIN before hiding or unhiding an item');
     }
 
-    const name = hidden ? this.security.encrypt(existing.name) : existing.name;
-    const description =
-      existing.description == null
-        ? null
-        : hidden
-          ? this.security.encrypt(existing.description)
-          : existing.description;
-
-    return transaction(this.db, () => {
-      this.db
-        .prepare(`UPDATE user_personas SET name = ?, description = ?, is_hidden = ? WHERE id = ?`)
-        .run(name, description, hidden ? 1 : 0, id);
-      this.personaFieldVersions.setHiddenForPersona(id, hidden);
-      return this.getPersona(id)!;
-    });
-  }
-
-  /** PIN-change rekey for every currently-hidden persona's name/description. `background`'s
-   * versions are rekeyed separately -- see personaFieldVersions.reencryptHiddenContent. */
-  reencryptHiddenPersonaContent(oldKey: Buffer, newKey: Buffer): void {
-    const rows = this.db
-      .prepare(`SELECT id, name, description FROM user_personas WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-
-    const stmt = this.db.prepare(`UPDATE user_personas SET name = ?, description = ? WHERE id = ?`);
-    for (const row of rows) {
-      const name = this.security.reencryptWithKeys(row.name, oldKey, newKey);
-      const description =
-        row.description == null ? null : this.security.reencryptWithKeys(row.description, oldKey, newKey);
-      stmt.run(name, description, row.id);
-    }
-  }
-
-  /** After a successful unlock, upgrades any hidden persona's name/description still sitting
-   * in legacy plaintext to real ciphertext. `background`'s versions are migrated separately --
-   * see personaFieldVersions.migrateLegacyHiddenContent. */
-  migrateLegacyHiddenPersonaContent(): void {
-    const rows = this.db
-      .prepare(`SELECT id, name, description FROM user_personas WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-
-    const stmt = this.db.prepare(`UPDATE user_personas SET name = ?, description = ? WHERE id = ?`);
-    for (const row of rows) {
-      const name = this.security.migrateLegacyContent(row.name, true);
-      const description = row.description == null ? null : this.security.migrateLegacyContent(row.description, true);
-      if (name !== row.name || description !== row.description) {
-        stmt.run(name, description, row.id);
-      }
-    }
+    this.db.prepare(`UPDATE user_personas SET is_hidden = ? WHERE id = ?`).run(hidden ? 1 : 0, id);
+    return this.getPersona(id)!;
   }
 
   /** Conversations that used this persona keep their transcript; their `user_persona_id`

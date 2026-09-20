@@ -88,12 +88,33 @@ export const ABOUT_TRACKS: AboutTrack[] = [
           <>
             <AboutLead>
               Characters, personas, world books, and scenarios can be marked hidden. While the app is locked (🔒
-              in the top bar), hidden items are removed from lists and their text is encrypted.
+              in the top bar), hidden items are removed from lists. It is a privacy screen only and does not
+              encrypt anything.
             </AboutLead>
             <AboutList
               items={[
                 <>Default PIN: <code>1234</code> until changed in Settings → Security.</>,
-                <>A forgotten PIN cannot be recovered; hidden content would be permanently inaccessible.</>,
+                <>There is no PIN reset, so a forgotten PIN keeps your hidden items hidden.</>,
+              ]}
+            />
+          </>
+        ),
+        pageLink: { to: '/settings?tab=security', label: 'Settings' },
+      },
+      {
+        kicker: 'Optional',
+        title: 'App encryption',
+        body: (
+          <>
+            <AboutLead>
+              Off by default. Turn it on in Settings → Security to encrypt your whole library — the database,
+              portraits, and saved audio — and be asked for a password every time RolePlaymate starts.
+            </AboutLead>
+            <AboutList
+              items={[
+                <>Separate from the Hidden content PIN, with its own password.</>,
+                <>A forgotten password cannot be recovered by anyone; your library would be permanently inaccessible.</>,
+                <>Text sent to your local Ollama is not encrypted in transit; encryption protects data at rest.</>,
               ]}
             />
           </>

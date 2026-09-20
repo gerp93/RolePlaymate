@@ -14,11 +14,16 @@ applied to character cards instead of lyrics. Roleplay chat is being added on
 top of it (see "Chat" below); it talks to a **local** Ollama server, so the app
 still ships no model and makes no network calls of its own, and the library
 stays fully usable with Ollama absent. Data is stored locally in a
-`node:sqlite`-backed SQLite file (WAL mode, foreign keys enforced).
+SQLite file (WAL mode, foreign keys enforced) that the user can optionally
+encrypt as a whole (see "App encryption" below).
 
-`node:sqlite` is a Node built-in, so there is no native module to rebuild and
-nothing to unpack from the asar -- but it requires **Node >= 22.13, which means
-Electron >= 35**. Don't drop the Electron major below that. Writes go straight
+The driver is `better-sqlite3-multiple-ciphers` -- chosen over `node:sqlite`
+because node's built-in has no cipher support. Its N-API prebuilds for
+win/mac/linux ship in the package, so there is **no `electron-rebuild` step**;
+the only packaging requirement is the `asarUnpack` entry for its `prebuilds/`
+folder in `package.json`. Every service imports `DatabaseSync` from
+`database/sqlite.ts`, the one place the driver is named (the type keeps the old
+driver's name so the services didn't change). Writes go straight
 to disk; there is no "save the database" step (the old `sql.js` build had to
 re-serialize the whole file on every mutation). Multi-statement writes go
 through `transaction()` in `database/schema.ts`, which is re-entrant because
@@ -39,7 +44,7 @@ npm run package      # electron-builder, produces installers in release/
 ## Architecture
 
 - `src/main/` — Electron main process: `main.ts` (window, IPC handlers,
-  auto-updater wiring), `database/` (`node:sqlite` schema + per-entity services),
+  auto-updater wiring), `database/` (SQLite schema + per-entity services),
   `chat/` (prompt composition, Ollama and Chatterbox HTTP clients; see below), `dbLocation.ts` (relocatable SQLite
   file), `images.ts` (native file picker for portraits, copies into
   `userData/images/`).
@@ -274,6 +279,61 @@ Templates and stop phrases currently live as constants in
 layer lands. `chat:previewSystemPrompt` is a temporary IPC handler for
 inspecting the assembled prompt without a model running -- remove it once the
 debug console exists.
+
+## App encryption and the hidden-items privacy screen
+
+Two separate features with two separate secrets; don't conflate them.
+
+**App encryption** is optional and **off by default**. The user turns it on in
+Settings -> Security with a password (4-128 chars, longer recommended); there is
+deliberately no flag anywhere saying it is on -- the database file is the source
+of truth (`isDatabaseEncrypted` checks for the plain SQLite header), so the
+app can decide whether to ask for a password before it has opened anything.
+When on, the database is encrypted page-by-page by the driver (SQLCipher
+compatible; the password goes through SQLCipher's own PBKDF2, so nothing about
+the key lives outside the file) and the portrait and TTS files are encrypted
+with AES-256-GCM under a random key stored *inside* the encrypted database
+(`app_secrets`), so changing the password never re-encrypts files. A forgotten
+password is unrecoverable by design: no escrow, no reset.
+
+- `appEncryption.ts` enables, changes, and disables encryption in place. WAL
+  cannot be rekeyed, so it drops to `journal_mode = DELETE` around each rekey.
+  Enable encrypts the *files* before rekeying the database, so a crash leaves a
+  state `initFileEncryption` and `readLibraryFile` both tolerate (mixed
+  encrypted/plain files; a leftover key row on a plain DB means "finish turning
+  it off").
+- `fileCrypto.ts` owns the file format (`RPENC1` magic + IV + tag + ciphertext)
+  and every read goes through `readLibraryFile`, which decrypts only when the
+  magic is present. Anything that writes or copies into `images/` or `tts/`
+  must call `protectLibraryFile` afterward, or new files land in plaintext.
+  The `rpimage://` handler decrypts on the fly and implements `Range` itself
+  (`<audio>` seeks with it).
+- Launch gate: before `initDatabase`, `main.ts` checks `isDatabaseEncrypted`
+  and, if so, shows `unlockWindow.ts` -- a standalone window with its own
+  preload, since no services or IPC handlers exist yet. Nothing else (services,
+  retention timer, Ollama/Chatterbox auto-launch) starts until it resolves.
+  `startupComplete` stops the unlock window closing from tripping
+  `window-all-closed`.
+- The app never keeps the password after unlock; "current password" checks open
+  a throwaway second connection (`verifyPassword`).
+- This protects data at rest only. Prompts still reach Ollama in plaintext, and
+  Chatterbox's own `reference_audio/` folder is outside the app's control.
+
+**Hidden items** (characters, personas, world books, scenarios) are a **privacy
+screen only**: `is_hidden` plus a PIN, no cryptography. `SecurityService` is
+just a scrypt-hashed PIN and an in-memory unlocked flag (reset every launch);
+main-process handlers filter hidden rows while locked, and hiding/unhiding
+requires the PIN to have been entered. The PIN is independent of the encryption
+password and is seeded as `1234` on a fresh database. There is no PIN reset.
+
+Older versions encrypted each hidden row's text under a PIN-derived key
+(`v1:` ciphertext). `database/legacyHiddenDecrypt.ts` is the only code that
+still knows that format: on first launch after upgrade it decrypts every such
+value once, using the default PIN silently if that still matches, otherwise
+asking for it, and records completion in SQLite's `user_version`. It leaves
+values that merely start with `v1:` but don't authenticate alone. That module,
+its call in `main.ts`, and the `key_salt` column are safe to delete once no
+install can still hold the old format.
 
 ## Release pipeline
 
