@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { getEffectiveDbPath } from './dbLocation';
+import { getEffectiveDbPath, getLegacyLibraryDir, isUnderDir } from './dbLocation';
 import { protectLibraryFile } from './fileCrypto';
 
 /** Spoken clips live beside the active database, same as portraits. */
@@ -9,10 +9,15 @@ export function getTtsDir(): string {
   return path.join(path.dirname(getEffectiveDbPath()), 'tts');
 }
 
+/** Every folder that can hold a clip this database references: the current one, plus the
+ * pre-RolePlaymate_Data `userData/tts` when old clips are still sitting there. */
+export function getTtsLibraryDirs(): string[] {
+  const legacy = getLegacyLibraryDir('tts');
+  return legacy ? [getTtsDir(), legacy] : [getTtsDir()];
+}
+
 export function isTtsLibraryPath(filePath: string): boolean {
-  const dir = getTtsDir();
-  const resolved = path.resolve(filePath);
-  return resolved === dir || resolved.startsWith(dir + path.sep);
+  return getTtsLibraryDirs().some((dir) => isUnderDir(filePath, dir));
 }
 
 /** Best-effort unlink -- an orphaned WAV is wasted disk, not a correctness problem. */

@@ -84,6 +84,16 @@ export function getPackagedAppConfigPath(): string {
   return path.join(app.getPath('appData'), 'roleplaymate', 'app-config.json');
 }
 
+// The db always lives inside its own app-named subfolder, both at the default install location
+// and anywhere it's relocated to -- never as a bare file whose generic `images`/`tts` siblings
+// would land directly in a shared parent folder and silently mix with another app's
+// identically-named folders (two apps' databases relocated into one synced "databases" folder).
+// Suffixed `_Data` rather than plain `RolePlaymate` because at the default location this nests
+// inside userData, which Electron already names after the app (`app.setName('roleplaymate')`),
+// and `roleplaymate/RolePlaymate/` would be a redundant same-named parent/child pair.
+export const DB_SUBFOLDER = 'RolePlaymate_Data';
+const DB_FILENAME = 'roleplaymate.db';
+
 /** Where the installed app would open its database -- used to keep dev from sharing it. */
 export function getPackagedConfiguredDbPath(): string | null {
   if (app.isPackaged) return null;
@@ -91,12 +101,18 @@ export function getPackagedConfiguredDbPath(): string | null {
   if (packagedConfig.dbPath?.trim()) {
     return normalizeDbPath(packagedConfig.dbPath);
   }
-  return normalizeDbPath(path.join(app.getPath('appData'), 'roleplaymate', 'roleplaymate.db'));
+  return normalizeDbPath(path.join(app.getPath('appData'), 'roleplaymate', DB_SUBFOLDER, DB_FILENAME));
 }
 
 export function isPackagedDatabasePath(dbPath: string): boolean {
   const packagedPath = getPackagedConfiguredDbPath();
-  return packagedPath !== null && normalizeDbPath(dbPath) === packagedPath;
+  if (packagedPath === null) return false;
+  const candidate = normalizeDbPath(dbPath);
+  if (candidate === packagedPath) return true;
+  // Until the installed app has run once and migrated, its default database is still the old
+  // flat file -- dev must not adopt that one either.
+  const packagedLegacyPath = normalizeDbPath(path.join(app.getPath('appData'), 'roleplaymate', DB_FILENAME));
+  return candidate === packagedLegacyPath;
 }
 
 /** Dev must not open the packaged app's database. Reset to the dev default if it does. */
@@ -117,19 +133,120 @@ export function enforceDevDatabaseIsolation(): boolean {
 }
 
 export function getDefaultDbPath(): string {
-  return path.join(app.getPath('userData'), 'roleplaymate.db');
+  return path.join(app.getPath('userData'), DB_SUBFOLDER, DB_FILENAME);
 }
 
-function copySiblingDirBesideDatabase(fromDbPath: string, toDbPath: string, dirname: string): void {
-  const fromDir = path.join(path.dirname(fromDbPath), dirname);
-  const toDir = path.join(path.dirname(toDbPath), dirname);
-  if (!fs.existsSync(fromDir) || fs.existsSync(toDir)) return;
-  fs.cpSync(fromDir, toDir, { recursive: true });
+/** Where the db file lives when relocated into the given parent folder -- always nested under
+ * DB_SUBFOLDER, same as the default location, so the structure is guaranteed by construction
+ * rather than depending on the user organising a subfolder themselves. */
+export function dbPathInsideFolder(parentFolder: string): string {
+  return path.join(parentFolder, DB_SUBFOLDER, DB_FILENAME);
 }
 
-function copyLibraryBesideDatabase(fromDbPath: string, toDbPath: string): void {
-  copySiblingDirBesideDatabase(fromDbPath, toDbPath, 'images');
-  copySiblingDirBesideDatabase(fromDbPath, toDbPath, 'tts');
+/** Before DB_SUBFOLDER existed the default database was a bare file in userData. */
+function getLegacyDefaultDbPath(): string {
+  return path.join(app.getPath('userData'), DB_FILENAME);
+}
+
+/**
+ * One-time upgrade for installs still on the old flat default (`userData/roleplaymate.db`):
+ * moves the database and its WAL/SHM sidecars into `userData/RolePlaymate_Data/`. Must run
+ * before anything opens a connection.
+ *
+ * Nothing here can lose data:
+ * - Only renames, never copy-then-delete, so a file is at exactly one of the two locations at
+ *   every instant. A rename within one folder tree is atomic.
+ * - It refuses to overwrite: if the nested database already exists, or any destination file
+ *   does, it leaves everything where it is (see the two guards below).
+ * - The sidecars move BEFORE the main file, so an interrupted run leaves the database at its
+ *   old path (still the trigger for re-running this) with, at worst, its WAL already beside
+ *   where it is going -- which is where SQLite will look for it once the database follows.
+ *   The other order could strand a WAL holding committed pages with no database to apply to.
+ * - On any failure the renames already made are undone, then the error propagates so startup
+ *   stops with a dialog instead of opening a new, empty database at the nested path.
+ *
+ * Existing portraits and spoken clips are deliberately NOT moved: their rows store absolute
+ * paths that keep working where they are (see getLegacyLibraryDir); only new files land in the
+ * nested folder.
+ */
+export function migrateLegacyDefaultDbLocation(): void {
+  const legacyPath = getLegacyDefaultDbPath();
+  const configured = readConfig().dbPath?.trim();
+  // A config that explicitly names the flat default file (e.g. "Use Existing File…" pointed at
+  // it) is the same install and gets the same migration; the override is dropped once it's moved.
+  const pointsAtLegacy = !!configured && normalizeDbPath(configured) === normalizeDbPath(legacyPath);
+  if (!isUsingDefaultLocation() && !pointsAtLegacy) return;
+  if (!fs.existsSync(legacyPath)) return;
+
+  const newPath = getDefaultDbPath();
+  if (fs.existsSync(newPath)) {
+    // Both exist -- e.g. an older build was run after upgrading and made a fresh flat database.
+    // Which one is "real" isn't something to guess at; leave both alone.
+    console.warn(
+      `Not migrating ${legacyPath}: ${newPath} already exists. Both files were left untouched.`
+    );
+    return;
+  }
+
+  const moves = ['-wal', '-shm', ''].map((suffix) => ({
+    from: legacyPath + suffix,
+    to: newPath + suffix,
+  }));
+  const pending = moves.filter((move) => fs.existsSync(move.from));
+  const blocked = pending.find((move) => fs.existsSync(move.to));
+  if (blocked) {
+    throw new Error(
+      `Can't move the database into ${path.dirname(newPath)}: ${blocked.to} already exists. ` +
+        'Nothing was changed.'
+    );
+  }
+
+  if (pointsAtLegacy) {
+    // Before the moves: if we crash in between, the next launch is a plain default-location
+    // migration rather than an override pointing at a file that is no longer there.
+    const config = readConfig();
+    delete config.dbPath;
+    writeConfig(config);
+  }
+
+  fs.mkdirSync(path.dirname(newPath), { recursive: true });
+  const done: typeof moves = [];
+  try {
+    for (const move of pending) {
+      fs.renameSync(move.from, move.to);
+      done.push(move);
+    }
+  } catch (error) {
+    for (const move of done.reverse()) {
+      try {
+        fs.renameSync(move.to, move.from);
+      } catch {
+        // Best effort. The next launch's guards see the remaining state and fail loudly.
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Portraits and spoken clips that older versions wrote to `userData/images` and `userData/tts`
+ * (siblings of the flat default database). Their rows keep pointing there, so those folders
+ * stay part of the library alongside the nested ones: served, encrypted/decrypted, and
+ * deletable exactly like the current folders. Only meaningful while on the default location --
+ * a relocated install has its own folders, which the path migrations fold into the new
+ * location one referenced file at a time. Null when there is nothing to include.
+ */
+export function getLegacyLibraryDir(name: 'images' | 'tts'): string | null {
+  if (!isUsingDefaultLocation()) return null;
+  const dir = path.join(app.getPath('userData'), name);
+  return fs.existsSync(dir) ? dir : null;
+}
+
+/** True when `filePath` is `dir` itself or anywhere beneath it. */
+export function isUnderDir(filePath: string, dir: string): boolean {
+  const normalizedPath = normalizeDbPath(filePath);
+  const normalizedDir = normalizeDbPath(dir);
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(normalizedDir + path.sep);
 }
 
 /** The database file the app will actually load on startup: a user-chosen location, or the default. */
@@ -162,7 +279,10 @@ export function setDbPath(newPath: string): void {
   if (!fs.existsSync(newPath) && fs.existsSync(currentPath)) {
     fs.mkdirSync(path.dirname(newPath), { recursive: true });
     fs.copyFileSync(currentPath, newPath);
-    copyLibraryBesideDatabase(currentPath, newPath);
+    // The portraits and clips are NOT copied here as whole folders: the old folder can hold
+    // another app's files (that is the collision this layout exists to prevent), and copying it
+    // would carry them into the new one. The path migrations run at the next launch instead and
+    // copy exactly the files this database's rows reference, from wherever those rows point.
     // Defensive: a stale sidecar left beside the destination by some earlier crash would be
     // replayed against our freshly copied file and corrupt it. The copy is already complete
     // on its own, so anything sitting there is garbage.

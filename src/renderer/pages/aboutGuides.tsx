@@ -70,16 +70,15 @@ export const ABOUT_TRACKS: AboutTrack[] = [
                   localhost; changes apply immediately.
                 </>,
                 <>
-                  Pick the Ollama folder once (the one with <code>ollama.exe</code>) and the Chatterbox
-                  TTS Server folder (the one with <code>start.bat</code>). RolePlaymate starts each on
-                  launch if that host isn&apos;t reachable. Stop on that page shuts the local server
-                  down. Closing RolePlaymate does not.
+                  Start / Stop Ollama and Chatterbox, unload models, and see GPU/CPU load in{' '}
+                  <strong>Hardpoint</strong>. RolePlaymate no longer starts those services on
+                  launch.
                 </>,
               ]}
             />
           </>
         ),
-        pageLink: { to: '/settings?tab=servers', label: 'Settings' },
+        pageLink: { to: '/hardpoint', label: 'Hardpoint' },
       },
       {
         kicker: 'Optional',

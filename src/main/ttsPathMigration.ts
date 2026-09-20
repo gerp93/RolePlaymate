@@ -1,19 +1,9 @@
 import type { DatabaseSync } from './database/sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getTtsDir } from './ttsAudio';
+import { getTtsDir, getTtsLibraryDirs } from './ttsAudio';
+import { isUnderDir } from './dbLocation';
 import { protectLibraryFile } from './fileCrypto';
-
-function normalizePath(filePath: string): string {
-  const resolved = path.resolve(filePath.trim());
-  return process.platform === 'win32' ? path.win32.normalize(resolved) : path.normalize(resolved);
-}
-
-function isUnderDir(filePath: string, dir: string): boolean {
-  const normalizedPath = normalizePath(filePath);
-  const normalizedDir = normalizePath(dir);
-  return normalizedPath === normalizedDir || normalizedPath.startsWith(normalizedDir + path.sep);
-}
 
 interface TtsRef {
   table: 'messages' | 'message_variants';
@@ -39,20 +29,22 @@ function collectTtsRefs(db: DatabaseSync): TtsRef[] {
 }
 
 /**
- * Spoken-clip paths must live under the tts folder beside the active database.
- * Relocating the database copies that folder but leaves absolute paths on message
- * rows pointing at the old location -- rewrite them (and copy a leftover file in)
- * so Play and delete still hit the WAV that moved with the db.
+ * Spoken-clip paths must live in one of the tts library folders: the one beside the active
+ * database, or -- on the default location -- the pre-RolePlaymate_Data `userData/tts`, whose
+ * clips are left exactly where they are. Relocating the database leaves absolute paths on
+ * message rows pointing at the old location -- copy each referenced file in (the original is
+ * never touched) and rewrite the row so Play and delete hit the copy that travels with the db.
  */
 export function migrateTtsPathsToCanonicalDir(db: DatabaseSync): { updated: number; missing: number } {
   const canonicalDir = getTtsDir();
+  const libraryDirs = getTtsLibraryDirs();
   fs.mkdirSync(canonicalDir, { recursive: true });
 
   let updated = 0;
   let missing = 0;
 
   for (const ref of collectTtsRefs(db)) {
-    if (isUnderDir(ref.audioPath, canonicalDir)) continue;
+    if (libraryDirs.some((dir) => isUnderDir(ref.audioPath, dir))) continue;
 
     const fileName = path.basename(ref.audioPath);
     const canonicalPath = path.join(canonicalDir, fileName);

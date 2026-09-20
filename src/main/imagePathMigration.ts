@@ -2,19 +2,9 @@ import type { DatabaseSync } from './database/sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { getImagesDir } from './images';
+import { getImagesDir, getImageLibraryDirs } from './images';
+import { isUnderDir } from './dbLocation';
 import { protectLibraryFile } from './fileCrypto';
-
-function normalizePath(filePath: string): string {
-  const resolved = path.resolve(filePath.trim());
-  return process.platform === 'win32' ? path.win32.normalize(resolved) : path.normalize(resolved);
-}
-
-function isUnderDir(filePath: string, dir: string): boolean {
-  const normalizedPath = normalizePath(filePath);
-  const normalizedDir = normalizePath(dir);
-  return normalizedPath === normalizedDir || normalizedPath.startsWith(normalizedDir + path.sep);
-}
 
 /** Old layout: portraits lived under packaged userData even when the db lived elsewhere. */
 function getPackagedLegacyImagesDir(): string {
@@ -61,20 +51,23 @@ function updateImagePath(db: DatabaseSync, ref: ImageRef, canonicalPath: string)
 }
 
 /**
- * Every portrait path must live under the images folder beside the active database.
- * Rewrites stale absolute paths and, in the packaged app only, may copy files out of the
- * legacy userData/images layout into the db-adjacent folder.
+ * Every portrait path must live in one of the image library folders: the one beside the active
+ * database, or -- on the default location -- the pre-RolePlaymate_Data `userData/images`, whose
+ * files are left exactly where they are. Anything else (a database relocated from elsewhere)
+ * gets a copy in the current folder and its row rewritten; the original is never touched. In
+ * the packaged app only, files may also be lifted out of the legacy userData/images layout.
  */
 export function migrateImagePathsToCanonicalDir(db: DatabaseSync): { updated: number; missing: number } {
   const canonicalDir = getImagesDir();
   fs.mkdirSync(canonicalDir, { recursive: true });
+  const libraryDirs = getImageLibraryDirs();
   const importSources = getAllowedImportSources();
 
   let updated = 0;
   let missing = 0;
 
   for (const ref of collectImageRefs(db)) {
-    if (isUnderDir(ref.imagePath, canonicalDir)) continue;
+    if (libraryDirs.some((dir) => isUnderDir(ref.imagePath, dir))) continue;
 
     const fileName = path.basename(ref.imagePath);
     const canonicalPath = path.join(canonicalDir, fileName);
