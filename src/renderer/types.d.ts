@@ -59,6 +59,8 @@ import {
 import { HardwareSnapshot } from '../shared/types/hardware';
 import { ImageCrop, ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 
+type EncryptionResult = { ok: true; enabled: boolean } | { ok: false; error: string };
+
 declare global {
   interface Window {
     electronAPI: {
@@ -386,6 +388,12 @@ declare global {
           version?: string;
           message?: string;
         }>;
+      };
+      encryption: {
+        getStatus: () => Promise<{ enabled: boolean }>;
+        enable: (password: string) => Promise<EncryptionResult>;
+        changePassword: (currentPassword: string, newPassword: string) => Promise<EncryptionResult>;
+        disable: (currentPassword: string) => Promise<EncryptionResult>;
       };
       security: {
         unlock: (pin: string) => Promise<boolean>;

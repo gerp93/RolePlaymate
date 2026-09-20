@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from './dbLocation';
+import { protectLibraryFile } from './fileCrypto';
 
 /** Spoken clips live beside the active database, same as portraits. */
 export function getTtsDir(): string {
@@ -29,6 +30,7 @@ export function writeTtsWav(bytes: Buffer): string {
   fs.mkdirSync(dir, { recursive: true });
   const destPath = path.join(dir, `${uuidv4()}.wav`);
   fs.writeFileSync(destPath, bytes);
+  protectLibraryFile(destPath);
   return destPath;
 }
 

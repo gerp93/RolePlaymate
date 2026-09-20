@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 
+type EncryptionResult = { ok: true; enabled: boolean } | { ok: false; error: string };
+
 contextBridge.exposeInMainWorld('electronAPI', {
   characters: {
     getAll: () => ipcRenderer.invoke('characters:getAll'),
@@ -347,6 +349,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   updates: {
     check: () => ipcRenderer.invoke('updates:check'),
+  },
+
+  encryption: {
+    getStatus: () => ipcRenderer.invoke('encryption:getStatus') as Promise<{ enabled: boolean }>,
+    enable: (password: string) =>
+      ipcRenderer.invoke('encryption:enable', password) as Promise<EncryptionResult>,
+    changePassword: (currentPassword: string, newPassword: string) =>
+      ipcRenderer.invoke('encryption:changePassword', currentPassword, newPassword) as Promise<EncryptionResult>,
+    disable: (currentPassword: string) =>
+      ipcRenderer.invoke('encryption:disable', currentPassword) as Promise<EncryptionResult>,
   },
 
   security: {

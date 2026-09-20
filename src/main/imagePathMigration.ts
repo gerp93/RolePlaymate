@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import { getImagesDir } from './images';
+import { protectLibraryFile } from './fileCrypto';
 
 function normalizePath(filePath: string): string {
   const resolved = path.resolve(filePath.trim());
@@ -95,6 +96,7 @@ export function migrateImagePathsToCanonicalDir(db: DatabaseSync): { updated: nu
       if (!app.isPackaged && isUnderDir(candidate, getPackagedLegacyImagesDir())) continue;
 
       fs.copyFileSync(candidate, canonicalPath);
+      protectLibraryFile(canonicalPath);
       updateImagePath(db, ref, canonicalPath);
       updated++;
       copied = true;

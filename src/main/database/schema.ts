@@ -192,6 +192,15 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
       key_salt BLOB
     );
 
+    -- Present only while whole-app encryption is on (or was interrupted mid-way): the random
+    -- key that encrypts the portrait/audio files beside the database. It lives here so the
+    -- database's own encryption protects it, and so changing the password never has to
+    -- re-encrypt those files -- see appEncryption.ts.
+    CREATE TABLE IF NOT EXISTS app_secrets (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      file_key BLOB NOT NULL
+    );
+
     -- One row (id = 1), one nullable column per stop-phrase setting -- see
     -- promptSettingsService.ts. NULL means "use the built-in default from promptTemplates.ts".
     -- The 7 system-prompt templates themselves used to live here as nullable TEXT columns too,

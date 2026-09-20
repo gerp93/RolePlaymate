@@ -2,6 +2,7 @@ import type { DatabaseSync } from './database/sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getTtsDir } from './ttsAudio';
+import { protectLibraryFile } from './fileCrypto';
 
 function normalizePath(filePath: string): string {
   const resolved = path.resolve(filePath.trim());
@@ -64,6 +65,7 @@ export function migrateTtsPathsToCanonicalDir(db: DatabaseSync): { updated: numb
 
     if (fs.existsSync(ref.audioPath)) {
       fs.copyFileSync(ref.audioPath, canonicalPath);
+      protectLibraryFile(canonicalPath);
       db.prepare(`UPDATE ${ref.table} SET tts_audio_path = ? WHERE id = ?`).run(canonicalPath, ref.id);
       updated++;
       continue;
