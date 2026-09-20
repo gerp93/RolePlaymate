@@ -1,0 +1,29 @@
+.hardpoint-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 72px);
+  min-height: 420px;
+}
+
+.hardpoint-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hardpoint-page-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hardpoint-frame {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: var(--color-bg, #111);
+}

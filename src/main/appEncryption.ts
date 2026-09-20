@@ -7,8 +7,8 @@ import {
   generateFileKey,
   setFileKey,
 } from './fileCrypto';
-import { getImagesDir } from './images';
-import { getTtsDir } from './ttsAudio';
+import { getImageLibraryDirs } from './images';
+import { getTtsLibraryDirs } from './ttsAudio';
 
 /**
  * Optional whole-app encryption. Off by default; the user turns it on from Settings with a
@@ -57,6 +57,21 @@ export function verifyPassword(dbPath: string, password: string): boolean {
   }
 }
 
+/** Every library folder, not just the current ones: portraits and clips from before the
+ * RolePlaymate_Data layout still live in `userData/images` and `userData/tts`, and skipping them
+ * on disable would strand encrypted files that nothing could read once the key row is gone. */
+function libraryDirs(): string[] {
+  return [...getImageLibraryDirs(), ...getTtsLibraryDirs()];
+}
+
+function encryptLibrary(key: Buffer): void {
+  for (const dir of libraryDirs()) encryptDirectory(dir, key);
+}
+
+function decryptLibrary(key: Buffer): void {
+  for (const dir of libraryDirs()) decryptDirectory(dir, key);
+}
+
 function readFileKey(db: DatabaseSync): Buffer | null {
   const row = db.prepare('SELECT file_key FROM app_secrets WHERE id = 1').get();
   return row ? Buffer.from(row.file_key as Uint8Array) : null;
@@ -79,15 +94,13 @@ export function initFileEncryption(db: DatabaseSync, dbEncrypted: boolean): void
     setFileKey(key);
     // Cheap when nothing needs doing (a directory listing and a 8-byte prefix check per file);
     // finishes an enable that was interrupted after the database was already encrypted.
-    encryptDirectory(getImagesDir(), key);
-    encryptDirectory(getTtsDir(), key);
+    encryptLibrary(key);
     return;
   }
 
   setFileKey(null);
   if (existing) {
-    decryptDirectory(getImagesDir(), existing);
-    decryptDirectory(getTtsDir(), existing);
+    decryptLibrary(existing);
     db.prepare('DELETE FROM app_secrets WHERE id = 1').run();
   }
 }
@@ -115,8 +128,7 @@ export function enableEncryption(db: DatabaseSync, password: string): void {
     db.prepare('INSERT OR REPLACE INTO app_secrets (id, file_key) VALUES (1, ?)').run(key);
   });
   setFileKey(key);
-  encryptDirectory(getImagesDir(), key);
-  encryptDirectory(getTtsDir(), key);
+  encryptLibrary(key);
 
   for (const pragma of SQLCIPHER_PRAGMAS) db.pragma(pragma);
   rekey(db, password);
@@ -137,8 +149,7 @@ export function disableEncryption(db: DatabaseSync, currentPassword: string): vo
 
   const key = readFileKey(db);
   if (key) {
-    decryptDirectory(getImagesDir(), key);
-    decryptDirectory(getTtsDir(), key);
+    decryptLibrary(key);
   }
   rekey(db, '');
   db.prepare('DELETE FROM app_secrets WHERE id = 1').run();

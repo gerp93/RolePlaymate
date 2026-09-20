@@ -31,6 +31,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/prompt-tuning', label: 'Prompt Tuning' },
       { to: '/model-tuning', label: 'Model Tuning' },
+      { to: '/hardpoint', label: 'Hardpoint' },
     ],
   },
 ];
@@ -50,6 +51,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   // here which relies on that padding for breathing room around a centered form/table.
   const { pathname } = useLocation();
   const isChatRoute = pathname.startsWith('/chat');
+  const isHardpointRoute = pathname.startsWith('/hardpoint');
 
   return (
     <div className="app-root">
@@ -112,7 +114,11 @@ export default function Layout({ children }: { children: ReactNode }) {
           {hiddenUnlocked ? '🔓' : '🔒'}
         </button>
       </nav>
-      <main className={`main-content${isChatRoute ? ' main-content-chat' : ''}`}>{children}</main>
+      <main
+        className={`main-content${isChatRoute || isHardpointRoute ? ' main-content-chat' : ''}`}
+      >
+        {children}
+      </main>
       {pinModalOpen && <PinModal onClose={() => setPinModalOpen(false)} />}
     </div>
   );

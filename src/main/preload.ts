@@ -92,7 +92,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbLocation: {
     get: () => ipcRenderer.invoke('dbLocation:get'),
     browseExisting: () => ipcRenderer.invoke('dbLocation:browseExisting'),
-    browseNew: () => ipcRenderer.invoke('dbLocation:browseNew'),
+    browseParentFolder: () => ipcRenderer.invoke('dbLocation:browseParentFolder'),
     set: (newPath: string) => ipcRenderer.invoke('dbLocation:set', newPath),
     resetToDefault: () => ipcRenderer.invoke('dbLocation:resetToDefault'),
     showInFolder: () => ipcRenderer.invoke('dbLocation:showInFolder'),
@@ -104,27 +104,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('ollamaHost:resetToDefault'),
   },
 
-  ollamaLaunch: {
-    get: () => ipcRenderer.invoke('ollamaLaunch:get'),
-    choose: () => ipcRenderer.invoke('ollamaLaunch:choose'),
-    clear: () => ipcRenderer.invoke('ollamaLaunch:clear'),
-    startNow: () => ipcRenderer.invoke('ollamaLaunch:startNow'),
-    status: () => ipcRenderer.invoke('ollamaLaunch:status'),
-    stop: () => ipcRenderer.invoke('ollamaLaunch:stop'),
+  hardpoint: {
+    open: () => ipcRenderer.invoke('hardpoint:open'),
   },
 
   chatterboxHost: {
     get: () => ipcRenderer.invoke('chatterboxHost:get'),
     set: (host: string) => ipcRenderer.invoke('chatterboxHost:set', host),
     resetToDefault: () => ipcRenderer.invoke('chatterboxHost:resetToDefault'),
-  },
-
-  chatterboxLaunch: {
-    get: () => ipcRenderer.invoke('chatterboxLaunch:get'),
-    choose: () => ipcRenderer.invoke('chatterboxLaunch:choose'),
-    clear: () => ipcRenderer.invoke('chatterboxLaunch:clear'),
-    startNow: () => ipcRenderer.invoke('chatterboxLaunch:startNow'),
-    stop: () => ipcRenderer.invoke('chatterboxLaunch:stop'),
   },
 
   narratorVoice: {

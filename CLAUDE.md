@@ -46,8 +46,9 @@ npm run package      # electron-builder, produces installers in release/
 - `src/main/` — Electron main process: `main.ts` (window, IPC handlers,
   auto-updater wiring), `database/` (SQLite schema + per-entity services),
   `chat/` (prompt composition, Ollama and Chatterbox HTTP clients; see below), `dbLocation.ts` (relocatable SQLite
-  file), `images.ts` (native file picker for portraits, copies into
-  `userData/images/`).
+  file, always inside `RolePlaymate_Data/`; see "Data folder layout"),
+  `images.ts` (native file picker for portraits, copies into the `images/`
+  folder beside the database).
 - `src/renderer/` — React UI (Vite), `pages/` for routed screens,
   `components/` for the character/field editor pieces, `utils/themes.ts` for
   the VisualAssault theme switcher.
@@ -91,9 +92,9 @@ reaches a model -- `{{user}}` resolves to the selected persona's name, or
 `chat/ollamaClient.ts` is a thin `fetch` client against the Ollama HTTP API --
 no dependency, no model in-process. It streams `/api/chat` (the source never
 did) and keeps a non-streaming path for the short internal calls where partial
-output is useless. Settings can store the Ollama install folder in
-`app-config.json` and RolePlaymate starts it on launch if the host isn't
-reachable; Settings Stop shuts it down. Quit does not stop it. `chat/chatSession.ts` holds per-conversation
+output is useless. Settings stores the Ollama HTTP URL only. Start / Stop /
+unload live in the sibling **Hardpoint** app (Tuning → Hardpoint embeds it);
+RolePlaymate does not auto-start Ollama on launch. `chat/chatSession.ts` holds per-conversation
 state in a Map; the source used module globals, which is why it could only ever
 have one live conversation.
 
@@ -131,11 +132,9 @@ Optional, same pattern as Ollama: a thin `fetch` client
 (https://github.com/devnen/Chatterbox-TTS-Server, default
 `http://localhost:8004`). The app ships no voice model. Chat and the library
 stay fully usable when Chatterbox is absent -- a down server is silent, never a
-failed turn. Settings stores the Chatterbox install folder in `app-config.json`
-and RolePlaymate starts it on launch if the host isn't reachable (on Windows:
-`python_embedded\python.exe start.py --portable --nvidia-cu128 --verbose` when
-that portable tree exists, otherwise `start.bat` with the same flags). Settings
-Stop shuts it down. Quit does not stop it.
+failed turn. Settings stores the Chatterbox HTTP URL (and voice pickers). Start /
+Stop live in **Hardpoint** (Tuning → Hardpoint); RolePlaymate does not auto-start
+Chatterbox on launch.
 
 A character stores an optional `ttsVoice` (mode `predefined` | `clone` plus a
 filename). `predefined` is a stock file in Chatterbox's `voices/` folder;
@@ -311,7 +310,7 @@ password is unrecoverable by design: no escrow, no reset.
 - Launch gate: before `initDatabase`, `main.ts` checks `isDatabaseEncrypted`
   and, if so, shows `unlockWindow.ts` -- a standalone window with its own
   preload, since no services or IPC handlers exist yet. Nothing else (services,
-  retention timer, Ollama/Chatterbox auto-launch) starts until it resolves.
+  retention timer) starts until it resolves.
   `startupComplete` stops the unlock window closing from tripping
   `window-all-closed`.
 - The app never keeps the password after unlock; "current password" checks open
@@ -334,6 +333,45 @@ asking for it, and records completion in SQLite's `user_version`. It leaves
 values that merely start with `v1:` but don't authenticate alone. That module,
 its call in `main.ts`, and the `key_salt` column are safe to delete once no
 install can still hold the old format.
+
+## Data folder layout
+
+The database always lives in an app-named folder, `RolePlaymate_Data/`
+(underscore; not bare `RolePlaymate`, which would nest a same-named folder
+inside `userData`), at the default location and at any relocated one:
+`<parent>/RolePlaymate_Data/roleplaymate.db`, with `images/` and `tts/` as its
+siblings. Both are derived from the db file's directory (`getImagesDir`,
+`getTtsDir`), so they follow it. This exists because two apps' databases
+relocated into one shared folder (`P:\databases`) had their generic `images/`
+folders resolve to the same directory and mix. The standard is written up in
+KVG_Standards' `db-location-versioning.md` ("Data folder layout").
+
+- **Settings -> Database Location** picks a parent *folder*;
+  `dbPathInsideFolder` builds the nested path. "Use Existing File" still adopts
+  whatever file it is pointed at as-is.
+- **Old flat default install** (`userData/roleplaymate.db`):
+  `migrateLegacyDefaultDbLocation` moves the db and its `-wal`/`-shm` into
+  `userData/RolePlaymate_Data/` at startup, before anything reads the db path.
+  It only renames, never overwrites (both files present -> leaves both), moves
+  sidecars first, and rolls back and stops startup on failure rather than let
+  a fresh empty db appear. Do not weaken any of that.
+- **Existing portraits and clips are NOT moved.** Their rows hold absolute
+  paths into `userData/images` and `userData/tts`, which stay valid.
+  `getLegacyLibraryDir` makes those folders part of the library *while on the
+  default location*: `getImageLibraryDirs`/`getTtsLibraryDirs` are what the
+  `rpimage://` handler, path migrations, delete guards, and encrypt/decrypt
+  passes consult. Anything new that touches library files must use those, not
+  `getImagesDir`/`getTtsDir` alone -- the latter is only where new files are
+  written. (Missing this for encryption would leave legacy files encrypted with
+  no key after "disable".)
+- **Installs relocated by hand are left alone** -- the user chose that path and
+  its siblings may be shared with another app, so the app can't tell whose
+  files are whose. They move over by choosing a parent folder: relocation
+  copies only the files the database references (the path migrations do it at
+  next launch), never a whole `images/` folder, so another app's files can't
+  come along. The originals are left in place.
+- `app-config.json` and `main.log` stay at the `userData` root: the config has
+  to be findable before the db location is known.
 
 ## Release pipeline
 

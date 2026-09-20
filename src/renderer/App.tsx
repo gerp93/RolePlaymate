@@ -10,6 +10,7 @@ import PersonaDetail from './pages/PersonaDetail';
 import WorldBookList from './pages/WorldBookList';
 import WorldBookDetail from './pages/WorldBookDetail';
 import About from './pages/About';
+import Hardpoint from './pages/Hardpoint';
 import Layout from './components/Layout';
 import { ThemeProvider } from './context/ThemeContext';
 import { SecurityProvider } from './context/SecurityContext';
@@ -35,6 +36,7 @@ function App() {
               <Route path="/about" element={<About />} />
               <Route path="/prompt-tuning" element={<PromptSettings />} />
               <Route path="/model-tuning" element={<ModelTuning />} />
+              <Route path="/hardpoint" element={<Hardpoint />} />
             </Routes>
           </Layout>
         </Router>

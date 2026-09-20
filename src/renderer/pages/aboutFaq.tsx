@@ -17,9 +17,9 @@ export const ABOUT_FAQ: AboutFaqItem[] = [
     answer: (
       <>
         No for the library — characters, personas, world books, and images work without it. Yes for chat:
-        replies are generated through Ollama on your machine. You can pick the Ollama folder once under{' '}
-        <Link to="/settings?tab=servers">Settings → Chat Dependencies</Link> so RolePlaymate starts it on
-        launch if it isn&apos;t already running. Stop on that page shuts it down; closing the app does not.
+        replies are generated through Ollama on your machine. Start and stop Ollama from{' '}
+        <Link to="/hardpoint">Hardpoint</Link>. Set the server URL under{' '}
+        <Link to="/settings?tab=servers">Settings → Chat Dependencies</Link> if it is not the default.
       </>
     ),
   },

@@ -17,6 +17,10 @@ import {
 import {
   getEffectiveDbPath,
   getDefaultDbPath,
+  DB_SUBFOLDER,
+  dbPathInsideFolder,
+  migrateLegacyDefaultDbLocation,
+  isUnderDir,
   isUsingDefaultLocation,
   setDbPath,
   resetToDefaultDbPath,
@@ -27,13 +31,10 @@ import {
   isUsingDefaultOllamaHost,
   setOllamaHost,
   resetOllamaHost,
-  getOllamaLaunchDir,
-  setOllamaLaunchDir,
   getEffectiveChatterboxHost,
   isUsingDefaultChatterboxHost,
   setChatterboxHost,
   resetChatterboxHost,
-  getChatterboxLaunchDir,
   getNarratorVoice,
   setNarratorVoice,
   getCloneVoiceNames,
@@ -93,27 +94,12 @@ import {
   ChatterboxUnavailableError,
   DEFAULT_CHATTERBOX_HOST,
 } from './chat/chatterboxClient';
-import {
-  chooseOllamaLaunchDir,
-  detectDefaultOllamaLaunchDir,
-  forgetOllamaLaunchDir,
-  maybeStartOllamaOnAppLaunch,
-  resolveOllamaLaunchDir,
-  startOllamaFromDir,
-  stopOllama,
-} from './ollamaLaunch';
-import {
-  chooseChatterboxLaunchDir,
-  forgetChatterboxLaunchDir,
-  maybeStartChatterboxOnAppLaunch,
-  startChatterboxFromDir,
-  stopChatterbox,
-} from './chatterboxLaunch';
 import { textForSpeech } from '../shared/utils/ttsText';
 import { normalizeCloneVoices, stemFromVoiceName } from '../shared/utils/ttsPreview';
 import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
 import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudioRequest } from '../shared/types/tts';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
+import { openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
   chooseCharacterImage,
@@ -121,8 +107,9 @@ import {
   deleteCharacterImage,
   cloneCharacterImage,
   getImagesDir,
+  getImageLibraryDirs,
 } from './images';
-import { getTtsDir, isTtsLibraryPath, writeTtsWav, concatenateWavBuffers } from './ttsAudio';
+import { getTtsLibraryDirs, isTtsLibraryPath, writeTtsWav, concatenateWavBuffers } from './ttsAudio';
 import { getHardwareSnapshot } from './hardware';
 import { parseCharacterHtml, parseLorebookHtml, resolveLocalAvatarPath } from './htmlImport';
 import { parseLorebookJson } from './lorebookJsonImport';
@@ -356,12 +343,15 @@ function openDatabaseWithRecovery(password?: string): DatabaseSync {
       });
       return choice === 0 ? 'retry' : choice === 1 ? 'choose' : 'quit';
     },
-    pickNewPath: () =>
-      dialog.showSaveDialogSync({
-        title: 'Choose a database location',
-        defaultPath: getDefaultDbPath(),
-        filters: [{ name: 'RolePlaymate database', extensions: ['db'] }],
-      }) ?? null,
+    pickNewPath: () => {
+      const picked = dialog.showOpenDialogSync({
+        title: 'Choose a parent folder for the RolePlaymate database',
+        message: `A '${DB_SUBFOLDER}' folder will be created inside the folder you pick.`,
+        defaultPath: path.dirname(path.dirname(getDefaultDbPath())),
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      return picked && picked.length > 0 ? dbPathInsideFolder(picked[0]) : null;
+    },
     // setDbPath copies the current file to the new location when one exists there -- but the
     // path we're recovering from is by definition unreachable, so fs.existsSync on it just
     // returns false (it doesn't throw) and this adopts the new path outright, same as picking
@@ -849,17 +839,19 @@ const MIME_BY_EXTENSION: Record<string, string> = {
 app.whenReady().then(async () => {
   session.defaultSession.setSpellCheckerLanguages(['en-US']);
   enforceDevDatabaseIsolation();
+  // Before anything reads the db path or opens a connection -- including the encryption check
+  // below, which inspects the file. Throws (and so stops startup) rather than risk a fresh,
+  // empty database appearing at the new path; see the function for why that can't lose data.
+  migrateLegacyDefaultDbLocation();
   // The path is the whole opaque, percent-encoded remainder after `rpimage://` (see toImageUrl
   // in the renderer) -- resolved and re-checked against the images and tts directories rather
   // than trusted outright, since the request still originates from renderer-controlled code.
   protocol.handle('rpimage', (request) => {
     const encoded = request.url.slice('rpimage://'.length).replace(/\/+$/, '');
     const requested = path.resolve(decodeURIComponent(encoded));
-    const imagesDir = getImagesDir();
-    const ttsDir = getTtsDir();
-    const allowed =
-      (requested === imagesDir || requested.startsWith(imagesDir + path.sep)) ||
-      (requested === ttsDir || requested.startsWith(ttsDir + path.sep));
+    const allowed = [...getImageLibraryDirs(), ...getTtsLibraryDirs()].some((dir) =>
+      isUnderDir(requested, dir)
+    );
     if (!allowed) {
       return new Response('Forbidden', { status: 403 });
     }
@@ -955,8 +947,6 @@ app.whenReady().then(async () => {
   setupApplicationMenu();
   createWindow();
   startupComplete = true;
-  void maybeStartOllamaOnAppLaunch(ollamaClient);
-  void maybeStartChatterboxOnAppLaunch(chatterboxClient);
   setupAutoUpdater();
 
   app.on('activate', () => {
@@ -1426,14 +1416,18 @@ function registerIPCHandlers() {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle('dbLocation:browseNew', async () => {
+  // Picks a parent FOLDER, not a file: the database path is always built inside a
+  // RolePlaymate_Data subfolder of it, so its images/tts siblings can't land loose in a folder
+  // another app also uses.
+  ipcMain.handle('dbLocation:browseParentFolder', async () => {
     if (!mainWindow) return null;
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Choose where to store the RolePlaymate database',
-      defaultPath: 'roleplaymate.db',
-      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a parent folder for the RolePlaymate database',
+      message: `A '${DB_SUBFOLDER}' folder will be created inside the folder you pick, holding the database, portraits and spoken audio together.`,
+      properties: ['openDirectory', 'createDirectory'],
     });
-    return result.canceled ? null : result.filePath ?? null;
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return dbPathInsideFolder(result.filePaths[0]);
   });
 
   ipcMain.handle('dbLocation:set', (_, newPath: string) => {
@@ -1486,41 +1480,7 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('ollamaLaunch:get', () => {
-    const saved = getOllamaLaunchDir();
-    const suggested = detectDefaultOllamaLaunchDir();
-    return {
-      dir: saved,
-      suggestedDir: suggested,
-      effectiveDir: saved ?? suggested,
-    };
-  });
-
-  ipcMain.handle('ollamaLaunch:choose', () => chooseOllamaLaunchDir(mainWindow));
-
-  ipcMain.handle('ollamaLaunch:clear', () => {
-    forgetOllamaLaunchDir();
-    return { success: true };
-  });
-
-  ipcMain.handle('ollamaLaunch:startNow', async () => {
-    const dir = resolveOllamaLaunchDir();
-    if (!dir) {
-      return {
-        status: 'error' as const,
-        message: 'Choose an Ollama folder first (the one that contains ollama.exe).',
-      };
-    }
-    if (await ollamaClient.isReachable()) return { status: 'already-running' as const };
-    if (!getOllamaLaunchDir()) setOllamaLaunchDir(dir);
-    return startOllamaFromDir(dir);
-  });
-
-  ipcMain.handle('ollamaLaunch:status', async () => ({
-    reachable: await ollamaClient.isReachable(),
-  }));
-
-  ipcMain.handle('ollamaLaunch:stop', () => stopOllama(ollamaClient));
+  ipcMain.handle('hardpoint:open', () => openHardpoint());
 
   ipcMain.handle('chatterboxHost:get', () => ({
     host: getEffectiveChatterboxHost(),
@@ -1538,26 +1498,6 @@ function registerIPCHandlers() {
     resetChatterboxHost();
     return { success: true };
   });
-
-  ipcMain.handle('chatterboxLaunch:get', () => ({
-    dir: getChatterboxLaunchDir(),
-  }));
-
-  ipcMain.handle('chatterboxLaunch:choose', () => chooseChatterboxLaunchDir(mainWindow));
-
-  ipcMain.handle('chatterboxLaunch:clear', () => {
-    forgetChatterboxLaunchDir();
-    return { success: true };
-  });
-
-  ipcMain.handle('chatterboxLaunch:startNow', async () => {
-    const dir = getChatterboxLaunchDir();
-    if (!dir) return { status: 'error' as const, message: 'No Chatterbox folder is set.' };
-    if (await chatterboxClient.isReachable()) return { status: 'already-running' as const };
-    return startChatterboxFromDir(dir);
-  });
-
-  ipcMain.handle('chatterboxLaunch:stop', () => stopChatterbox(chatterboxClient));
 
   ipcMain.handle('narratorVoice:get', () => getNarratorVoice());
 

@@ -135,7 +135,7 @@ declare global {
       dbLocation: {
         get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string }>;
         browseExisting: () => Promise<string | null>;
-        browseNew: () => Promise<string | null>;
+        browseParentFolder: () => Promise<string | null>;
         set: (newPath: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
         showInFolder: () => Promise<{ success: boolean }>;
@@ -145,33 +145,15 @@ declare global {
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
       };
-      ollamaLaunch: {
-        get: () => Promise<{ dir: string | null; suggestedDir: string | null; effectiveDir: string | null }>;
-        choose: () => Promise<
-          { status: 'ok'; dir: string } | { status: 'cancelled' } | { status: 'error'; message: string }
+      hardpoint: {
+        open: () => Promise<
+          { status: 'ok' } | { status: 'error'; message: string }
         >;
-        clear: () => Promise<{ success: boolean }>;
-        startNow: () => Promise<
-          { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
-        >;
-        status: () => Promise<{ reachable: boolean }>;
-        stop: () => Promise<{ status: 'ok' } | { status: 'error'; message: string }>;
       };
       chatterboxHost: {
         get: () => Promise<ChatterboxHostInfo>;
         set: (host: string) => Promise<{ success: boolean }>;
         resetToDefault: () => Promise<{ success: boolean }>;
-      };
-      chatterboxLaunch: {
-        get: () => Promise<{ dir: string | null }>;
-        choose: () => Promise<
-          { status: 'ok'; dir: string } | { status: 'cancelled' } | { status: 'error'; message: string }
-        >;
-        clear: () => Promise<{ success: boolean }>;
-        startNow: () => Promise<
-          { status: 'ok' } | { status: 'already-running' } | { status: 'error'; message: string }
-        >;
-        stop: () => Promise<{ status: 'ok' } | { status: 'error'; message: string }>;
       };
       narratorVoice: {
         get: () => Promise<CharacterTtsVoice | null>;

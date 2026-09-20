@@ -2,14 +2,23 @@ import { dialog, BrowserWindow } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { getEffectiveDbPath } from './dbLocation';
+import { getEffectiveDbPath, getLegacyLibraryDir, isUnderDir } from './dbLocation';
 import { protectLibraryFile } from './fileCrypto';
 
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
-/** Portraits live beside the active database so dev and packaged installs never share a folder. */
+/** Portraits live beside the active database so dev and packaged installs never share a folder.
+ * That database sits inside its own RolePlaymate_Data folder, which is what keeps this folder
+ * from being shared with another app's. New files are always written here. */
 export function getImagesDir(): string {
   return path.join(path.dirname(getEffectiveDbPath()), 'images');
+}
+
+/** Every folder that can hold a portrait this database references: the current one, plus the
+ * pre-RolePlaymate_Data `userData/images` when old files are still sitting there. */
+export function getImageLibraryDirs(): string[] {
+  const legacy = getLegacyLibraryDir('images');
+  return legacy ? [getImagesDir(), legacy] : [getImagesDir()];
 }
 
 /** The extension the library will store this file under, rejecting anything that isn't an
@@ -95,7 +104,7 @@ export function cloneCharacterImage(imagePath: string): string | null {
  * swallowed rather than surfaced to the user. */
 export function deleteCharacterImage(imagePath: string | null): void {
   if (!imagePath) return;
-  if (!imagePath.startsWith(getImagesDir())) return;
+  if (!getImageLibraryDirs().some((dir) => isUnderDir(imagePath, dir))) return;
   try {
     fs.unlinkSync(imagePath);
   } catch {
