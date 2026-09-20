@@ -1,31 +1,32 @@
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase, type DatabaseSync } from './sqlite';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from '../dbLocation';
 import { CHAT_DDL } from './chatSchema';
 import { LOREBOOK_DDL } from './lorebookSchema';
-import { hashPin, generateSalt } from './securityService';
+import { hashPin } from './securityService';
 import { DEFAULT_TEMPLATES } from '../chat/promptTemplates';
 import { TEMPLATE_FIELD_KEYS } from '../../shared/types/promptTemplates';
 
 let dbInstance: DatabaseSync | null = null;
 
-export function initDatabase(dbPath?: string): DatabaseSync {
+/** `password` unlocks an encrypted database; omit it for a plain one. A wrong or missing
+ * password on an encrypted file throws (see `openDatabase`). */
+export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   dbPath = dbPath ?? getEffectiveDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  // Foreign keys are actually enforced here (unlike the old sql.js build, where the pragma
-  // read back as 0), so the ON DELETE CASCADE declarations below do real work and services
-  // no longer hand-roll cascade cleanup.
-  const db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: true });
+  // Foreign keys are enforced (openDatabase turns the pragma on), so the ON DELETE CASCADE
+  // declarations below do real work and services don't hand-roll cascade cleanup.
+  const db = openDatabase(dbPath, password);
 
   // WAL keeps writes incremental instead of rewriting the whole file. It creates `-wal` and
   // `-shm` sidecars next to the database; a clean close() checkpoints and removes them,
   // which is why relocating the database must close it first (see dbLocation.setDbPath).
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = NORMAL');
-  db.exec('PRAGMA busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
 
   dbInstance = db;
 
@@ -179,16 +180,24 @@ export function initDatabase(dbPath?: string): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_image_crops_image ON image_crops(image_id);
 
-    -- One row (id = 1): the salted hash of the "reveal hidden items" PIN, plus key_salt, used
-    -- to derive the AES-256 key that actually encrypts hidden characters/personas/lorebooks at
-    -- rest -- see securityService.ts. The PIN itself is never stored, and the verification
-    -- hash and the encryption key are deliberately derived with different salts, so neither
-    -- can be reconstructed from the other.
+    -- One row (id = 1): the salted hash of the Hidden Items PIN -- a privacy screen only, see
+    -- securityService.ts. key_salt is a leftover from the old per-row hidden-content
+    -- encryption: unused for new rows, and read only by legacyHiddenDecrypt.ts to upgrade
+    -- databases that still hold that ciphertext.
     CREATE TABLE IF NOT EXISTS app_security (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       pin_hash BLOB NOT NULL,
       pin_salt BLOB NOT NULL,
       key_salt BLOB
+    );
+
+    -- Present only while whole-app encryption is on (or was interrupted mid-way): the random
+    -- key that encrypts the portrait/audio files beside the database. It lives here so the
+    -- database's own encryption protects it, and so changing the password never has to
+    -- re-encrypt those files -- see appEncryption.ts.
+    CREATE TABLE IF NOT EXISTS app_secrets (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      file_key BLOB NOT NULL
     );
 
     -- One row (id = 1), one nullable column per stop-phrase setting -- see
@@ -307,7 +316,6 @@ export function initDatabase(dbPath?: string): DatabaseSync {
   migrateCharacterScenarioFieldToScenarios(db);
   migrateCharacterGreetingFieldToScenarios(db);
   seedDefaultPin(db);
-  backfillKeySalt(db);
   seedPromptFields(db);
 
   console.log('Database initialized at:', dbPath);
@@ -474,30 +482,16 @@ function migrateCharacterGreetingFieldToScenarios(db: DatabaseSync): void {
 }
 
 /** One-time seed: a fresh database (or one from before this feature existed) gets the
- * default PIN "1234" so the reveal-hidden toggle works out of the box. Safe to call on
- * every startup -- it's a no-op once the row exists. */
+ * default PIN "1234" so the Hidden Items lock works out of the box. It's only a privacy screen,
+ * so a well-known default is fine until the user changes it in Settings. Safe to call on every
+ * startup -- it's a no-op once the row exists. `key_salt` stays NULL: it only ever mattered to
+ * the old per-row encryption, and legacyHiddenDecrypt.ts reads it from pre-existing rows. */
 function seedDefaultPin(db: DatabaseSync): void {
   const row = db.prepare(`SELECT id FROM app_security WHERE id = 1`).get();
   if (row) return;
 
   const { hash, salt } = hashPin('1234');
-  db.prepare(`INSERT INTO app_security (id, pin_hash, pin_salt, key_salt) VALUES (1, ?, ?, ?)`).run(
-    hash,
-    salt,
-    generateSalt()
-  );
-}
-
-/** One-time upgrade path: a database from before real encryption existed has an app_security
- * row (from seedDefaultPin's earlier, key_salt-less version) with no key_salt yet. Nothing
- * could have been encrypted under it at that point, so backfilling a fresh one is safe. */
-function backfillKeySalt(db: DatabaseSync): void {
-  const row = db.prepare(`SELECT key_salt as keySalt FROM app_security WHERE id = 1`).get() as
-    | { keySalt: Uint8Array | null }
-    | undefined;
-  if (row && row.keySalt == null) {
-    db.prepare(`UPDATE app_security SET key_salt = ? WHERE id = 1`).run(generateSalt());
-  }
+  db.prepare(`INSERT INTO app_security (id, pin_hash, pin_salt) VALUES (1, ?, ?)`).run(hash, salt);
 }
 
 /** One-time seed (idempotent, safe on every startup): each of the 7 PromptTemplates keys gets
@@ -533,7 +527,7 @@ function seedPromptFields(db: DatabaseSync): void {
  * second BEGIN (which SQLite rejects) -- needed because some writes call into read helpers
  * that write themselves, e.g. duplicateVersion -> getVersionsByField -> ensureLatestIsActive. */
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
-  if (db.isTransaction) {
+  if (db.inTransaction) {
     return fn();
   }
 
@@ -555,7 +549,7 @@ export function getDatabase(): DatabaseSync | null {
 /** Closes the database, checkpointing the WAL and removing its `-wal`/`-shm` sidecars.
  * Idempotent -- safe to call from both `before-quit` and the database-relocation handlers. */
 export function closeDatabase(): void {
-  if (dbInstance?.isOpen) {
+  if (dbInstance?.open) {
     dbInstance.close();
   }
   dbInstance = null;

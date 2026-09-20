@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { CharacterField, FieldType } from '../../shared/types/characterField';
 

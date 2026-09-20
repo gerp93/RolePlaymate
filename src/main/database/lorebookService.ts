@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Lorebook,
@@ -104,41 +104,20 @@ export interface EntryWithContent {
 export class LorebookService {
   constructor(private db: DatabaseSync, private security: SecurityService) {}
 
-  /** Self-contained, like CharacterService.rowToCharacter -- a book carries its own
-   * `is_hidden`, so name/description decrypt right here. */
   private rowToBook(row: Record<string, unknown>): Lorebook {
-    const isHidden = !!row.isHidden;
     const description = row.description as string | null;
     return {
       id: row.id as string,
-      name: this.security.decryptIfHidden(row.name as string, isHidden),
-      description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
+      name: row.name as string,
+      description,
       scope: row.scope as LorebookScope,
       ownerCharacterId: (row.ownerCharacterId as string | null) ?? null,
       ownerPersonaId: (row.ownerPersonaId as string | null) ?? null,
       image: (row.image as string | null) ?? null,
-      isHidden,
+      isHidden: !!row.isHidden,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
     };
-  }
-
-  private isBookHidden(lorebookId: string): boolean {
-    const row = this.db.prepare(`SELECT is_hidden as isHidden FROM lorebooks WHERE id = ?`).get(lorebookId) as
-      | { isHidden: number }
-      | undefined;
-    return !!row?.isHidden;
-  }
-
-  private isBookHiddenForEntry(entryId: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT b.is_hidden as isHidden FROM lorebook_entries e
-         JOIN lorebooks b ON b.id = e.lorebook_id
-         WHERE e.id = ?`
-      )
-      .get(entryId) as { isHidden: number } | undefined;
-    return !!row?.isHidden;
   }
 
   // --- Books ---------------------------------------------------------------------------
@@ -192,8 +171,8 @@ export class LorebookService {
     this.db
       .prepare(`UPDATE lorebooks SET name = ?, description = ?, image = ?, updated_at = ? WHERE id = ?`)
       .run(
-        this.security.encryptIfHidden(name, existing.isHidden),
-        description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
+        name,
+        description,
         input.image !== undefined ? input.image : existing.image,
         new Date().toISOString(),
         id
@@ -201,9 +180,8 @@ export class LorebookService {
     return this.getBook(id)!;
   }
 
-  /** Same shape as CharacterService.setHidden: encrypts (or, on unhide, just writes back the
-   * already-decrypted plaintext) the book's own name/description, then cascades to every
-   * entry's title and every version's content, all in one transaction. Requires unlock. */
+  /** Same as CharacterService.setHidden: a privacy-screen flag flip that still requires the PIN
+   * to have been entered. Entries and versions are untouched -- hiding never rewrites content. */
   setHidden(id: string, hidden: boolean): Lorebook {
     const existing = this.getBook(id);
     if (!existing) throw new Error(`Lorebook with id ${id} not found`);
@@ -211,141 +189,10 @@ export class LorebookService {
       throw new Error('Unlock with the PIN before hiding or unhiding an item');
     }
 
-    return transaction(this.db, () => {
-      const now = new Date().toISOString();
-      const name = hidden ? this.security.encrypt(existing.name) : existing.name;
-      const description =
-        existing.description == null
-          ? null
-          : hidden
-            ? this.security.encrypt(existing.description)
-            : existing.description;
-
-      this.db
-        .prepare(`UPDATE lorebooks SET name = ?, description = ?, is_hidden = ?, updated_at = ? WHERE id = ?`)
-        .run(name, description, hidden ? 1 : 0, now, id);
-
-      this.setHiddenForEntries(id, hidden);
-
-      return this.getBook(id)!;
-    });
-  }
-
-  /** Cascade for setHidden: every entry's title and every version's content for one book. */
-  private setHiddenForEntries(lorebookId: string, hidden: boolean): void {
-    const entryRows = this.db
-      .prepare(`SELECT id, title FROM lorebook_entries WHERE lorebook_id = ?`)
-      .all(lorebookId) as { id: string; title: string }[];
-
-    const titleStmt = this.db.prepare(`UPDATE lorebook_entries SET title = ? WHERE id = ?`);
-    for (const row of entryRows) {
-      const next = hidden
-        ? this.security.encrypt(row.title)
-        : this.security.isEncrypted(row.title)
-          ? this.security.decrypt(row.title)
-          : row.title;
-      titleStmt.run(next, row.id);
-    }
-
-    const versionRows = this.db
-      .prepare(
-        `SELECT v.id, v.content FROM lorebook_entry_versions v
-         JOIN lorebook_entries e ON e.id = v.entry_id
-         WHERE e.lorebook_id = ?`
-      )
-      .all(lorebookId) as { id: string; content: string }[];
-
-    const contentStmt = this.db.prepare(`UPDATE lorebook_entry_versions SET content = ? WHERE id = ?`);
-    for (const row of versionRows) {
-      const next = hidden
-        ? this.security.encrypt(row.content)
-        : this.security.isEncrypted(row.content)
-          ? this.security.decrypt(row.content)
-          : row.content;
-      contentStmt.run(next, row.id);
-    }
-  }
-
-  /** PIN-change rekey for one book's own name/description plus every entry title and version
-   * content in it -- called once per currently-hidden book by main.ts's rekey orchestration. */
-  reencryptHiddenBook(bookId: string, oldKey: Buffer, newKey: Buffer): void {
-    const row = this.db
-      .prepare(`SELECT name, description FROM lorebooks WHERE id = ?`)
-      .get(bookId) as { name: string; description: string | null };
-    const name = this.security.reencryptWithKeys(row.name, oldKey, newKey);
-    const description = row.description == null ? null : this.security.reencryptWithKeys(row.description, oldKey, newKey);
-    this.db.prepare(`UPDATE lorebooks SET name = ?, description = ? WHERE id = ?`).run(name, description, bookId);
-
-    const entryRows = this.db
-      .prepare(`SELECT id, title FROM lorebook_entries WHERE lorebook_id = ?`)
-      .all(bookId) as { id: string; title: string }[];
-    const titleStmt = this.db.prepare(`UPDATE lorebook_entries SET title = ? WHERE id = ?`);
-    for (const entryRow of entryRows) {
-      titleStmt.run(this.security.reencryptWithKeys(entryRow.title, oldKey, newKey), entryRow.id);
-    }
-
-    const versionRows = this.db
-      .prepare(
-        `SELECT v.id, v.content FROM lorebook_entry_versions v
-         JOIN lorebook_entries e ON e.id = v.entry_id
-         WHERE e.lorebook_id = ?`
-      )
-      .all(bookId) as { id: string; content: string }[];
-    const contentStmt = this.db.prepare(`UPDATE lorebook_entry_versions SET content = ? WHERE id = ?`);
-    for (const versionRow of versionRows) {
-      contentStmt.run(this.security.reencryptWithKeys(versionRow.content, oldKey, newKey), versionRow.id);
-    }
-  }
-
-  /** Every currently-hidden book, rekeyed. Called from main.ts. */
-  reencryptAllHiddenContent(oldKey: Buffer, newKey: Buffer): void {
-    const hiddenBookIds = this.db.prepare(`SELECT id FROM lorebooks WHERE is_hidden = 1`).all() as { id: string }[];
-    for (const { id } of hiddenBookIds) {
-      this.reencryptHiddenBook(id, oldKey, newKey);
-    }
-  }
-
-  /** After a successful unlock, upgrades any hidden book/entry/version still sitting in
-   * legacy plaintext (from before encryption existed) to real ciphertext. */
-  migrateLegacyHiddenContent(): void {
-    const bookRows = this.db
-      .prepare(`SELECT id, name, description FROM lorebooks WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-    const bookStmt = this.db.prepare(`UPDATE lorebooks SET name = ?, description = ? WHERE id = ?`);
-    for (const row of bookRows) {
-      const name = this.security.migrateLegacyContent(row.name, true);
-      const description = row.description == null ? null : this.security.migrateLegacyContent(row.description, true);
-      if (name !== row.name || description !== row.description) {
-        bookStmt.run(name, description, row.id);
-      }
-    }
-
-    const entryRows = this.db
-      .prepare(
-        `SELECT e.id, e.title FROM lorebook_entries e
-         JOIN lorebooks b ON b.id = e.lorebook_id
-         WHERE b.is_hidden = 1`
-      )
-      .all() as { id: string; title: string }[];
-    const entryStmt = this.db.prepare(`UPDATE lorebook_entries SET title = ? WHERE id = ?`);
-    for (const row of entryRows) {
-      const title = this.security.migrateLegacyContent(row.title, true);
-      if (title !== row.title) entryStmt.run(title, row.id);
-    }
-
-    const versionRows = this.db
-      .prepare(
-        `SELECT v.id, v.content FROM lorebook_entry_versions v
-         JOIN lorebook_entries e ON e.id = v.entry_id
-         JOIN lorebooks b ON b.id = e.lorebook_id
-         WHERE b.is_hidden = 1`
-      )
-      .all() as { id: string; content: string }[];
-    const versionStmt = this.db.prepare(`UPDATE lorebook_entry_versions SET content = ? WHERE id = ?`);
-    for (const row of versionRows) {
-      const content = this.security.migrateLegacyContent(row.content, true);
-      if (content !== row.content) versionStmt.run(content, row.id);
-    }
+    this.db
+      .prepare(`UPDATE lorebooks SET is_hidden = ?, updated_at = ? WHERE id = ?`)
+      .run(hidden ? 1 : 0, new Date().toISOString(), id);
+    return this.getBook(id)!;
   }
 
   /** Cascades to entries, versions and attachments through the schema's foreign keys. */
@@ -518,22 +365,18 @@ export class LorebookService {
   // --- Entries -------------------------------------------------------------------------
 
   listEntries(lorebookId: string): LorebookEntry[] {
-    const isHidden = this.isBookHidden(lorebookId);
     return this.db
       .prepare(
         `SELECT ${ENTRY_COLUMNS} FROM lorebook_entries WHERE lorebook_id = ? ORDER BY priority DESC, title`
       )
       .all(lorebookId)
-      .map(rowToEntry)
-      .map((e) => ({ ...e, title: this.security.decryptIfHidden(e.title, isHidden) }));
+      .map(rowToEntry);
   }
 
   getEntry(id: string): LorebookEntry | null {
     const row = this.db.prepare(`SELECT ${ENTRY_COLUMNS} FROM lorebook_entries WHERE id = ?`).get(id);
     if (!row) return null;
-    const entry = rowToEntry(row);
-    const isHidden = this.isBookHidden(entry.lorebookId);
-    return { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) };
+    return rowToEntry(row);
   }
 
   /** Bumps `hit_count` for every entry id actually selected into a turn's prompt -- called
@@ -551,7 +394,6 @@ export class LorebookService {
   createEntry(input: CreateLorebookEntryInput): LorebookEntry {
     const id = uuidv4();
     const now = new Date().toISOString();
-    const isHidden = this.isBookHidden(input.lorebookId);
 
     return transaction(this.db, () => {
       this.db
@@ -562,7 +404,7 @@ export class LorebookService {
         .run(
           id,
           input.lorebookId,
-          this.security.encryptIfHidden(input.title, isHidden),
+          input.title,
           input.keys ?? '',
           input.alwaysOn ? 1 : 0,
           input.priority ?? 0,
@@ -579,7 +421,6 @@ export class LorebookService {
   updateEntry(id: string, input: UpdateLorebookEntryInput): LorebookEntry {
     const existing = this.getEntry(id);
     if (!existing) throw new Error(`Lorebook entry with id ${id} not found`);
-    const isHidden = this.isBookHidden(existing.lorebookId);
     const title = input.title ?? existing.title;
 
     this.db
@@ -588,7 +429,7 @@ export class LorebookService {
          WHERE id = ?`
       )
       .run(
-        this.security.encryptIfHidden(title, isHidden),
+        title,
         input.keys ?? existing.keys,
         (input.enabled ?? existing.enabled) ? 1 : 0,
         (input.alwaysOn ?? existing.alwaysOn) ? 1 : 0,
@@ -603,13 +444,7 @@ export class LorebookService {
     this.db.prepare(`DELETE FROM lorebook_entries WHERE id = ?`).run(id);
   }
 
-  /**
-   * Reassigns entries to a different book, re-encrypting title and every version's content
-   * for the destination book's hidden state. Reuses getEntry/getVersions rather than reading
-   * raw columns, so the source side of the transition goes through the same decrypt path
-   * (legacy-plaintext handling included) as every other reader -- only the re-encrypt for the
-   * new owner is new work here.
-   */
+  /** Reassigns entries to a different book. Titles and version content move with them as-is. */
   moveEntries(entryIds: string[], targetLorebookId: string): LorebookEntry[] {
     const target = this.getBook(targetLorebookId);
     if (!target) throw new Error(`Lorebook with id ${targetLorebookId} not found`);
@@ -620,20 +455,9 @@ export class LorebookService {
         if (!entry) throw new Error(`Lorebook entry with id ${entryId} not found`);
         if (entry.lorebookId === targetLorebookId) return entry;
 
-        const versions = this.getVersions(entryId);
-        const now = new Date().toISOString();
-
         this.db
-          .prepare(`UPDATE lorebook_entries SET lorebook_id = ?, title = ?, updated_at = ? WHERE id = ?`)
-          .run(targetLorebookId, this.security.encryptIfHidden(entry.title, target.isHidden), now, entryId);
-
-        const contentStmt = this.db.prepare(
-          `UPDATE lorebook_entry_versions SET content = ?, updated_at = ? WHERE id = ?`
-        );
-        for (const version of versions) {
-          contentStmt.run(this.security.encryptIfHidden(version.content, target.isHidden), now, version.id);
-        }
-
+          .prepare(`UPDATE lorebook_entries SET lorebook_id = ?, updated_at = ? WHERE id = ?`)
+          .run(targetLorebookId, new Date().toISOString(), entryId);
         return this.getEntry(entryId)!;
       })
     );
@@ -656,14 +480,12 @@ export class LorebookService {
    * one behaviour: to make older text live again, save it as a new version.
    */
   getVersions(entryId: string): LorebookEntryVersion[] {
-    const isHidden = this.isBookHiddenForEntry(entryId);
     const versions = this.db
       .prepare(
         `SELECT ${VERSION_COLUMNS} FROM lorebook_entry_versions WHERE entry_id = ? ORDER BY version_number`
       )
       .all(entryId)
-      .map(rowToVersion)
-      .map((v) => ({ ...v, content: this.security.decryptIfHidden(v.content, isHidden) }));
+      .map(rowToVersion);
     return this.ensureLatestIsActive(entryId, versions);
   }
 
@@ -700,7 +522,6 @@ export class LorebookService {
   createVersion(entryId: string, content: string): LorebookEntryVersion {
     const id = uuidv4();
     const now = new Date().toISOString();
-    const isHidden = this.isBookHiddenForEntry(entryId);
 
     return transaction(this.db, () => {
       const existing = this.db
@@ -724,11 +545,10 @@ export class LorebookService {
           `INSERT INTO lorebook_entry_versions (id, entry_id, version_number, content, is_active, created_at, updated_at)
            VALUES (?, ?, ?, ?, 1, ?, ?)`
         )
-        .run(id, entryId, nextVersionNumber, this.security.encryptIfHidden(content, isHidden), now, now);
+        .run(id, entryId, nextVersionNumber, content, now, now);
 
       const row = this.db.prepare(`SELECT ${VERSION_COLUMNS} FROM lorebook_entry_versions WHERE id = ?`).get(id)!;
-      const version = rowToVersion(row);
-      return { ...version, content: this.security.decryptIfHidden(version.content, isHidden) };
+      return rowToVersion(row);
     });
   }
 
@@ -737,16 +557,13 @@ export class LorebookService {
       .prepare(`SELECT ${VERSION_COLUMNS} FROM lorebook_entry_versions WHERE id = ?`)
       .get(versionId);
     if (!existingRow) throw new Error(`Lorebook entry version with id ${versionId} not found`);
-    const entryId = rowToVersion(existingRow).entryId;
-    const isHidden = this.isBookHiddenForEntry(entryId);
 
     this.db
       .prepare(`UPDATE lorebook_entry_versions SET content = ?, updated_at = ? WHERE id = ?`)
-      .run(this.security.encryptIfHidden(content, isHidden), new Date().toISOString(), versionId);
+      .run(content, new Date().toISOString(), versionId);
 
     const row = this.db.prepare(`SELECT ${VERSION_COLUMNS} FROM lorebook_entry_versions WHERE id = ?`).get(versionId)!;
-    const version = rowToVersion(row);
-    return { ...version, content: this.security.decryptIfHidden(version.content, isHidden) };
+    return rowToVersion(row);
   }
 
   /** Blocked on the last remaining version, as with character fields -- an entry with no
@@ -782,9 +599,7 @@ export class LorebookService {
    * each with the text currently in effect.
    *
    * One query per entry for content would be N+1 on every turn, so the active version is
-   * joined in directly -- which means this bypasses rowToEntry/rowToVersion's normal callers
-   * entirely, so title/content are decrypted right here using the joined book's own
-   * `is_hidden` rather than through listEntries/getVersions.
+   * joined in directly rather than fetched through listEntries/getVersions.
    */
   getEntriesForCharacter(characterId: string): EntryWithContent[] {
     const rows = this.db
@@ -811,10 +626,8 @@ export class LorebookService {
       .all(characterId, characterId);
 
     return rows.map((row) => {
-      const isHidden = !!row.bookIsHidden;
-      const entry = rowToEntry(row);
       return {
-        entry: { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) },
+        entry: rowToEntry(row),
         book: this.rowToBook({
           id: row.bookId,
           name: row.bookName,
@@ -825,7 +638,7 @@ export class LorebookService {
           createdAt: row.bookCreatedAt,
           updatedAt: row.bookUpdatedAt,
         }),
-        content: this.security.decryptIfHidden((row.activeContent as string | null) ?? '', isHidden),
+        content: (row.activeContent as string | null) ?? '',
       };
     });
   }
@@ -856,10 +669,8 @@ export class LorebookService {
       .all(personaId);
 
     return rows.map((row) => {
-      const isHidden = !!row.bookIsHidden;
-      const entry = rowToEntry(row);
       return {
-        entry: { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) },
+        entry: rowToEntry(row),
         book: this.rowToBook({
           id: row.bookId,
           name: row.bookName,
@@ -870,7 +681,7 @@ export class LorebookService {
           createdAt: row.bookCreatedAt,
           updatedAt: row.bookUpdatedAt,
         }),
-        content: this.security.decryptIfHidden((row.activeContent as string | null) ?? '', isHidden),
+        content: (row.activeContent as string | null) ?? '',
       };
     });
   }
@@ -905,10 +716,8 @@ export class LorebookService {
       .all(personaId, personaId);
 
     return rows.map((row) => {
-      const isHidden = !!row.bookIsHidden;
-      const entry = rowToEntry(row);
       return {
-        entry: { ...entry, title: this.security.decryptIfHidden(entry.title, isHidden) },
+        entry: rowToEntry(row),
         book: this.rowToBook({
           id: row.bookId,
           name: row.bookName,
@@ -919,7 +728,7 @@ export class LorebookService {
           createdAt: row.bookCreatedAt,
           updatedAt: row.bookUpdatedAt,
         }),
-        content: this.security.decryptIfHidden((row.activeContent as string | null) ?? '', isHidden),
+        content: (row.activeContent as string | null) ?? '',
       };
     });
   }

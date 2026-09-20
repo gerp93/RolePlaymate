@@ -1,23 +1,19 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Character, CreateCharacterInput, UpdateCharacterInput } from '../../shared/types/character';
 import { parseTtsVoice } from '../../shared/types/tts';
 import { transaction } from './schema';
 import { SecurityService } from './securityService';
-import { FieldVersionService } from './fieldVersionService';
 
 export class CharacterService {
   constructor(
     private db: DatabaseSync,
-    private security: SecurityService,
-    private fieldVersions: FieldVersionService
+    private security: SecurityService
   ) {}
 
   /** Rows come back keyed by the SELECT_COLUMNS aliases, so this only has to fix up what SQL
-   * can't express -- NULL vs undefined for the optional description, and decrypting name/
-   * description when the character is hidden. */
+   * can't express -- NULL vs undefined for the optional description. */
   private rowToCharacter(row: Record<string, unknown>): Character {
-    const isHidden = !!row.isHidden;
     const description = row.description as string | null;
     const ttsVoice = parseTtsVoice(
       ((row.ttsVoiceMode ?? row.tts_voice_mode) as string | null | undefined) ?? null,
@@ -25,11 +21,11 @@ export class CharacterService {
     );
     return {
       id: row.id as string,
-      name: this.security.decryptIfHidden(row.name as string, isHidden),
-      description: description == null ? null : this.security.decryptIfHidden(description, isHidden),
+      name: row.name as string,
+      description,
       ttsVoice,
       messageCount: Number(row.messageCount ?? 0),
-      isHidden,
+      isHidden: !!row.isHidden,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
     };
@@ -90,8 +86,8 @@ export class CharacterService {
         `UPDATE characters SET name = ?, description = ?, tts_voice_mode = ?, tts_voice_id = ?, updated_at = ? WHERE id = ?`
       )
       .run(
-        this.security.encryptIfHidden(name, existing.isHidden),
-        description == null ? null : this.security.encryptIfHidden(description, existing.isHidden),
+        name,
+        description,
         ttsVoice?.mode ?? null,
         ttsVoice?.id ?? null,
         now,
@@ -102,13 +98,8 @@ export class CharacterService {
   }
 
   /**
-   * The hide/unhide pivot: `existing` (fetched before the flag changes) already carries
-   * decrypted plaintext when currently hidden -- `getCharacterById` decrypts via
-   * `rowToCharacter` as long as the session is unlocked, which is required below regardless of
-   * direction. On hide, that plaintext gets encrypted and written under the new flag; on
-   * unhide, it's already plaintext and just needs the flag flipped. Cascades to every field
-   * version's content in the same transaction, so a character's fields are never left
-   * encrypted while its name/description aren't, or vice versa.
+   * Hiding is only a privacy screen -- it flips the flag and nothing else. It still requires
+   * the PIN to be entered first, so a locked session can't quietly hide or reveal items.
    */
   setHidden(id: string, hidden: boolean): Character {
     const existing = this.getCharacterById(id);
@@ -119,57 +110,10 @@ export class CharacterService {
       throw new Error('Unlock with the PIN before hiding or unhiding an item');
     }
 
-    return transaction(this.db, () => {
-      const now = new Date().toISOString();
-      const name = hidden ? this.security.encrypt(existing.name) : existing.name;
-      const description =
-        existing.description == null
-          ? null
-          : hidden
-            ? this.security.encrypt(existing.description)
-            : existing.description;
-
-      this.db
-        .prepare(`UPDATE characters SET name = ?, description = ?, is_hidden = ?, updated_at = ? WHERE id = ?`)
-        .run(name, description, hidden ? 1 : 0, now, id);
-
-      this.fieldVersions.setHiddenForCharacter(id, hidden);
-
-      return this.getCharacterById(id)!;
-    });
-  }
-
-  /** PIN-change rekey for this character's name/description. Field-version content is
-   * rekeyed separately by FieldVersionService.reencryptHiddenContent. */
-  reencryptHiddenContent(oldKey: Buffer, newKey: Buffer): void {
-    const rows = this.db
-      .prepare(`SELECT id, name, description FROM characters WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-
-    const stmt = this.db.prepare(`UPDATE characters SET name = ?, description = ? WHERE id = ?`);
-    for (const row of rows) {
-      const name = this.security.reencryptWithKeys(row.name, oldKey, newKey);
-      const description =
-        row.description == null ? null : this.security.reencryptWithKeys(row.description, oldKey, newKey);
-      stmt.run(name, description, row.id);
-    }
-  }
-
-  /** After a successful unlock, upgrades any hidden character still sitting in legacy
-   * plaintext (from before encryption existed) to real ciphertext. */
-  migrateLegacyHiddenContent(): void {
-    const rows = this.db
-      .prepare(`SELECT id, name, description FROM characters WHERE is_hidden = 1`)
-      .all() as { id: string; name: string; description: string | null }[];
-
-    const stmt = this.db.prepare(`UPDATE characters SET name = ?, description = ? WHERE id = ?`);
-    for (const row of rows) {
-      const name = this.security.migrateLegacyContent(row.name, true);
-      const description = row.description == null ? null : this.security.migrateLegacyContent(row.description, true);
-      if (name !== row.name || description !== row.description) {
-        stmt.run(name, description, row.id);
-      }
-    }
+    this.db
+      .prepare(`UPDATE characters SET is_hidden = ?, updated_at = ? WHERE id = ?`)
+      .run(hidden ? 1 : 0, new Date().toISOString(), id);
+    return this.getCharacterById(id)!;
   }
 
   /** Cascades to character_fields, character_field_versions, character_images, and scenarios

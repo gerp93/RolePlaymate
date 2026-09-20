@@ -3,6 +3,17 @@ import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { initDatabase, closeDatabase, transaction } from './database/schema';
+import { promptForPassword } from './unlockWindow';
+import { needsLegacyDecrypt, decryptLegacyContent, isLegacyDecryptDone } from './database/legacyHiddenDecrypt';
+import { readLibraryFile } from './fileCrypto';
+import {
+  isDatabaseEncrypted,
+  verifyPassword,
+  initFileEncryption,
+  enableEncryption,
+  changePassword,
+  disableEncryption,
+} from './appEncryption';
 import {
   getEffectiveDbPath,
   getDefaultDbPath,
@@ -158,7 +169,7 @@ import {
   guardCloneVoiceFilename,
 } from './fieldLengthGuards';
 import { randomUUID } from 'crypto';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './database/sqlite';
 import * as fs from 'fs';
 
 // Packaged builds normally derive userData from productName ("RolePlaymate") while `electron .`
@@ -322,10 +333,12 @@ function showStartupFailureDialog(error: unknown): void {
  * Retry re-reads the path each attempt, so it also covers "I fixed it, try again" for a
  * transient permission or lock issue on the default location, not just missing drives.
  */
-function openDatabaseWithRecovery(): DatabaseSync {
+function openDatabaseWithRecovery(password?: string): DatabaseSync {
   return openWithRecovery<DatabaseSync>({
     getPath: getEffectiveDbPath,
-    open: (dbPath) => initDatabase(dbPath),
+    // The password only applies to an encrypted file; handing it to a plain one (say, a
+    // location picked during recovery) would make the driver reject a perfectly good database.
+    open: (dbPath) => initDatabase(dbPath, isDatabaseEncrypted(dbPath) ? password : undefined),
     promptUser: (dbPath, error) => {
       logStartupFailure('database open', error);
       const message = error instanceof Error ? error.message : String(error);
@@ -359,6 +372,33 @@ function openDatabaseWithRecovery(): DatabaseSync {
       app.quit();
     },
   });
+}
+
+/**
+ * One-time upgrade from the old per-row hidden-content encryption (see legacyHiddenDecrypt.ts).
+ * Runs before any service reads the database, because until it finishes a hidden item's text
+ * is still ciphertext. Nearly everyone still has the seeded default PIN, so that is tried
+ * silently first and most people are never asked. Skipping leaves the ciphertext alone and
+ * asks again next launch -- nothing is lost, those items just stay unreadable until then.
+ */
+async function upgradeLegacyHiddenContent(database: DatabaseSync, security: SecurityService): Promise<void> {
+  if (!needsLegacyDecrypt(database)) return;
+
+  let pin: string | null = security.verifyPin('1234') ? '1234' : null;
+  if (pin === null) {
+    pin = await promptForPassword((candidate) => security.verifyPin(candidate), {
+      heading: 'Finish upgrading',
+      body:
+        'Hiding an item no longer encrypts it; app encryption is a separate setting now. ' +
+        'Enter your Hidden Items PIN once so your existing hidden items can be converted.',
+      placeholder: 'Hidden Items PIN',
+      submitLabel: 'Continue',
+      cancelLabel: 'Skip for now',
+      wrongMessage: 'Incorrect PIN.',
+    });
+  }
+  if (pin === null) return;
+  decryptLegacyContent(database, pin);
 }
 
 process.on('uncaughtException', (error) => {
@@ -758,7 +798,55 @@ function checkForUpdatesNow(): Promise<UpdateCheckResult> {
   });
 }
 
-app.whenReady().then(() => {
+/** False until the main window exists. Closing the unlock window (which happens on a
+ * successful unlock, before the main window is created) must not count as "all windows
+ * closed" and quit the app. */
+let startupComplete = false;
+
+/** Serves a library file, decrypting it when encryption is on. Handles `Range` requests
+ * itself because <audio> issues them for seeking, and the encrypted bytes can't be handed to
+ * `net.fetch(file://)` (which would serve ciphertext). */
+function serveLibraryFile(filePath: string, rangeHeader: string | null): Response {
+  let bytes: Buffer;
+  try {
+    bytes = readLibraryFile(filePath);
+  } catch {
+    return new Response('Not found', { status: 404 });
+  }
+  const headers: Record<string, string> = {
+    'Content-Type': MIME_BY_EXTENSION[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  const match = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null;
+  if (match && (match[1] !== '' || match[2] !== '')) {
+    const size = bytes.length;
+    let start = match[1] === '' ? size - Number(match[2]) : Number(match[1]);
+    let end = match[1] === '' || match[2] === '' ? size - 1 : Number(match[2]);
+    start = Math.max(0, start);
+    end = Math.min(size - 1, end);
+    if (start > end || start >= size) {
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    }
+    return new Response(new Uint8Array(bytes.subarray(start, end + 1)), {
+      status: 206,
+      headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) },
+    });
+  }
+  return new Response(new Uint8Array(bytes), { status: 200, headers: { ...headers, 'Content-Length': String(bytes.length) } });
+}
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+};
+
+app.whenReady().then(async () => {
   session.defaultSession.setSpellCheckerLanguages(['en-US']);
   enforceDevDatabaseIsolation();
   // The path is the whole opaque, percent-encoded remainder after `rpimage://` (see toImageUrl
@@ -775,10 +863,26 @@ app.whenReady().then(() => {
     if (!allowed) {
       return new Response('Forbidden', { status: 403 });
     }
-    return net.fetch(pathToFileURL(requested).toString());
+    return serveLibraryFile(requested, request.headers.get('range'));
   });
 
-  db = openDatabaseWithRecovery();
+  // Whole-app encryption gate. Everything below -- the database, every service, IPC handlers,
+  // the retention timer, the Ollama/Chatterbox auto-launch -- only starts after this resolves,
+  // so an encrypted library exposes nothing until the password is right.
+  let unlockPassword: string | undefined;
+  if (isDatabaseEncrypted(getEffectiveDbPath())) {
+    const dbPathAtLaunch = getEffectiveDbPath();
+    const entered = await promptForPassword((pw) => verifyPassword(dbPathAtLaunch, pw));
+    if (entered === null) {
+      app.quit();
+      return;
+    }
+    unlockPassword = entered;
+  }
+
+  db = openDatabaseWithRecovery(unlockPassword);
+  unlockPassword = undefined;
+  initFileEncryption(db, isDatabaseEncrypted(getEffectiveDbPath()));
   const imageMigration = migrateImagePathsToCanonicalDir(db);
   migrateTtsPathsToCanonicalDir(db);
   if (!app.isPackaged && imageMigration.missing > 0) {
@@ -793,15 +897,16 @@ app.whenReady().then(() => {
       buttons: ['OK'],
     });
   }
-  // SecurityService first -- CharacterService, FieldVersionService, ConversationService, and
-  // LorebookService all depend on it for hidden-content encryption/decryption.
+  // SecurityService first -- the services that let you hide items consult it before allowing a
+  // hide or unhide (the Hidden Items PIN is a privacy screen, not encryption).
   securityService = new SecurityService(db);
-  fieldVersionService = new FieldVersionService(db, securityService);
-  characterService = new CharacterService(db, securityService, fieldVersionService);
+  await upgradeLegacyHiddenContent(db, securityService);
+  fieldVersionService = new FieldVersionService(db);
+  characterService = new CharacterService(db, securityService);
   fieldService = new CharacterFieldService(db);
   characterImageService = new CharacterImageService(db);
   personaImageService = new PersonaImageService(db);
-  personaFieldVersionService = new PersonaFieldVersionService(db, securityService);
+  personaFieldVersionService = new PersonaFieldVersionService(db);
   scenarioService = new ScenarioService(db, securityService);
   scenarioImageService = new ScenarioImageService(db);
   imageCropService = new ImageCropService(db);
@@ -849,6 +954,7 @@ app.whenReady().then(() => {
 
   setupApplicationMenu();
   createWindow();
+  startupComplete = true;
   void maybeStartOllamaOnAppLaunch(ollamaClient);
   void maybeStartChatterboxOnAppLaunch(chatterboxClient);
   setupAutoUpdater();
@@ -869,7 +975,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (startupComplete && process.platform !== 'darwin') {
     app.quit();
   }
 });
@@ -2067,58 +2173,46 @@ function registerIPCHandlers() {
     promptFieldVersionService.resetToDefault(fieldKey)
   );
 
-  // Security handlers -- gate the "reveal hidden items" toggle, and own the encryption key
-  // for actually-hidden content. `unlock` returns false on a wrong PIN rather than throwing:
-  // a wrong PIN is an expected outcome, not an error.
-  ipcMain.handle('security:unlock', (_, pin: string) => {
-    const ok = securityService.unlock(pin);
-    if (ok) {
-      // One-time-per-row upgrade of any hidden content still sitting in legacy plaintext
-      // (from before real encryption existed) -- cheap once everything's migrated, since each
-      // row is just a prefix check.
-      characterService.migrateLegacyHiddenContent();
-      fieldVersionService.migrateLegacyHiddenContent();
-      conversationService.migrateLegacyHiddenPersonaContent();
-      personaFieldVersionService.migrateLegacyHiddenContent();
-      lorebookService.migrateLegacyHiddenContent();
+  // Whole-app encryption (see appEncryption.ts). The renderer only ever passes passwords in;
+  // nothing key-shaped comes back out. Failures are returned, not thrown, so the Settings UI
+  // can show "password is incorrect" inline.
+  const encryptionResult = (action: () => void) => {
+    try {
+      action();
+      return { ok: true as const, enabled: isDatabaseEncrypted(getEffectiveDbPath()) };
+    } catch (error) {
+      return { ok: false as const, error: (error as Error).message };
     }
-    return ok;
-  });
+  };
+  ipcMain.handle('encryption:getStatus', () => ({ enabled: isDatabaseEncrypted(getEffectiveDbPath()) }));
+  ipcMain.handle('encryption:enable', (_, password: string) =>
+    encryptionResult(() => enableEncryption(db!, password))
+  );
+  ipcMain.handle('encryption:changePassword', (_, currentPassword: string, newPassword: string) =>
+    encryptionResult(() => changePassword(db!, currentPassword, newPassword))
+  );
+  ipcMain.handle('encryption:disable', (_, currentPassword: string) =>
+    encryptionResult(() => disableEncryption(db!, currentPassword))
+  );
+
+  // Security handlers -- the Hidden Items PIN, a privacy screen (see securityService.ts). It
+  // has nothing to do with app encryption above. `unlock` returns false on a wrong PIN rather
+  // than throwing: a wrong PIN is an expected outcome, not an error.
+  ipcMain.handle('security:unlock', (_, pin: string) => securityService.unlock(pin));
 
   ipcMain.handle('security:lock', () => {
     securityService.lock();
     return { success: true };
   });
 
-  // A PIN change is a rekey, not just a hash swap: every currently-hidden character/persona/
-  // lorebook's encrypted content is decrypted under the old key and re-encrypted under the
-  // new one, in one transaction, before the new PIN is persisted -- see securityService.ts's
-  // reencryptWithKeys and the plan this shipped under for why plaintext never touches disk
-  // mid-rekey.
   ipcMain.handle('security:setPin', (_, currentPin: string, newPin: string) => {
     try {
-      securityService.validatePinChange(currentPin, newPin);
-      const oldKey = securityService.deriveKey(currentPin);
-      const wasUnlocked = securityService.isUnlocked();
-
-      transaction(db!, () => {
-        // Rotates pin_hash/pin_salt/key_salt first, so deriveKey(newPin) right after reads
-        // the freshly-written salt back out rather than main.ts re-deriving it by hand.
-        securityService.persistNewPin(newPin);
-        const newKey = securityService.deriveKey(newPin);
-
-        characterService.reencryptHiddenContent(oldKey, newKey);
-        fieldVersionService.reencryptHiddenContent(oldKey, newKey);
-        conversationService.reencryptHiddenPersonaContent(oldKey, newKey);
-        personaFieldVersionService.reencryptHiddenContent(oldKey, newKey);
-        lorebookService.reencryptAllHiddenContent(oldKey, newKey);
-        scenarioService.reencryptHiddenContent(oldKey, newKey);
-
-        // A session that was already unlocked stays unlocked under the new key; one that was
-        // locked stays locked -- changing the PIN neither requires nor grants unlock.
-        if (wasUnlocked) securityService.setCachedKey(newKey);
-      });
-
+      // The old encryption key is derived from the current PIN, so changing it before the
+      // upgrade has finished would strand any hidden items still waiting to be converted.
+      if (!isLegacyDecryptDone(db!)) {
+        throw new Error('Finish the pending upgrade first: restart RolePlaymate and enter your current PIN when asked.');
+      }
+      securityService.changePin(currentPin, newPin);
       return { ok: true as const };
     } catch (error) {
       return { ok: false as const, error: (error as Error).message };
@@ -2409,8 +2503,8 @@ function registerLorebookHandlers() {
  * list filtering), so this should never actually fire through the UI -- it's a backstop
  * against a stale route/request reaching generation anyway (e.g. the Chat page still mounted
  * on a conversation whose character was hidden and the app locked without navigating away).
- * Throws rather than letting decryptIfHidden's lenient locked-read silently feed ciphertext
- * into the model's prompt.
+ * Hidden means "needs the PIN", so generation is refused while locked rather than quietly
+ * working with content the user has put behind the privacy screen.
  */
 function assertHiddenContentAccessible(
   characterId: string | null,

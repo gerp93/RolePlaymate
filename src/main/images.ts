@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from './dbLocation';
+import { protectLibraryFile } from './fileCrypto';
 
 const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
@@ -33,6 +34,7 @@ function copyImageIntoLibrary(sourcePath: string): string {
 
   const destPath = path.join(imagesDir, `${uuidv4()}.${ext}`);
   fs.copyFileSync(sourcePath, destPath);
+  protectLibraryFile(destPath);
   return destPath;
 }
 
@@ -81,6 +83,7 @@ export function cloneCharacterImage(imagePath: string): string | null {
     fs.mkdirSync(imagesDir, { recursive: true });
     const destPath = path.join(imagesDir, `${uuidv4()}.${ext}`);
     fs.copyFileSync(imagePath, destPath);
+    protectLibraryFile(destPath);
     return destPath;
   } catch {
     return null;

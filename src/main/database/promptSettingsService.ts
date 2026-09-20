@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { StopPhraseSettings } from '../../shared/types/promptTemplates';
 
 /** Only the stop-phrase settings live here now -- the 7 system-prompt templates get full
