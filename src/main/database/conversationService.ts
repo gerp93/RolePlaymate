@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../../shared/types/conversation';
 import { Message, MessageRole, MessageVariant } from '../../shared/types/message';

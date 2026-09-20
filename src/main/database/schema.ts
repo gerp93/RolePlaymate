@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { openDatabase, type DatabaseSync } from './sqlite';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,21 +11,22 @@ import { TEMPLATE_FIELD_KEYS } from '../../shared/types/promptTemplates';
 
 let dbInstance: DatabaseSync | null = null;
 
-export function initDatabase(dbPath?: string): DatabaseSync {
+/** `password` unlocks an encrypted database; omit it for a plain one. A wrong or missing
+ * password on an encrypted file throws (see `openDatabase`). */
+export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   dbPath = dbPath ?? getEffectiveDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  // Foreign keys are actually enforced here (unlike the old sql.js build, where the pragma
-  // read back as 0), so the ON DELETE CASCADE declarations below do real work and services
-  // no longer hand-roll cascade cleanup.
-  const db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: true });
+  // Foreign keys are enforced (openDatabase turns the pragma on), so the ON DELETE CASCADE
+  // declarations below do real work and services don't hand-roll cascade cleanup.
+  const db = openDatabase(dbPath, password);
 
   // WAL keeps writes incremental instead of rewriting the whole file. It creates `-wal` and
   // `-shm` sidecars next to the database; a clean close() checkpoints and removes them,
   // which is why relocating the database must close it first (see dbLocation.setDbPath).
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = NORMAL');
-  db.exec('PRAGMA busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
 
   dbInstance = db;
 
@@ -533,7 +534,7 @@ function seedPromptFields(db: DatabaseSync): void {
  * second BEGIN (which SQLite rejects) -- needed because some writes call into read helpers
  * that write themselves, e.g. duplicateVersion -> getVersionsByField -> ensureLatestIsActive. */
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
-  if (db.isTransaction) {
+  if (db.inTransaction) {
     return fn();
   }
 
@@ -555,7 +556,7 @@ export function getDatabase(): DatabaseSync | null {
 /** Closes the database, checkpointing the WAL and removing its `-wal`/`-shm` sidecars.
  * Idempotent -- safe to call from both `before-quit` and the database-relocation handlers. */
 export function closeDatabase(): void {
-  if (dbInstance?.isOpen) {
+  if (dbInstance?.open) {
     dbInstance.close();
   }
   dbInstance = null;

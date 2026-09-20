@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { Character, CreateCharacterInput, UpdateCharacterInput } from '../../shared/types/character';
 import { parseTtsVoice } from '../../shared/types/tts';

@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
 import { PromptFieldVersion, PromptTemplates, TEMPLATE_FIELD_KEYS } from '../../shared/types/promptTemplates';
 import { transaction } from './schema';

@@ -100,6 +100,7 @@ export default function Settings() {
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [ollamaLaunchDir, setOllamaLaunchDir] = useState<string | null>(null);
+  const [ollamaSuggestedDir, setOllamaSuggestedDir] = useState<string | null>(null);
   const [ollamaLaunchBusy, setOllamaLaunchBusy] = useState(false);
   const [ollamaLaunchNotice, setOllamaLaunchNotice] = useState<{
     kind: 'error' | 'info';
@@ -163,6 +164,7 @@ export default function Settings() {
     });
     window.electronAPI.ollamaLaunch.get().then((result) => {
       setOllamaLaunchDir(result.dir);
+      setOllamaSuggestedDir(result.suggestedDir);
     });
     window.electronAPI.chatterboxHost.get().then((result) => {
       setChatterboxHostState(result);
@@ -469,6 +471,7 @@ export default function Settings() {
         return;
       }
       setOllamaLaunchDir(result.dir);
+      setOllamaSuggestedDir(null);
       applyOllamaStartResult(await window.electronAPI.ollamaLaunch.startNow());
     } finally {
       setOllamaLaunchBusy(false);
@@ -481,6 +484,8 @@ export default function Settings() {
     try {
       await window.electronAPI.ollamaLaunch.clear();
       setOllamaLaunchDir(null);
+      const again = await window.electronAPI.ollamaLaunch.get();
+      setOllamaSuggestedDir(again.suggestedDir);
     } finally {
       setOllamaLaunchBusy(false);
     }
@@ -491,6 +496,9 @@ export default function Settings() {
     setOllamaLaunchNotice(null);
     try {
       applyOllamaStartResult(await window.electronAPI.ollamaLaunch.startNow());
+      const again = await window.electronAPI.ollamaLaunch.get();
+      setOllamaLaunchDir(again.dir);
+      setOllamaSuggestedDir(again.suggestedDir);
     } finally {
       setOllamaLaunchBusy(false);
     }
@@ -909,15 +917,17 @@ export default function Settings() {
           running on a different port, or on another machine on your network.
         </p>
         <p className="text-muted" style={{ fontSize: 13 }}>
-          Pick the Ollama folder once (the folder that contains ollama.exe). RolePlaymate starts it
-          from there when you open this app, if it isn&apos;t already running. Stop shuts it down
-          from here. Closing RolePlaymate does not.
+          RolePlaymate can start and stop the local Ollama install from here. On Windows it looks for
+          the usual install folder automatically; you can also pick a folder once. Closing RolePlaymate
+          does not stop Ollama.
         </p>
-        {ollamaLaunchDir && (
+        {(ollamaLaunchDir || ollamaSuggestedDir) && (
           <div className="field">
-            <label>Ollama folder</label>
+            <label>
+              {ollamaLaunchDir ? 'Ollama folder' : 'Ollama folder (detected)'}
+            </label>
             <input
-              value={ollamaLaunchDir}
+              value={ollamaLaunchDir ?? ollamaSuggestedDir ?? ''}
               readOnly
               style={{ fontFamily: 'monospace', fontSize: 12 }}
             />
@@ -940,7 +950,7 @@ export default function Settings() {
               Clear
             </button>
           )}
-          {ollamaLaunchDir && ollamaReachable === true && (
+          {ollamaReachable === true && (
             <button
               className="btn"
               disabled={ollamaLaunchBusy}
@@ -949,12 +959,12 @@ export default function Settings() {
               Stop
             </button>
           )}
-          {ollamaLaunchDir && ollamaReachable !== true && ollamaStarting && (
+          {ollamaReachable !== true && ollamaStarting && (
             <button className="btn" disabled>
               Starting…
             </button>
           )}
-          {ollamaLaunchDir && ollamaReachable !== true && !ollamaStarting && (
+          {ollamaReachable !== true && !ollamaStarting && (
             <button
               className="btn"
               disabled={ollamaLaunchBusy}

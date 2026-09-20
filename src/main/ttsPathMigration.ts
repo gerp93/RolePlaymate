@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './database/sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getTtsDir } from './ttsAudio';

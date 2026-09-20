@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from './sqlite';
 import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
 import { detectModelFamily } from '../../shared/utils/modelFamily';
 import { FAMILY_SAMPLER_PRESETS } from '../chat/modelFamilyPresets';

@@ -144,7 +144,7 @@ declare global {
         resetToDefault: () => Promise<{ success: boolean }>;
       };
       ollamaLaunch: {
-        get: () => Promise<{ dir: string | null }>;
+        get: () => Promise<{ dir: string | null; suggestedDir: string | null; effectiveDir: string | null }>;
         choose: () => Promise<
           { status: 'ok'; dir: string } | { status: 'cancelled' } | { status: 'error'; message: string }
         >;
