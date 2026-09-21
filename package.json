@@ -21,6 +21,9 @@
     "character-library"
   ],
   "author": "gerp93",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@types/diff": "^5.2.3",
     "@types/node": "^22.20.1",
