@@ -149,6 +149,7 @@ declare global {
         open: () => Promise<
           { status: 'ok' } | { status: 'error'; message: string }
         >;
+        isReachable: () => Promise<boolean>;
       };
       chatterboxHost: {
         get: () => Promise<ChatterboxHostInfo>;

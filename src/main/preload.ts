@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   hardpoint: {
     open: () => ipcRenderer.invoke('hardpoint:open'),
+    isReachable: () => ipcRenderer.invoke('hardpoint:isReachable'),
   },
 
   chatterboxHost: {

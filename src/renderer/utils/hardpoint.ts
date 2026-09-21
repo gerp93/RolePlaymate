@@ -1,14 +1,11 @@
 export const HARDPOINT_API_BASE = 'http://127.0.0.1:3921';
 
-/** True when Hardpoint's loopback API answers (embeds need this — not just the Hardpoint window). */
+/** True when Hardpoint's loopback API answers. Probes via main-process IPC —
+ * a renderer `fetch` to :3921 fails under Chromium even when Hardpoint is up
+ * (main can reach it; that's how Start Hardpoint still opens the browser). */
 export async function isHardpointReachable(): Promise<boolean> {
   try {
-    const response = await fetch(`${HARDPOINT_API_BASE}/api/status`, {
-      method: 'GET',
-      signal: AbortSignal.timeout(2_000),
-      cache: 'no-store',
-    });
-    return response.ok;
+    return await window.electronAPI.hardpoint.isReachable();
   } catch {
     return false;
   }

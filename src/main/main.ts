@@ -99,7 +99,7 @@ import { normalizeCloneVoices, stemFromVoiceName } from '../shared/utils/ttsPrev
 import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
 import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudioRequest } from '../shared/types/tts';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
-import { openHardpoint } from './hardpointLaunch';
+import { isHardpointReachable, openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import {
   chooseCharacterImage,
@@ -1481,6 +1481,7 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('hardpoint:open', () => openHardpoint());
+  ipcMain.handle('hardpoint:isReachable', () => isHardpointReachable());
 
   ipcMain.handle('chatterboxHost:get', () => ({
     host: getEffectiveChatterboxHost(),
