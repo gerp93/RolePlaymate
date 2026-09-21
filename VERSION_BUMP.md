@@ -9,3 +9,4 @@ commit shows a real diff instead of nothing.
 
 - 2026-08-17 — created this file
 - 2026-08-26 — swapped sql.js for node:sqlite; requires Electron >= 35
+- 2026-09-20 — pick up release-electron npm ci --ignore-scripts workaround for better-sqlite3@13 on Windows
