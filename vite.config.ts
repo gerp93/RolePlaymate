@@ -14,6 +14,10 @@ import path from 'path';
  * `img-src`/`media-src` allow the `rpimage:` scheme portraits and spoken audio are served
  * over (see the protocol.handle registration in main.ts), plus the `data:`/`blob:` URLs the
  * TTS playback hooks build for freshly generated clips.
+ *
+ * `frame-src` allows Hardpoint's loopback UI only (`:3921` packaged; `:5174` when Hardpoint
+ * is in Vite dev and redirects). `frame-src 'none'` blanked the Tuning → Hardpoint iframe
+ * in packaged builds even when Hardpoint itself was reachable.
  */
 const CSP = [
   "default-src 'self'",
@@ -24,7 +28,7 @@ const CSP = [
   "font-src 'self' data:",
   "connect-src 'self'",
   "object-src 'none'",
-  "frame-src 'none'",
+  "frame-src http://127.0.0.1:3921 http://localhost:3921 http://127.0.0.1:5174 http://localhost:5174",
   "base-uri 'none'",
   "form-action 'none'",
 ].join('; ');
