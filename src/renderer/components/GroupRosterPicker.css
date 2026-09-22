@@ -1,0 +1,46 @@
+.group-roster-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-roster-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.group-roster-count {
+  margin: 0;
+  font-size: 12px;
+}
+
+.group-roster-order {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-roster-order li::marker {
+  color: var(--text-muted, inherit);
+}
+
+.group-roster-order li {
+  padding-left: 4px;
+}
+
+.group-roster-order li > .group-roster-name {
+  margin-right: 8px;
+}
+
+.group-roster-move {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.group-roster-move .btn {
+  padding: 0 8px;
+  line-height: 1.6;
+}

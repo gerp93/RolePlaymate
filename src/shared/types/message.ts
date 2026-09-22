@@ -28,6 +28,13 @@ export interface Message {
    * it re-injects the new text when the reply is regenerated. Null for assistant/system
    * messages and for a user message that predates this column. */
   directions: string | null;
+  /** Which character spoke this assistant message in a group conversation. Null for user/system
+   * messages, for every message of a one-character conversation, and after that character is
+   * deleted -- `speakerName` then still labels the line. */
+  speakerCharacterId: string | null;
+  /** Snapshot of the speaker's name at the time, so a group transcript stays readable after the
+   * character is renamed away or deleted. Null wherever `speakerCharacterId` was never set. */
+  speakerName: string | null;
   /** Monotonic within a conversation, allocated inside the insert transaction. */
   seq: number;
   createdAt: string;

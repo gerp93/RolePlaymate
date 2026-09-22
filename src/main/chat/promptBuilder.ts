@@ -13,7 +13,17 @@ import {
   TEMPLATE_TAGS,
 } from './promptTemplates';
 
+/** What a group conversation adds to one speaker's prompt: which group this is, its own
+ * instructions, and everyone else in the scene. Built per speaker -- `others` never includes them. */
+export interface GroupPromptContext {
+  name: string;
+  instructions?: string | null;
+  others: { name: string; description?: string | null }[];
+}
+
 export interface PromptBuildOptions {
+  /** Set for a group conversation; absent for a one-character chat. */
+  group?: GroupPromptContext;
   personaName?: string | null;
   personaBackground?: string | null;
   /** The conversation's selected Scenario's active version text, already resolved by the
@@ -174,10 +184,31 @@ export class PromptBuilder {
       char: character.name,
       persona: userName,
       persona_background: personaBackground ? substituteMacros(personaBackground, character.name, userName) : '',
+      group: options.group?.name ?? '',
+      others: options.group
+        ? options.group.others
+            .map((other) => {
+              const description = other.description?.trim();
+              return description
+                ? `- ${other.name}: ${substituteMacros(description, other.name, userName)}`
+                : `- ${other.name}`;
+            })
+            .join('\n')
+        : '',
+      group_instructions: options.group?.instructions
+        ? substituteMacros(options.group.instructions, character.name, userName).trim()
+        : '',
       directions,
       memories: renderedMemories,
       lore: '',
     };
+
+    // Right after the character sheet (and its scenario), before the behaviour rules: who else is
+    // in the room is part of the setup, and the rules below then apply to that whole scene.
+    if (options.group) {
+      const groupContext = wrappedSection('groupContext', templates, baseValues);
+      if (groupContext) parts.push(groupContext);
+    }
 
     const characterInstructions = wrappedSection('characterInstructions', templates, baseValues);
     if (characterInstructions) parts.push(characterInstructions);
@@ -220,7 +251,12 @@ export class PromptBuilder {
       characterName: character.name,
       baseSystemPrompt,
       characterInstructions,
-      stopPhrases: buildStopPhrases(character.name, personaName, stopSettings),
+      stopPhrases: buildStopPhrases(
+        character.name,
+        personaName,
+        stopSettings,
+        options.group?.others.map((other) => other.name)
+      ),
       greeting: resolve(options.scenarioGreeting ?? ''),
     };
   }
@@ -255,7 +291,8 @@ export class PromptBuilder {
 export function buildStopPhrases(
   characterName: string | null,
   personaName: string | null,
-  settings: StopPhraseSettings = DEFAULT_STOP_PHRASES
+  settings: StopPhraseSettings = DEFAULT_STOP_PHRASES,
+  otherCharacterNames: string[] = []
 ): string[] {
   const phrases = [...settings.base];
   if (settings.useCharacterNameAsStop && characterName) {
@@ -263,6 +300,10 @@ export function buildStopPhrases(
   }
   if (settings.usePersonaNameAsStop && personaName) {
     phrases.push(`\n${personaName}:`);
+  }
+  // In a group the model would otherwise happily write the next character's line for them.
+  if (settings.useCharacterNameAsStop) {
+    for (const name of otherCharacterNames) phrases.push(`\n${name}:`);
   }
   return phrases;
 }

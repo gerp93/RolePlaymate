@@ -299,6 +299,8 @@ export function useChatSession(
         generationMs: null,
         ttsAudioPath: null,
         directions: input.directions ?? null,
+        speakerCharacterId: null,
+        speakerName: null,
         seq: Number.MAX_SAFE_INTEGER,
         createdAt: new Date().toISOString(),
       };

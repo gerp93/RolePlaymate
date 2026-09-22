@@ -71,6 +71,20 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
     "colour how {persona} is portrayed rather than being stated outright.",
     '{lore}',
   ].join('\n'),
+
+  // Only injected in a group conversation. Each member gets its own prompt, so {char} is always
+  // the one about to speak and {others} is everyone else. The transcript labels every line
+  // "Name: text", which is why the last line tells the model not to copy that convention for
+  // its own reply.
+  groupContext: [
+    '{char} is one of several characters sharing this scene with {persona}, in the group "{group}".',
+    'The other characters present:',
+    '{others}',
+    "Speak only as {char}. Never write dialogue, actions, or thoughts for the other characters or",
+    'for {persona}. Their lines appear in the conversation as "Name: text" -- do not start your own',
+    'reply with a "{char}:" label.',
+    '{group_instructions}',
+  ].join('\n'),
 };
 
 /**

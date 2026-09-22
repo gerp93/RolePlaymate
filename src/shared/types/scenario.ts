@@ -1,12 +1,14 @@
-/** One of a character's settings/situations -- split out from the old fixed, single-slot
- * "scenario" CharacterField so a character's permanent traits (personality/dialogue) don't have
- * to be duplicated onto a new character just to reuse them in a different setting. Owned
- * outright by one character (1-to-N, not shared like world lorebooks); a conversation picks at
- * most one. Independently hideable from its owning character -- see ScenarioVersion for why
- * the actual text lives there instead of here. */
+/** One of a character's (or a group's) settings/situations -- split out from the old fixed,
+ * single-slot "scenario" CharacterField so a character's permanent traits (personality/dialogue)
+ * don't have to be duplicated onto a new character just to reuse them in a different setting.
+ * Owned outright by exactly one character OR one group (1-to-N, not shared like world
+ * lorebooks); a conversation picks at most one. Independently hideable from its owner -- see
+ * ScenarioVersion for why the actual text lives there instead of here. */
 export interface Scenario {
   id: string;
-  characterId: string;
+  /** Set for a character's scenario; null for a group's. Exactly one of the two is set. */
+  characterId: string | null;
+  groupId: string | null;
   name: string;
   /** Short picker/library blurb only -- never injected into the system prompt. */
   description: string | null;
@@ -15,8 +17,10 @@ export interface Scenario {
   updatedAt: string;
 }
 
+/** Exactly one of `characterId` / `groupId` -- who the new scenario belongs to. */
 export interface CreateScenarioInput {
-  characterId: string;
+  characterId?: string;
+  groupId?: string;
   name: string;
   description?: string;
 }

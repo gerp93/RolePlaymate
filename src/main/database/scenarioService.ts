@@ -7,7 +7,8 @@ import { SecurityService } from './securityService';
 function rowToScenarioRaw(row: Record<string, unknown>): Scenario {
   return {
     id: row.id as string,
-    characterId: row.characterId as string,
+    characterId: (row.characterId as string | null) ?? null,
+    groupId: (row.groupId as string | null) ?? null,
     name: row.name as string,
     description: (row.description as string | null) ?? null,
     isHidden: !!row.isHidden,
@@ -19,6 +20,7 @@ function rowToScenarioRaw(row: Record<string, unknown>): Scenario {
 const SCENARIO_COLUMNS = `
   id,
   character_id as characterId,
+  group_id as groupId,
   name,
   description,
   is_hidden as isHidden,
@@ -48,13 +50,16 @@ const VERSION_COLUMNS = `
   updated_at as updatedAt
 `;
 
+/** Who a new scenario belongs to -- exactly one, matching the table's CHECK constraint. */
+export type ScenarioOwner = { characterId: string } | { groupId: string };
+
 /** The two versioned texts a scenario carries -- its own description and its own opening
  * greeting, each in its own table but otherwise identical in shape and rules. Table names are
  * two fixed literals here, never user input, so interpolating them directly into SQL is safe. */
 type VersionTable = 'scenario_versions' | 'scenario_greeting_versions';
 
 /**
- * A character's 1-to-N Scenarios -- see shared/types/scenario.ts. Bundles the scenario row and
+ * A character's or group's 1-to-N Scenarios -- see shared/types/scenario.ts. Bundles the scenario row and
  * its two versioned texts (content, greeting) in one service, same convention LorebookService
  * already uses for books+entries+versions, rather than the separate Character/FieldVersion
  * service split.
@@ -73,6 +78,13 @@ export class ScenarioService {
     return rows.map((r) => this.rowToScenario(r));
   }
 
+  getScenariosByGroup(groupId: string): Scenario[] {
+    const rows = this.db
+      .prepare(`SELECT ${SCENARIO_COLUMNS} FROM scenarios WHERE group_id = ? ORDER BY created_at`)
+      .all(groupId);
+    return rows.map((r) => this.rowToScenario(r));
+  }
+
   getScenario(id: string): Scenario | null {
     const row = this.db.prepare(`SELECT ${SCENARIO_COLUMNS} FROM scenarios WHERE id = ?`).get(id);
     return row ? this.rowToScenario(row) : null;
@@ -81,17 +93,19 @@ export class ScenarioService {
   /** New scenarios are never created hidden, so nothing here ever needs to encrypt. Seeds one
    * blank, active version in both tables -- same as createEntry seeding a lorebook entry -- so
    * a scenario never has zero versions of either to show. */
-  createScenario(characterId: string, name: string, description?: string | null): Scenario {
+  createScenario(owner: ScenarioOwner, name: string, description?: string | null): Scenario {
     const id = uuidv4();
     const now = new Date().toISOString();
+    const characterId = 'characterId' in owner ? owner.characterId : null;
+    const groupId = 'groupId' in owner ? owner.groupId : null;
 
     return transaction(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO scenarios (id, character_id, name, description, is_hidden, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 0, ?, ?)`
+          `INSERT INTO scenarios (id, character_id, group_id, name, description, is_hidden, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
         )
-        .run(id, characterId, name, description ?? null, now, now);
+        .run(id, characterId, groupId, name, description ?? null, now, now);
 
       for (const table of ['scenario_versions', 'scenario_greeting_versions'] as const) {
         this.db

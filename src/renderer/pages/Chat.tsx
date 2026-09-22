@@ -6,6 +6,7 @@ import { UserPersona } from '../../shared/types/userPersona';
 import { CharacterImage } from '../../shared/types/characterImage';
 import { PersonaImage } from '../../shared/types/personaImage';
 import { Scenario, ScenarioImage } from '../../shared/types/scenario';
+import { GroupWithMembers } from '../../shared/types/group';
 import { useChatSession } from '../hooks/useChatSession';
 import { Message, ttsPathForMessage } from '../../shared/types/message';
 import { unlockSpeechPlayback, useTtsPlayback } from '../hooks/useTtsPlayback';
@@ -20,6 +21,7 @@ import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightS
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
+import GroupRosterBar from '../components/chat/GroupRosterBar';
 import CroppableImage from '../components/CroppableImage';
 import ChatStartScreen, { startScreenPortraitUrl, startScreenPortraitImage } from '../components/chat/ChatStartScreen';
 import StartScreenPicker from '../components/chat/StartScreenPicker';
@@ -128,7 +130,12 @@ export default function Chat() {
   // below, though a conversation already using one keeps working (see modelOptions).
   const [disabledModels, setDisabledModels] = useState<Set<string>>(new Set());
 
+  // In a group conversation `characterId` is whoever speaks next (see the speaker effect below), so
+  // every send/continue path keeps working unchanged; `groupId` says it is a group at all. On the
+  // start screen the two are exclusive -- picking a group clears the character and vice versa.
   const [characterId, setCharacterId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [groups, setGroups] = useState<GroupWithMembers[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [scenarioId, setScenarioId] = useState('');
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -220,6 +227,9 @@ export default function Chat() {
     portraitsObserverRef.current = observer;
   }, []);
   const ttsCharacterVoiceRef = useRef<CharacterTtsVoice | null>(null);
+  // Which voice speaks a given reply: its own speaker's in a group, the one character's otherwise.
+  // A ref because useChatSession's onReplyFinished closes over the first render's callbacks.
+  const ttsVoiceForMessageRef = useRef<(message: Message) => CharacterTtsVoice | null>(() => null);
   const ttsPersonaVoiceRef = useRef<CharacterTtsVoice | null>(null);
   const ttsNarratorVoiceRef = useRef<CharacterTtsVoice | null>(null);
   const ttsCharacterTrackRef = useRef(tts.characterTrack);
@@ -287,7 +297,7 @@ export default function Chat() {
       tts.speak(
         message.content,
         {
-          speakerVoice: ttsCharacterVoiceRef.current,
+          speakerVoice: ttsVoiceForMessageRef.current(message),
           narratorVoice: ttsNarratorVoiceRef.current,
         },
         {
@@ -339,6 +349,7 @@ export default function Chat() {
 
   const resetStartScreenSelections = useCallback(() => {
     setCharacterId('');
+    setGroupId('');
     setPersonaId('');
     setScenarioId('');
     setModel('');
@@ -417,12 +428,14 @@ export default function Chat() {
   useEffect(() => {
     void (async () => {
       await window.electronAPI.conversations.purgeDrafts(conversationId ?? undefined);
-      const [chars, people] = await Promise.all([
+      const [chars, people, groupList] = await Promise.all([
         window.electronAPI.characters.getAll(),
         window.electronAPI.personas.getAll(),
+        window.electronAPI.groups.getAll(),
       ]);
       setCharacters(chars);
       setPersonas(people);
+      setGroups(groupList);
       await refreshConversations();
       await checkOllamaConnection();
     })();
@@ -452,6 +465,7 @@ export default function Chat() {
         return;
       }
       if (conversation.characterId) setCharacterId(conversation.characterId);
+      setGroupId(conversation.groupId ?? '');
       setPersonaId(conversation.userPersonaId ?? '');
       setScenarioId(conversation.scenarioId ?? '');
       setModel((current) => conversation.model || current);
@@ -523,14 +537,21 @@ export default function Chat() {
       .then((books) => setPersonaWorldBooks(books.world.map((b) => b.name)));
   }, [personaId]);
 
-  // A character's scenario list, loaded alongside its images -- same convention.
+  // A character's (or, in a group chat, the group's) scenario list, loaded alongside its images --
+  // same convention. Keyed on the group rather than the current speaker, which changes every turn.
+  const scenarioOwnerKey = groupId ? `group:${groupId}` : characterId;
   useEffect(() => {
+    if (groupId) {
+      void window.electronAPI.scenarios.getByGroup(groupId).then(setScenarios);
+      return;
+    }
     if (!characterId) {
       setScenarios([]);
       return;
     }
     void window.electronAPI.scenarios.getByCharacter(characterId).then(setScenarios);
-  }, [characterId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioOwnerKey]);
 
   useEffect(() => {
     if (scenarioId) {
@@ -595,9 +616,26 @@ export default function Chat() {
 
   const character = characters.find((c) => c.id === characterId) ?? null;
   const persona = personas.find((p) => p.id === personaId) ?? null;
+  const group = groups.find((g) => g.id === groupId) ?? null;
+  const rosterCharacters = useMemo(
+    () =>
+      group
+        ? group.members
+            .map((m) => characters.find((c) => c.id === m.characterId))
+            .filter((c): c is Character => !!c)
+        : [],
+    [group, characters]
+  );
   const characterVoice = character?.ttsVoice ?? null;
   const personaVoice = persona?.ttsVoice ?? null;
-  const characterSpeechAvailable = Boolean(characterVoice || narratorVoice);
+  const voiceForMessage = (message: Message): CharacterTtsVoice | null =>
+    message.speakerCharacterId
+      ? (characters.find((c) => c.id === message.speakerCharacterId)?.ttsVoice ?? null)
+      : characterVoice;
+  ttsVoiceForMessageRef.current = voiceForMessage;
+  const characterSpeechAvailable = Boolean(
+    (groupId ? rosterCharacters.some((c) => c.ttsVoice) : characterVoice) || narratorVoice
+  );
   const personaSpeechAvailable = Boolean(personaVoice || narratorVoice);
   const ttsAvailable = characterSpeechAvailable || personaSpeechAvailable;
   const canSplitCharacter = Boolean(characterVoice && narratorVoice && !voicesMatch(characterVoice, narratorVoice));
@@ -605,6 +643,27 @@ export default function Chat() {
   ttsCharacterVoiceRef.current = characterVoice;
   ttsPersonaVoiceRef.current = personaVoice;
   ttsNarratorVoiceRef.current = narratorVoice;
+
+  // A group's next speaker: whoever follows the last reply's speaker on the roster (the greeting
+  // counts as a reply). Keyed on the reply's id, not the message list, so a manual pick from the
+  // roster bar survives the optimistic user message and lasts until a reply actually lands.
+  const lastGroupReply = useMemo(() => {
+    if (!groupId) return null;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const m = session.messages[i];
+      if (m.role === 'assistant' && m.speakerCharacterId && !m.id.startsWith('pending-')) return m;
+    }
+    return null;
+  }, [groupId, session.messages]);
+  const rosterKey = group ? group.members.map((m) => m.characterId).join(',') : '';
+  useEffect(() => {
+    if (!conversationId || !group) return;
+    const roster = group.members.map((m) => m.characterId);
+    if (roster.length === 0) return;
+    const last = lastGroupReply?.speakerCharacterId ? roster.indexOf(lastGroupReply.speakerCharacterId) : -1;
+    setCharacterId(roster[(last + 1) % roster.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, group?.id, rosterKey, lastGroupReply?.id]);
 
   const speakMessage = (
     message: Message,
@@ -614,7 +673,7 @@ export default function Chat() {
     tts.speak(
       message.content,
       {
-        speakerVoice: isAssistant ? characterVoice : personaVoice,
+        speakerVoice: isAssistant ? voiceForMessage(message) : personaVoice,
         narratorVoice,
       },
       {
@@ -638,9 +697,16 @@ export default function Chat() {
   // Already scoped to the selected character (loaded per characterId, see the effect above).
   const visibleScenarios = scenarios.filter((s) => hiddenUnlocked || !s.isHidden);
   const selectedScenario = scenarios.find((s) => s.id === scenarioId) ?? null;
+  // A group is hidden along with any of its members, matching what the main process refuses to
+  // generate for (see assertHiddenContentAccessible). Groups under two characters can't chat.
+  const isGroupHidden = (g: GroupWithMembers) =>
+    g.isHidden || g.members.some((m) => characters.find((ch) => ch.id === m.characterId)?.isHidden);
+  const visibleGroups = groups.filter((g) => g.members.length >= 2 && (hiddenUnlocked || !isGroupHidden(g)));
+  const groupIsHidden = Boolean(group && isGroupHidden(group));
   const isConversationHidden = (c: Conversation) =>
     Boolean(
       (c.characterId && characters.find((ch) => ch.id === c.characterId)?.isHidden) ||
+        (c.groupId && groups.some((g) => g.id === c.groupId && isGroupHidden(g))) ||
         (c.userPersonaId && personas.find((p) => p.id === c.userPersonaId)?.isHidden)
     );
   const visibleConversations = conversations.filter(
@@ -653,7 +719,9 @@ export default function Chat() {
   // messages · date" line wraps unpredictably in the narrow sidebar and can strand a lone
   // "· date" fragment on its own row. Splitting means each row wraps/truncates on its own.
   const conversationListParticipants = (c: ConversationListItem): string => {
-    const charName = characters.find((ch) => ch.id === c.characterId)?.name ?? 'Assistant';
+    const charName = c.groupId
+      ? `${c.groupName ?? 'Group'} (group)`
+      : (characters.find((ch) => ch.id === c.characterId)?.name ?? 'Assistant');
     const personaName = c.userPersonaId ? personas.find((p) => p.id === c.userPersonaId)?.name : null;
     return personaName ? `${charName} · ${personaName}` : charName;
   };
@@ -671,16 +739,17 @@ export default function Chat() {
   const selectionLocked = Boolean(conversationId && session.messages.length > 0);
 
   const startConversation = useCallback(async () => {
-    if (!characterId || !personaId || !model) return;
+    if ((!characterId && !groupId) || !personaId || !model) return;
     if (conversationId) await discardDraftConversation(conversationId);
     const conversation = await window.electronAPI.conversations.create({
-      characterId,
+      characterId: groupId ? undefined : characterId,
+      groupId: groupId || undefined,
       model,
       userPersonaId: personaId,
       scenarioId: scenarioId || undefined,
     });
     navigate(`/chat/${conversation.id}`);
-  }, [characterId, conversationId, discardDraftConversation, model, personaId, scenarioId, navigate]);
+  }, [characterId, groupId, conversationId, discardDraftConversation, model, personaId, scenarioId, navigate]);
 
   const handleDuplicateConversation = useCallback(async () => {
     if (!conversationId) return;
@@ -887,11 +956,11 @@ export default function Chat() {
   // would keep showing decrypted content on screen after the toggle says locked. Also covers
   // reaching a hidden conversation's URL directly while already locked.
   useEffect(() => {
-    if (!hiddenUnlocked && conversationId && (character?.isHidden || persona?.isHidden)) {
+    if (!hiddenUnlocked && conversationId && (character?.isHidden || persona?.isHidden || groupIsHidden)) {
       clearSessionActiveConversationId();
       navigate('/chat');
     }
-  }, [hiddenUnlocked, conversationId, character, persona, navigate]);
+  }, [hiddenUnlocked, conversationId, character, persona, groupIsHidden, navigate]);
 
   const installedModels = useMemo(
     () => (modelState.status === 'ready' ? modelState.models : []),
@@ -917,7 +986,10 @@ export default function Chat() {
     [modelOptions, installedModels]
   );
 
-  const canChat = Boolean(conversationId && characterId && model);
+  // In a group the speaker must be on the roster: right after opening one, `characterId` can still
+  // hold the previous conversation's character until the speaker effect has run.
+  const speakerOnRoster = !groupId || rosterCharacters.some((c) => c.id === characterId);
+  const canChat = Boolean(conversationId && characterId && model && speakerOnRoster);
 
   const handleShowPortraitsChange = useCallback((value: boolean) => {
     setShowPortraits(value);
@@ -953,7 +1025,17 @@ export default function Chat() {
   const personaMarginPortrait = portraitsActive ? personaPortrait : null;
   const showStartScreen = !conversationId;
 
-  const startCharacterPortrait = useMemo(() => startScreenPortraitImage(characterImages), [characterImages]);
+  // A group has no portrait of its own: the start screen shows its first member that has one.
+  const startCharacterPortrait = useMemo(() => {
+    if (group) {
+      for (const member of group.members) {
+        const portrait = startScreenPortraitImage(startCharacterCovers[member.characterId] ?? []);
+        if (portrait) return portrait;
+      }
+      return null;
+    }
+    return startScreenPortraitImage(characterImages);
+  }, [group, startCharacterCovers, characterImages]);
 
   const startScenarioPortrait = useMemo(() => {
     if (!scenarioId) return null;
@@ -1097,11 +1179,13 @@ export default function Chat() {
         {showStartScreen ? (
           <ChatStartScreen
             characters={visibleCharacters}
+            groups={visibleGroups}
             personas={visiblePersonas}
             scenarios={visibleScenarios}
             modelPickerOptions={modelPickerOptions}
             modelsReady={modelState.status === 'ready'}
             characterId={characterId}
+            groupId={groupId}
             personaId={personaId}
             scenarioId={scenarioId}
             model={model}
@@ -1117,6 +1201,12 @@ export default function Chat() {
             onCropSaved={refreshPortraitCrops}
             onCharacterChange={(id) => {
               setCharacterId(id);
+              setGroupId('');
+              setScenarioId('');
+            }}
+            onGroupChange={(id) => {
+              setGroupId(id);
+              setCharacterId('');
               setScenarioId('');
             }}
             onPersonaChange={setPersonaId}
@@ -1133,7 +1223,14 @@ export default function Chat() {
           {portraitsActive && (
           <div className="chat-column chat-column-side chat-column-side-grown">
             <div className="chat-column-header">
-              {selectionLocked ? (
+              {groupId ? (
+                // A group chat's cast lives in the roster bar above the transcript; the group itself
+                // can't be swapped for a character mid-conversation, so this is just a label.
+                <div className="chat-header-static">
+                  <span className="chat-header-static-value">{group?.name ?? 'Group'}</span>
+                  <CastDescription text={group?.description} />
+                </div>
+              ) : selectionLocked ? (
                 // Can't be changed once the conversation has real turns in it -- the transcript
                 // is already written from this character's point of view, so a dropdown here
                 // would just offer a choice that can't actually be made. Plain text instead.
@@ -1211,6 +1308,19 @@ export default function Chat() {
                 <CastDescription text={selectedScenario.description} />
               </header>
             )}
+            {group && (
+              <GroupRosterBar
+                groupName={group.name}
+                members={rosterCharacters.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                  avatarUrl: startCharacterCoverUrls[c.id] ?? null,
+                }))}
+                selectedId={characterId}
+                onSelect={setCharacterId}
+                disabled={session.isGenerating}
+              />
+            )}
             {session.error && (
               <div className="chat-banner chat-banner-error">
                 <strong>That turn failed.</strong> {session.error}
@@ -1248,6 +1358,7 @@ export default function Chat() {
                   personaName={persona?.name ?? 'You'}
                   characterImages={characterImages}
                   personaImages={personaImages}
+                  speakerImages={groupId ? startCharacterCovers : undefined}
                   tts={
                     ttsAvailable
                       ? {

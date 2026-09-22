@@ -166,19 +166,27 @@ Manual), not a chat error path.
 
 ## Scenarios
 
-A character's settings/situations -- owned 1-to-N by that character (not
-shared many-to-many like world lorebooks), each independently versioned and
-independently hideable via the same PIN-lock as characters/personas/
-lorebooks. Split out from what used to be two fixed, single-slot
-`CharacterField`s (`scenario` and `greeting`) so a character's permanent
-traits (personality/dialogue) never have to be duplicated onto a new
-character just to give it a different setting. `FieldType` no longer
-includes either; an existing character's old scenario/greeting text is
-migrated on first startup after upgrade into a "Default" Scenario
-(`migrateCharacterScenarioFieldToScenarios`/
+A settings/situations list owned 1-to-N by either a character or a
+[Group](#groups) -- never both, enforced by a `CHECK` on `scenarios`
+(`character_id`/`group_id`, exactly one non-null) -- not shared many-to-many
+like world lorebooks, each independently versioned and independently
+hideable via the same PIN-lock as characters/personas/lorebooks. Split out
+from what used to be two fixed, single-slot `CharacterField`s (`scenario`
+and `greeting`) so a character's permanent traits (personality/dialogue)
+never have to be duplicated onto a new character just to give it a different
+setting. `FieldType` no longer includes either; an existing character's old
+scenario/greeting text is migrated on first startup after upgrade into a
+"Default" Scenario (`migrateCharacterScenarioFieldToScenarios`/
 `migrateCharacterGreetingFieldToScenarios` in `schema.ts`, the latter
 reusing the former's scenario when one was already created for that
 character) -- the old `character_fields` rows are left in place, unused.
+`scenarios.character_id` was `NOT NULL` before groups existed;
+`migrateScenariosToNullableOwner` rebuilds the table on first startup after
+upgrade (SQLite can't relax `NOT NULL` in place), with foreign keys
+deliberately toggled off around the rebuild -- they'd otherwise cascade-drop
+every version/greeting/image the moment the old table is dropped -- and a
+`PRAGMA foreign_key_check` after it, so a bad rebuild fails loudly instead of
+silently orphaning rows.
 
 A scenario carries **two** independently versioned texts -- its descriptive
 content (`scenario_versions`) and its own opening greeting
@@ -205,6 +213,79 @@ portrait (`conversationService.setConversationScenario` seeds
 `character_image_mode`/`scenario_image_id` from it). `character_image_id` and
 `scenario_image_id` pin the same portrait slot and are mutually exclusive --
 picking one clears the other.
+
+## Groups
+
+A named ensemble of 2-4 characters (`MIN_GROUP_CHARACTERS`/
+`MAX_GROUP_CHARACTERS` in `shared/types/group.ts`) that chat together -- a
+peer of Character, not a conversation setting: its own row
+(`character_groups`), its own hide flag, and its own [Scenarios](#scenarios)
+(group-owned, via `scenario_id`'s sibling `group_id`). `GroupService`
+mirrors `CharacterService`'s shape (create/update/setHidden/delete). The
+roster (`character_group_members`, many-to-many with `position` for display
+and greeting order) is **live**, not a snapshot: editing it changes every
+conversation started from that group immediately, and past transcript lines
+keep whichever speaker they were written with regardless of later roster
+edits. A `conversations` row is either a character's (`character_id`) or a
+group's (`group_id`), never both; `messages.speaker_character_id` plus a
+snapshotted `speaker_name` records who spoke an assistant line in a group
+conversation (`speaker_name` is what keeps an old line labeled after that
+character is deleted -- `speaker_character_id` goes `NULL` via `ON DELETE
+SET NULL`, `speaker_name` doesn't).
+
+Ollama only has `user`/`assistant` roles, so a group turn is built per
+*speaker*: `chat/groupHistory.ts`'s `buildGroupHistory` walks the stored
+transcript and turns it into that one character's view -- their own past
+lines are `assistant`, everyone else's (the persona's and every other
+character's) are `user`, prefixed `Name: ` and merged when two land back to
+back (most chat templates expect strict alternation). This is why a group
+conversation's prompt is never built from `ChatSession.history`, the flat
+per-conversation cache every solo chat uses -- `ChatSessionManager` rebuilds
+it fresh from the database on every group turn instead
+(`getGroupHistory`/`getGroupTurn`). A redo has to replay the *exact* messages
+that turn was first sent, so `PendingTurn.replayMessages` snapshots them
+rather than trusting a rebuild to reproduce the same merge after the
+conversation has moved on; `reconstructGroupPending` covers the same case
+after an app restart, approximating what it can't recover (per-turn
+directions, retrieved memories, lore) the same way `reconstructPending`
+already does for solo chats.
+
+`PromptBuilder` takes an optional `group: GroupPromptContext` (name,
+instructions, the *other* roster members with their descriptions --
+`{{char}}` resolves to whichever character is speaking, so a shared
+scenario's text should use names rather than assume one fixed speaker). When
+present it inserts a `[GROUP CHAT]` section (new `groupContext` prompt
+template) right after the character/scenario block and before the behaviour
+rules, and extends `buildStopPhrases` with `\nName:` for every other member
+-- otherwise a local model happily keeps writing the next character's line
+for them. `buildStyleReminder` gets the same "don't write for Alice, Bram,
+or the persona" nudge appended per turn, since that's rebuilt fresh on every
+generation (including redo) and templates are stored/versioned so an
+existing install won't just start seeing new default wording. A model still
+sometimes opens a reply with its own `"Name: "` label anyway (it just read
+that convention off the transcript) -- `stripSelfLabel` strips that one
+narrow pattern (plain or markdown-emphasis-wrapped, only at the very start)
+before the reply is saved, applied to the raw model output *before*
+`finalizeReply`'s markdown formatting, or `"Bram:"` becomes `"*Bram:*"`
+first and no longer matches.
+
+Two smaller consequences of "several characters, one conversation": lore is
+still scanned per current *speaker* (`getEntriesForCharacter(speakerId)`),
+so a personal lorebook only ever reaches its own owner even mid-group, same
+guarantee as solo chat; and `conversationService.appendMessage`'s durable
+`characters.message_count` counter credits the line's speaker in a group
+conversation rather than the conversation's (nonexistent) owning character.
+
+There is deliberately no saved-vs-quick-group distinction yet (see the
+group-chat plan this section was written from) -- every group today is a
+deliberate library entry created from the Groups page, picked from the same
+start-screen picker a character is (prefixed `group:` so one dropdown can
+offer both, see `GROUP_PICKER_PREFIX`). The chat page tracks a group
+conversation's *next speaker* as ordinary `characterId` state -- advanced
+round-robin around the roster after each reply (`Chat.tsx`'s group-turn
+effect) -- so `chat:send`/`chat:continue`'s existing one-speaker-at-a-time
+IPC shape needed no changes; `GroupRosterBar` lets the user override that
+pick before sending.
 
 ## Memories
 

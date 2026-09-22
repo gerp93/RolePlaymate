@@ -15,9 +15,10 @@ const FIELD_META: Record<TemplateField, { label: string; when: string }> = {
   worldLore: { label: 'World Lore', when: 'Injected when a world-book entry fired this turn.' },
   personalLore: { label: "Character's Personal History", when: 'Injected when one of the character’s own lore entries fired.' },
   personaLore: { label: "Persona's Personal History", when: 'Injected when one of the persona’s own lore entries fired.' },
+  groupContext: { label: 'Group Chat', when: 'Injected only in a group conversation, so each member knows who else is in the scene.' },
 };
 
-/** Same six placeholders are valid in every field below, whether or not that field's default
+/** The same placeholders are valid in every field below, whether or not that field's default
  * text happens to use all of them -- see promptBuilder.ts's wrappedSection. */
 const PLACEHOLDER_LEGEND: { token: string; meaning: string }[] = [
   { token: '{char}', meaning: "The character's name." },
@@ -26,6 +27,9 @@ const PLACEHOLDER_LEGEND: { token: string; meaning: string }[] = [
   { token: '{directions}', meaning: "This turn's scene directions (empty unless the composer's Directions field was used)." },
   { token: '{memories}', meaning: 'Retrieved memories, pre-rendered as a "- " bulleted list (empty unless any fired).' },
   { token: '{lore}', meaning: "This section's own matched lore entries, pre-rendered (empty for sections with no associated lore)." },
+  { token: '{group}', meaning: "The group's name (group chats only; empty otherwise)." },
+  { token: '{others}', meaning: 'The other characters in the group, as a "- Name: description" list (group chats only).' },
+  { token: '{group_instructions}', meaning: "The group's own instructions text (group chats only)." },
 ];
 
 /** Enough rows to show the whole thing without an initial scroll. */

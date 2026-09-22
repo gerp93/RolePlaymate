@@ -22,6 +22,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Library',
     items: [
       { to: '/characters', label: 'Characters', end: true },
+      { to: '/groups', label: 'Groups' },
       { to: '/personas', label: 'Personas' },
       { to: '/world-books', label: 'World Books' },
     ],
