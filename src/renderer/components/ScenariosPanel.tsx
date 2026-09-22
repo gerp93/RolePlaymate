@@ -7,20 +7,28 @@ import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import './lore/Lore.css';
 
 /**
- * A character's 1-to-N Scenarios -- settings/situations a conversation can pick from, split
+ * A character's (or group's) 1-to-N Scenarios -- settings/situations a conversation can pick from, split
  * out from the old fixed "scenario" CharacterField so a character's permanent traits
  * (personality/dialogue) never have to be duplicated onto a new character just to give it a
  * different setting. A scenario can be hidden independently of its owning character -- see
- * ScenarioEditor.
+ * ScenarioEditor. Pass exactly one of `characterId` / `groupId` -- a group's scenarios are the shared
+ * setting for its whole ensemble.
  */
-export default function ScenariosPanel({ characterId }: { characterId: string }) {
+export default function ScenariosPanel(props: { characterId: string } | { groupId: string }) {
+  const characterId = 'characterId' in props ? props.characterId : undefined;
+  const groupId = 'groupId' in props ? props.groupId : undefined;
+  const subject = groupId ? 'group' : 'character';
   const { hiddenUnlocked } = useSecurity();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [newName, setNewName] = useState('');
 
   const refresh = useCallback(async () => {
-    setScenarios(await window.electronAPI.scenarios.getByCharacter(characterId));
-  }, [characterId]);
+    setScenarios(
+      groupId
+        ? await window.electronAPI.scenarios.getByGroup(groupId)
+        : await window.electronAPI.scenarios.getByCharacter(characterId!)
+    );
+  }, [characterId, groupId]);
 
   // hiddenUnlocked: re-fetch on every lock/unlock so a scenario's ciphertext name updates
   // immediately instead of only after a manual reload -- same convention as every other
@@ -31,7 +39,7 @@ export default function ScenariosPanel({ characterId }: { characterId: string })
 
   const addScenario = async () => {
     if (!newName.trim()) return;
-    await window.electronAPI.scenarios.create({ characterId, name: newName.trim() });
+    await window.electronAPI.scenarios.create({ characterId, groupId, name: newName.trim() });
     setNewName('');
     await refresh();
   };
@@ -50,9 +58,9 @@ export default function ScenariosPanel({ characterId }: { characterId: string })
         <div>
           <h2>Scenarios</h2>
           <p className="text-muted">
-            Settings or situations to drop this character into, each with its own opening
+            Settings or situations to drop this {subject} into, each with its own opening
             greeting and image. A chat picks at most one -- leave none selected for the
-            character's plain default behavior (and no opening greeting).
+            {subject}'s plain default behavior (and no opening greeting).
           </p>
         </div>
         <div className="lore-new-entry">
@@ -77,7 +85,7 @@ export default function ScenariosPanel({ characterId }: { characterId: string })
 
       <ul className="lore-entry-list">
         {visibleScenarios.length === 0 && (
-          <li className="text-muted">No scenarios yet -- add one above, or leave this character as-is.</li>
+          <li className="text-muted">No scenarios yet -- add one above, or leave this {subject} as-is.</li>
         )}
         {visibleScenarios.map((scenario) => (
           <ScenarioEditor

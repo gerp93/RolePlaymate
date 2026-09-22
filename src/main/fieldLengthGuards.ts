@@ -2,6 +2,7 @@ import { FIELD_LIMITS, assertMaxLength } from '../shared/fieldLimits';
 import type { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import type { CharacterTtsVoice } from '../shared/types/tts';
 import type { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
+import type { CreateGroupInput, UpdateGroupInput } from '../shared/types/group';
 import type { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
 import type {
   CreateLorebookInput,
@@ -97,6 +98,18 @@ export function guardCharacterUpdate(input: UpdateCharacterInput): void {
   guardName(input.name);
   guardShort(input.description);
   if ('ttsVoice' in input) guardTtsVoice(input.ttsVoice);
+}
+
+export function guardGroupCreate(input: CreateGroupInput): void {
+  guardName(input.name);
+  guardShort(input.description);
+  guardProseContent(input.instructions ?? '', 'Group instructions');
+}
+
+export function guardGroupUpdate(input: UpdateGroupInput): void {
+  guardName(input.name);
+  guardShort(input.description);
+  guardProseContent(input.instructions ?? '', 'Group instructions');
 }
 
 export function guardScenarioCreate(input: CreateScenarioInput): void {

@@ -1,6 +1,8 @@
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import CharacterList from './pages/CharacterList';
 import CharacterDetail from './pages/CharacterDetail';
+import GroupList from './pages/GroupList';
+import GroupDetail from './pages/GroupDetail';
 import Settings from './pages/Settings';
 import PromptSettings from './pages/PromptSettings';
 import ModelTuning from './pages/ModelTuning';
@@ -26,6 +28,8 @@ function App() {
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/characters" element={<CharacterList />} />
               <Route path="/characters/:characterId" element={<CharacterDetail />} />
+              <Route path="/groups" element={<GroupList />} />
+              <Route path="/groups/:groupId" element={<GroupDetail />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/chat/:conversationId" element={<Chat />} />
               <Route path="/personas" element={<PersonaList />} />

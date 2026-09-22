@@ -25,6 +25,7 @@ const CONVERSATION_COLUMNS = `
   title,
   model,
   character_id as characterId,
+  group_id as groupId,
   user_persona_id as userPersonaId,
   scenario_id as scenarioId,
   character_image_mode as characterImageMode,
@@ -42,6 +43,7 @@ const CONVERSATION_COLUMNS_FROM_C = `
   c.title,
   c.model,
   c.character_id as characterId,
+  c.group_id as groupId,
   c.user_persona_id as userPersonaId,
   c.scenario_id as scenarioId,
   c.character_image_mode as characterImageMode,
@@ -64,6 +66,8 @@ const MESSAGE_COLUMNS = `
   generation_ms as generationMs,
   tts_audio_path as ttsAudioPath,
   directions,
+  speaker_character_id as speakerCharacterId,
+  speaker_name as speakerName,
   seq,
   created_at as createdAt
 `;
@@ -117,6 +121,7 @@ function rowToConversationListItem(row: Record<string, unknown>): ConversationLi
     userMessageCount: Number(row.userMessageCount ?? 0),
     lastMessageAt: (row.lastMessageAt as string | null) ?? null,
     scenarioName: (row.scenarioName as string | null | undefined) ?? null,
+    groupName: (row.groupName as string | null | undefined) ?? null,
   };
 }
 
@@ -126,6 +131,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     title: row.title as string,
     model: row.model as string,
     characterId: (row.characterId as string | null) ?? null,
+    groupId: (row.groupId as string | null) ?? null,
     userPersonaId: (row.userPersonaId as string | null) ?? null,
     scenarioId: (row.scenarioId as string | null) ?? null,
     characterImageMode: row.characterImageMode as ImageMode,
@@ -150,6 +156,8 @@ function rowToMessage(row: Record<string, unknown>): Message {
     generationMs: (row.generationMs as number | null) ?? null,
     ttsAudioPath: (row.ttsAudioPath as string | null) ?? null,
     directions: (row.directions as string | null) ?? null,
+    speakerCharacterId: (row.speakerCharacterId as string | null) ?? null,
+    speakerName: (row.speakerName as string | null) ?? null,
     seq: row.seq as number,
     createdAt: row.createdAt as string,
   };
@@ -228,11 +236,13 @@ export class ConversationService {
            ${CONVERSATION_COLUMNS_FROM_C},
            s.name AS scenarioName,
            s.is_hidden AS scenarioIsHidden,
+           g.name AS groupName,
            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS messageCount,
            (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user') AS userMessageCount,
            (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS lastMessageAt
          FROM conversations c
          LEFT JOIN scenarios s ON s.id = c.scenario_id
+         LEFT JOIN character_groups g ON g.id = c.group_id
          WHERE NOT (${GREETING_ONLY_DRAFT_WHERE})
          ORDER BY COALESCE(lastMessageAt, c.updated_at) DESC
          LIMIT ?`
@@ -294,7 +304,17 @@ export class ConversationService {
    * The caller resolves it (PromptBuilder returns the character's active, macro-substituted
    * greeting) so this service stays purely about storage.
    */
-  createConversation(input: CreateConversationInput & { greeting?: string }): Conversation {
+  createConversation(
+    input: CreateConversationInput & {
+      greeting?: string;
+      /** Who speaks the greeting -- a group's first roster member. Unused for a one-character
+       * conversation, whose greeting is simply that character's. */
+      greetingSpeakerId?: string;
+    }
+  ): Conversation {
+    if (Boolean(input.characterId) === Boolean(input.groupId)) {
+      throw new Error('A conversation needs exactly one of a character or a group');
+    }
     const id = uuidv4();
     const now = new Date().toISOString();
     const scenarioId = input.scenarioId ?? null;
@@ -304,15 +324,16 @@ export class ConversationService {
       this.db
         .prepare(
           `INSERT INTO conversations
-             (id, title, model, character_id, user_persona_id, scenario_id,
+             (id, title, model, character_id, group_id, user_persona_id, scenario_id,
               character_image_mode, character_image_id, scenario_image_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
           input.title?.trim() || DEFAULT_CONVERSATION_TITLE,
           input.model,
-          input.characterId,
+          input.characterId ?? null,
+          input.groupId ?? null,
           input.userPersonaId ?? null,
           scenarioId,
           defaultImage.mode,
@@ -323,7 +344,12 @@ export class ConversationService {
         );
 
       if (input.greeting?.trim()) {
-        this.appendMessage({ conversationId: id, role: 'assistant', content: input.greeting });
+        this.appendMessage({
+          conversationId: id,
+          role: 'assistant',
+          content: input.greeting,
+          speakerCharacterId: input.greetingSpeakerId ?? null,
+        });
       }
 
       return this.getConversation(id)!;
@@ -392,17 +418,21 @@ export class ConversationService {
    * existing one instead of the picker's defaults. `greeting` is resolved by the caller exactly
    * like conversations:create does (PromptBuilder owns that), keeping this service purely about
    * storage. */
-  duplicateConversation(sourceId: string, greeting?: string): Conversation {
+  duplicateConversation(sourceId: string, greeting?: string, greetingSpeakerId?: string): Conversation {
     const source = this.getConversation(sourceId);
     if (!source) throw new Error(`Conversation ${sourceId} not found`);
-    if (!source.characterId) throw new Error('Cannot duplicate a conversation with no character');
+    if (!source.characterId && !source.groupId) {
+      throw new Error('Cannot duplicate a conversation with no character or group');
+    }
 
     const created = this.createConversation({
-      characterId: source.characterId,
+      characterId: source.characterId ?? undefined,
+      groupId: source.groupId ?? undefined,
       model: source.model,
       userPersonaId: source.userPersonaId ?? undefined,
       scenarioId: source.scenarioId ?? undefined,
       greeting,
+      greetingSpeakerId,
     });
 
     return this.setImageMode(created.id, {
@@ -430,16 +460,17 @@ export class ConversationService {
       this.db
         .prepare(
           `INSERT INTO conversations
-             (id, title, model, character_id, user_persona_id, scenario_id,
+             (id, title, model, character_id, group_id, user_persona_id, scenario_id,
               character_image_mode, character_image_id, scenario_image_id,
               persona_image_mode, persona_image_id, keep_forever, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           newId,
           DEFAULT_CONVERSATION_TITLE,
           source.model,
           source.characterId,
+          source.groupId,
           source.userPersonaId,
           source.scenarioId,
           source.characterImageMode,
@@ -460,10 +491,21 @@ export class ConversationService {
         messageIdMap.set(message.id, newMessageId);
         this.db
           .prepare(
-            `INSERT INTO messages (id, conversation_id, role, content, directions, seq, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO messages
+               (id, conversation_id, role, content, directions, speaker_character_id, speaker_name, seq, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
-          .run(newMessageId, newId, message.role, message.content, message.directions, message.seq, message.createdAt);
+          .run(
+            newMessageId,
+            newId,
+            message.role,
+            message.content,
+            message.directions,
+            message.speakerCharacterId,
+            message.speakerName,
+            message.seq,
+            message.createdAt
+          );
 
         const variantRows = this.db
           .prepare(
@@ -765,11 +807,21 @@ export class ConversationService {
     role: MessageRole;
     content: string;
     directions?: string | null;
+    /** Who spoke this line, for an assistant message in a group conversation. Its name is
+     * snapshotted onto the row so the label survives the character being renamed or deleted. */
+    speakerCharacterId?: string | null;
   }): Message {
     const id = uuidv4();
     const now = new Date().toISOString();
 
     return transaction(this.db, () => {
+      const speakerCharacterId = input.speakerCharacterId ?? null;
+      const speakerName = speakerCharacterId
+        ? ((this.db.prepare(`SELECT name FROM characters WHERE id = ?`).get(speakerCharacterId)?.name as
+            | string
+            | undefined) ?? null)
+        : null;
+
       const { nextSeq } = this.db
         .prepare(
           `SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM messages WHERE conversation_id = ?`
@@ -778,10 +830,21 @@ export class ConversationService {
 
       this.db
         .prepare(
-          `INSERT INTO messages (id, conversation_id, role, content, directions, seq, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO messages
+             (id, conversation_id, role, content, directions, speaker_character_id, speaker_name, seq, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(id, input.conversationId, input.role, input.content, input.directions ?? null, nextSeq, now);
+        .run(
+          id,
+          input.conversationId,
+          input.role,
+          input.content,
+          input.directions ?? null,
+          speakerName ? speakerCharacterId : null,
+          speakerName,
+          nextSeq,
+          now
+        );
 
       this.db
         .prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
@@ -795,10 +858,13 @@ export class ConversationService {
       const owner = this.db
         .prepare(`SELECT character_id as characterId, user_persona_id as userPersonaId FROM conversations WHERE id = ?`)
         .get(input.conversationId) as unknown as { characterId: string | null; userPersonaId: string | null };
-      if (owner.characterId) {
+      // A group conversation has no owning character: credit the speaker of an assistant line
+      // instead, and nobody for the user's own lines (only the persona's counter moves there).
+      const countedCharacterId = owner.characterId ?? speakerCharacterId;
+      if (countedCharacterId) {
         this.db
           .prepare(`UPDATE characters SET message_count = message_count + 1 WHERE id = ?`)
-          .run(owner.characterId);
+          .run(countedCharacterId);
       }
       if (owner.userPersonaId) {
         this.db
@@ -825,10 +891,11 @@ export class ConversationService {
     content: string,
     model: string,
     debug: ChatDebugInfo,
-    generationMs?: number
+    generationMs?: number,
+    speakerCharacterId?: string | null
   ): { message: Message; variant: MessageVariant } {
     return transaction(this.db, () => {
-      const message = this.appendMessage({ conversationId, role: 'assistant', content });
+      const message = this.appendMessage({ conversationId, role: 'assistant', content, speakerCharacterId });
       const variant = this.addVariant(message.id, content, model, debug, generationMs);
       const selected = this.selectVariant(message.id, variant.id);
       return { message: selected, variant };
@@ -968,6 +1035,17 @@ export class ConversationService {
     const rows = this.db
       .prepare(`SELECT id FROM conversations WHERE character_id = ?`)
       .all(characterId) as unknown as { id: string }[];
+    for (const row of rows) {
+      this.deleteTtsFilesForConversation(row.id);
+    }
+  }
+
+  /** Same as deleteTtsFilesForCharacter, for a group's conversations -- group delete also
+   * removes them with raw SQL, so the spoken files have to be unlinked first. */
+  deleteTtsFilesForGroup(groupId: string): void {
+    const rows = this.db
+      .prepare(`SELECT id FROM conversations WHERE group_id = ?`)
+      .all(groupId) as unknown as { id: string }[];
     for (const row of rows) {
       this.deleteTtsFilesForConversation(row.id);
     }

@@ -64,6 +64,7 @@ import { CharacterImageService } from './database/characterImageService';
 import { PersonaImageService } from './database/personaImageService';
 import { PersonaFieldVersionService } from './database/personaFieldVersionService';
 import { ScenarioService } from './database/scenarioService';
+import { GroupService } from './database/groupService';
 import { ScenarioImageService } from './database/scenarioImageService';
 import { ImageCropService } from './database/imageCropService';
 import { ModelSamplerService } from './database/modelSamplerService';
@@ -117,6 +118,7 @@ import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/char
 import { FIELD_TYPES } from '../shared/types/characterField';
 import { CreateConversationInput } from '../shared/types/conversation';
 import { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
+import { CreateGroupInput, UpdateGroupInput } from '../shared/types/group';
 import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
 import { CreateUserPersonaInput, UpdateUserPersonaInput } from '../shared/types/userPersona';
 import {
@@ -154,6 +156,8 @@ import {
   guardConversationTitle,
   guardTtsVoice,
   guardCloneVoiceFilename,
+  guardGroupCreate,
+  guardGroupUpdate,
 } from './fieldLengthGuards';
 import { randomUUID } from 'crypto';
 import type { DatabaseSync } from './database/sqlite';
@@ -406,6 +410,7 @@ let characterImageService: CharacterImageService;
 let personaImageService: PersonaImageService;
 let personaFieldVersionService: PersonaFieldVersionService;
 let scenarioService: ScenarioService;
+let groupService: GroupService;
 let scenarioImageService: ScenarioImageService;
 let imageCropService: ImageCropService;
 let modelSamplerService: ModelSamplerService;
@@ -900,6 +905,7 @@ app.whenReady().then(async () => {
   personaImageService = new PersonaImageService(db);
   personaFieldVersionService = new PersonaFieldVersionService(db);
   scenarioService = new ScenarioService(db, securityService);
+  groupService = new GroupService(db, securityService);
   scenarioImageService = new ScenarioImageService(db);
   imageCropService = new ImageCropService(db);
   conversationService = new ConversationService(db, securityService, personaFieldVersionService);
@@ -925,7 +931,9 @@ app.whenReady().then(async () => {
     ollamaClient,
     lorebookService,
     modelSamplerService,
-    scenarioService
+    scenarioService,
+    groupService,
+    characterService
   );
 
   registerIPCHandlers();
@@ -1209,7 +1217,7 @@ function registerIPCHandlers() {
       }
 
       if (parsed.scenario?.trim() || parsed.greeting?.trim()) {
-        const scenario = scenarioService.createScenario(created.id, 'Imported Scenario');
+        const scenario = scenarioService.createScenario({ characterId: created.id }, 'Imported Scenario');
         if (parsed.scenario?.trim()) {
           scenarioService.updateVersionContent(
             scenarioService.getVersions(scenario.id)[0].id,
@@ -1314,15 +1322,52 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
-  // Scenario handlers -- a character's 1-to-N settings/situations, split out from the old
-  // fixed "scenario" CharacterField. See shared/types/scenario.ts.
+  // Group handlers -- named ensembles of characters. Like characters:getAll, getAll returns
+  // hidden rows too and the renderer filters them while locked; generation refuses a hidden
+  // group or member regardless (see assertHiddenContentAccessible). See shared/types/group.ts.
+  ipcMain.handle('groups:getAll', () => groupService.getAllGroups());
+  ipcMain.handle('groups:getById', (_, id: string) => groupService.getGroupById(id));
+  ipcMain.handle('groups:create', (_, input: CreateGroupInput) => {
+    guardGroupCreate(input);
+    return groupService.createGroup(input);
+  });
+  ipcMain.handle('groups:update', (_, id: string, input: UpdateGroupInput) => {
+    guardGroupUpdate(input);
+    return groupService.updateGroup(id, input);
+  });
+  ipcMain.handle('groups:setMembers', (_, id: string, characterIds: string[]) =>
+    groupService.setMembers(id, characterIds)
+  );
+  ipcMain.handle('groups:setHidden', (_, id: string, hidden: boolean) => groupService.setHidden(id, hidden));
+  // Same cleanup order as characters:delete: collect every file the DB cascade is about to
+  // orphan (spoken clips of the group's chats, its scenarios' images) before deleting rows.
+  ipcMain.handle('groups:delete', (_, id: string) => {
+    const images = scenarioService
+      .getScenariosByGroup(id)
+      .flatMap((scenario) => scenarioImageService.getImagesByScenario(scenario.id));
+    conversationService.deleteTtsFilesForGroup(id);
+    groupService.deleteGroup(id);
+    imageCropService.deleteCropsForImages(images.map((image) => image.id));
+    for (const image of images) deleteCharacterImage(image.path);
+    return { success: true };
+  });
+
+  // Scenario handlers -- a character's or group's 1-to-N settings/situations, split out from the
+  // old fixed "scenario" CharacterField. See shared/types/scenario.ts.
   ipcMain.handle('scenarios:getByCharacter', (_, characterId: string) =>
     scenarioService.getScenariosByCharacter(characterId)
   );
+  ipcMain.handle('scenarios:getByGroup', (_, groupId: string) => scenarioService.getScenariosByGroup(groupId));
   ipcMain.handle('scenarios:getById', (_, id: string) => scenarioService.getScenario(id));
   ipcMain.handle('scenarios:create', (_, input: CreateScenarioInput) => {
     guardScenarioCreate(input);
-    return scenarioService.createScenario(input.characterId, input.name, input.description);
+    // Exactly one owner, matching the table's CHECK -- reject here with a readable message
+    // rather than surface a raw constraint failure.
+    if (Boolean(input.characterId) === Boolean(input.groupId)) {
+      throw new Error('A scenario belongs to exactly one character or one group');
+    }
+    const owner = input.groupId ? { groupId: input.groupId } : { characterId: input.characterId! };
+    return scenarioService.createScenario(owner, input.name, input.description);
   });
   ipcMain.handle('scenarios:update', (_, id: string, input: UpdateScenarioInput) => {
     guardScenarioUpdate(input);
@@ -1876,12 +1921,20 @@ function registerIPCHandlers() {
       ? conversationService.getPersona(input.userPersonaId)
       : null;
     const scenarioGreeting = input.scenarioId ? scenarioService.getActiveGreeting(input.scenarioId) : null;
-    const built = promptBuilder.buildSystemPrompt(input.characterId, {
+
+    // A group conversation's greeting is spoken by the group's first roster member (the
+    // scenario's `{{char}}` resolves to them), and the scenario has to belong to the group.
+    const greetingSpeakerId = input.groupId ? resolveGroupGreetingSpeaker(input.groupId) : undefined;
+    assertScenarioOwnedBy(input.scenarioId, input.characterId, input.groupId);
+    const characterId = input.characterId ?? greetingSpeakerId;
+    if (!characterId) throw new Error('A conversation needs a character or a group');
+
+    const built = promptBuilder.buildSystemPrompt(characterId, {
       personaName: persona?.name ?? null,
       personaBackground: persona?.background ?? null,
       scenarioGreeting,
     });
-    return conversationService.createConversation({ ...input, greeting: built.greeting });
+    return conversationService.createConversation({ ...input, greeting: built.greeting, greetingSpeakerId });
   });
 
   // "Duplicate as new chat": same character/persona/scenario/model/image picks, no transcript --
@@ -1889,15 +1942,18 @@ function registerIPCHandlers() {
   // conversation, just pre-filled from an existing one instead of the picker's defaults.
   ipcMain.handle('conversations:duplicate', (_, sourceId: string) => {
     const source = conversationService.getConversation(sourceId);
-    if (!source?.characterId) throw new Error('Cannot duplicate a conversation with no character');
+    if (!source?.characterId && !source?.groupId) {
+      throw new Error('Cannot duplicate a conversation with no character or group');
+    }
     const persona = source.userPersonaId ? conversationService.getPersona(source.userPersonaId) : null;
     const scenarioGreeting = source.scenarioId ? scenarioService.getActiveGreeting(source.scenarioId) : null;
-    const built = promptBuilder.buildSystemPrompt(source.characterId, {
+    const greetingSpeakerId = source.groupId ? resolveGroupGreetingSpeaker(source.groupId) : undefined;
+    const built = promptBuilder.buildSystemPrompt((source.characterId ?? greetingSpeakerId)!, {
       personaName: persona?.name ?? null,
       personaBackground: persona?.background ?? null,
       scenarioGreeting,
     });
-    return conversationService.duplicateConversation(sourceId, built.greeting);
+    return conversationService.duplicateConversation(sourceId, built.greeting, greetingSpeakerId);
   });
 
   // "Branch from here": same settings, plus the full transcript/variants/memories copied so
@@ -1915,9 +1971,11 @@ function registerIPCHandlers() {
     conversationService.setConversationPersona(id, userPersonaId)
   );
 
-  ipcMain.handle('conversations:setScenario', (_, id: string, scenarioId: string | null) =>
-    conversationService.setConversationScenario(id, scenarioId)
-  );
+  ipcMain.handle('conversations:setScenario', (_, id: string, scenarioId: string | null) => {
+    const conversation = conversationService.getConversation(id);
+    assertScenarioOwnedBy(scenarioId, conversation?.characterId, conversation?.groupId);
+    return conversationService.setConversationScenario(id, scenarioId);
+  });
 
   ipcMain.handle('conversations:setKeepForever', (_, id: string, keepForever: boolean) =>
     conversationService.setKeepForever(id, keepForever)
@@ -2450,11 +2508,23 @@ function registerLorebookHandlers() {
 function assertHiddenContentAccessible(
   characterId: string | null,
   personaId?: string | null,
-  scenarioId?: string | null
+  scenarioId?: string | null,
+  groupId?: string | null
 ): void {
   if (securityService.isUnlocked()) return;
   if (characterId && characterService.getCharacterById(characterId)?.isHidden) {
     throw new Error('This character is hidden -- unlock with the PIN before chatting with it.');
+  }
+  if (groupId) {
+    const group = groupService.getGroupById(groupId);
+    if (group?.isHidden) {
+      throw new Error('This group is hidden -- unlock with the PIN before chatting in it.');
+    }
+    // One hidden member is enough: replying as anyone else would still put their card in the
+    // scene (their name and description reach every other member's prompt).
+    if (group?.members.some((m) => characterService.getCharacterById(m.characterId)?.isHidden)) {
+      throw new Error('A character in this group is hidden -- unlock with the PIN before chatting in it.');
+    }
   }
   if (personaId && conversationService.getPersona(personaId)?.isHidden) {
     throw new Error('This persona is hidden -- unlock with the PIN before using it.');
@@ -2462,6 +2532,28 @@ function assertHiddenContentAccessible(
   if (scenarioId && scenarioService.getScenario(scenarioId)?.isHidden) {
     throw new Error('This scenario is hidden -- unlock with the PIN before using it.');
   }
+}
+
+/** The character who speaks a group conversation's opening greeting: first on the roster. */
+function resolveGroupGreetingSpeaker(groupId: string): string {
+  const group = groupService.getGroupById(groupId);
+  const speaker = group?.members[0]?.characterId;
+  if (!speaker) throw new Error('This group has no characters');
+  return speaker;
+}
+
+/** A conversation may only pick a scenario owned by its own character or group -- the picker
+ * already filters this way, so this is a backstop against a stale or forged request. */
+function assertScenarioOwnedBy(
+  scenarioId: string | null | undefined,
+  characterId?: string | null,
+  groupId?: string | null
+): void {
+  if (!scenarioId) return;
+  const scenario = scenarioService.getScenario(scenarioId);
+  if (!scenario) throw new Error('Scenario not found');
+  const matches = groupId ? scenario.groupId === groupId : scenario.characterId === (characterId ?? null);
+  if (!matches) throw new Error("That scenario doesn't belong to this conversation's character or group");
 }
 
 function registerChatHandlers() {
@@ -2483,7 +2575,7 @@ function registerChatHandlers() {
     void (async () => {
       try {
         const conversation = conversationService.getConversation(request.conversationId);
-        assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+        assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
         const { message, debug, userMessage } = await chatSessions.generate(
           {
             conversationId: request.conversationId,
@@ -2528,7 +2620,8 @@ function registerChatHandlers() {
         assertHiddenContentAccessible(
           conversation?.characterId ?? null,
           conversation?.userPersonaId,
-          conversation?.scenarioId
+          conversation?.scenarioId,
+          conversation?.groupId
         );
         const { message, debug } = await chatSessions.regenerate(
           request.conversationId,
@@ -2572,7 +2665,7 @@ function registerChatHandlers() {
       void (async () => {
         try {
           const conversation = conversationService.getConversation(request.conversationId);
-          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
           const { message, debug, userMessage } = await chatSessions.editPriorUserMessage(
             {
               conversationId: request.conversationId,
@@ -2621,7 +2714,7 @@ function registerChatHandlers() {
       void (async () => {
         try {
           const conversation = conversationService.getConversation(request.conversationId);
-          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
           const { message, debug } = await chatSessions.continueAsCharacter(
             {
               conversationId: request.conversationId,
@@ -2673,7 +2766,7 @@ function registerChatHandlers() {
       request: { conversationId: string; characterId: string; personaId?: string; model: string }
     ) => {
       const conversation = conversationService.getConversation(request.conversationId);
-      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId);
+      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
       const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
       const suggestion = await chatSessions.suggestReply(
         request.conversationId,

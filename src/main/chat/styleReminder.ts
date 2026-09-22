@@ -3,6 +3,8 @@ export interface StyleReminderInput {
   personaName: string;
   concise: boolean;
   pov: 'first' | 'third' | null;
+  /** The other characters in a group conversation; empty or absent for a one-character chat. */
+  otherCharacters?: string[];
 }
 
 /**
@@ -14,10 +16,24 @@ export interface StyleReminderInput {
  * defaults), and it is rebuilt on every generation, including redo, so flipping a Chat Settings
  * toggle and redoing actually shows the difference.
  */
-export function buildStyleReminder({ charName, personaName, concise, pov }: StyleReminderInput): string {
+export function buildStyleReminder({
+  charName,
+  personaName,
+  concise,
+  pov,
+  otherCharacters = [],
+}: StyleReminderInput): string {
   const lines = [
     `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`,
   ];
+
+  // In a group the history labels every line "Name: text", and a model will copy that habit or
+  // carry on for the next speaker unless told otherwise right where it's about to write.
+  if (otherCharacters.length > 0) {
+    lines.push(
+      `Group scene: reply only as ${charName}. Do not write lines, actions, or thoughts for ${otherCharacters.join(', ')}, or for ${personaName}, and do not begin the reply with a "${charName}:" label.`
+    );
+  }
 
   if (concise) {
     lines.push(

@@ -1,7 +1,10 @@
 import { ConversationService } from '../database/conversationService';
-import { PromptBuilder } from './promptBuilder';
+import { GroupPromptContext, PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
 import { ScenarioService } from '../database/scenarioService';
+import { GroupService } from '../database/groupService';
+import { CharacterService } from '../database/characterService';
+import { appendUserLine, buildGroupHistory, stripSelfLabel } from './groupHistory';
 import { scanLore, splitByScope } from './loreMatcher';
 import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
@@ -47,6 +50,19 @@ export interface PendingTurn {
   personaName: string | null;
   stopPhrases: string[];
   shouldExtract: boolean;
+  /** Group conversations only. A redo has to replay this exact turn from this speaker's point of
+   * view, but `ChatSession.history` is one flat speaker-less list -- so the messages the turn was
+   * actually sent (everything after the system prompt) are kept here instead. */
+  replayMessages?: OllamaChatMessage[];
+  /** Group conversations only: the other characters in the scene, for the style reminder a redo
+   * rebuilds from the current Chat Settings. */
+  otherCharacters?: string[];
+}
+
+/** A group conversation's per-speaker prompt inputs -- see ChatSessionManager.getGroupTurn. */
+interface GroupTurn {
+  context: GroupPromptContext;
+  otherNames: string[];
 }
 
 /** Default per-turn nudge for continueAsCharacter when the caller doesn't supply their own
@@ -154,13 +170,15 @@ function capForConcise(options: OllamaOptions, concise: boolean): OllamaOptions 
 export function withStyleReminder(
   messages: OllamaChatMessage[],
   charName: string,
-  personaName: string | null | undefined
+  personaName: string | null | undefined,
+  otherCharacters: string[] = []
 ): OllamaChatMessage[] {
   const reminder = buildStyleReminder({
     charName,
     personaName: personaName?.trim() || 'User',
     concise: getConciseReplies(),
     pov: getNarrationPov(),
+    otherCharacters,
   });
 
   const last = messages[messages.length - 1];
@@ -199,8 +217,54 @@ export class ChatSessionManager {
     private ollama: OllamaClient,
     private lorebooks: LorebookService,
     private modelSamplers: ModelSamplerService,
-    private scenarios: ScenarioService
+    private scenarios: ScenarioService,
+    private groups: GroupService,
+    private characters: CharacterService
   ) {}
+
+  /**
+   * For a group conversation, what one speaker's prompt needs beyond their own card: the group's
+   * name and instructions and everyone else in the scene. Null for a one-character conversation,
+   * which is how every generation path below tells the two apart.
+   *
+   * Throws rather than quietly falling back to solo behaviour when the speaker isn't on the
+   * roster (the roster is live, so it can have changed under an open chat) -- a reply written
+   * as someone who isn't in the scene would be worse than an error.
+   */
+  private getGroupTurn(conversationId: string, speakerId: string): GroupTurn | null {
+    const conversation = this.conversations.getConversation(conversationId);
+    if (!conversation?.groupId) return null;
+
+    const group = this.groups.getGroupById(conversation.groupId);
+    if (!group) throw new Error("This conversation's group no longer exists");
+    if (!group.members.some((member) => member.characterId === speakerId)) {
+      throw new Error('That character is not in this group');
+    }
+
+    const others = group.members
+      .filter((member) => member.characterId !== speakerId)
+      .map((member) => this.characters.getCharacterById(member.characterId))
+      .filter((character): character is NonNullable<typeof character> => character !== null)
+      .map((character) => ({ name: character.name, description: character.description }));
+
+    return {
+      context: { name: group.name, instructions: group.instructions, others },
+      otherNames: others.map((other) => other.name),
+    };
+  }
+
+  /** The stored transcript as one speaker sees it -- see buildGroupHistory. `excludeIds` drops
+   * the pending turn's own messages when a redo rebuilds the context that turn was sent with. */
+  private getGroupHistory(
+    conversationId: string,
+    speakerId: string,
+    personaName: string | null | undefined,
+    limit: number,
+    excludeIds: ReadonlySet<string> = new Set()
+  ): OllamaChatMessage[] {
+    const transcript = this.conversations.getMessages(conversationId).filter((m) => !excludeIds.has(m.id));
+    return buildGroupHistory(transcript, speakerId, { personaName: personaName ?? null, limit });
+  }
 
   /** Resolves a conversation's selected scenario (if any) into the text `buildSystemPrompt`
    * needs -- the one place this lookup happens, so every generation path (generate,
@@ -234,12 +298,26 @@ export class ChatSessionManager {
       const transcript = this.conversations.getMessages(conversationId).filter((m) => m.role !== 'system');
       const last = transcript.at(-1);
       const precedingUser = transcript.at(-2);
+      const isGroup = Boolean(this.conversations.getConversation(conversationId)?.groupId);
 
-      const pending =
-        last?.role === 'assistant' && precedingUser?.role === 'user'
+      // A group turn is pending whenever the last line is a character's reply -- two characters
+      // speaking back to back is normal there, so unlike a one-character chat it needn't follow
+      // a user message. The opening greeting alone is never pending -- it isn't redoable.
+      const pending = isGroup
+        ? last?.role === 'assistant' && last.speakerCharacterId && transcript.length > 1
+          ? this.reconstructGroupPending(
+              conversationId,
+              last,
+              precedingUser?.role === 'user' ? precedingUser : null
+            )
+          : null
+        : last?.role === 'assistant' && precedingUser?.role === 'user'
           ? this.reconstructPending(conversationId, precedingUser.content, last.id)
           : null;
-      const historyMessages = pending ? transcript.slice(0, -2) : transcript;
+      // A group's prompts are built from the stored transcript per speaker (see getGroupHistory),
+      // so this flat cache is never read for one -- it stays empty rather than holding a
+      // speaker-less view that would be wrong for everyone.
+      const historyMessages = isGroup ? [] : pending ? transcript.slice(0, -2) : transcript;
 
       session = {
         conversationId,
@@ -297,6 +375,68 @@ export class ChatSessionManager {
       };
     } catch {
       // Character deleted out from under the conversation -- nothing to rebuild a prompt from.
+      return null;
+    }
+  }
+
+  /**
+   * reconstructPending for a group conversation: same approximation (per-turn directions,
+   * memories and lore aren't recoverable), but the speaker comes from the reply itself, and the
+   * context a redo replays is rebuilt from the stored transcript minus the pending turn.
+   * `precedingUser` is set only when the reply directly followed a user message; otherwise it was
+   * a continuation, replayed with no trailing user turn.
+   */
+  private reconstructGroupPending(
+    conversationId: string,
+    reply: Message,
+    precedingUser: Message | null
+  ): PendingTurn | null {
+    const conversation = this.conversations.getConversation(conversationId);
+    if (!conversation?.groupId || !reply.speakerCharacterId) return null;
+
+    try {
+      const groupTurn = this.getGroupTurn(conversationId, reply.speakerCharacterId);
+      if (!groupTurn) return null;
+      const persona = conversation.userPersonaId
+        ? this.conversations.getPersona(conversation.userPersonaId)
+        : null;
+      const scenarioContent = conversation.scenarioId
+        ? this.scenarios.getActiveContent(conversation.scenarioId)
+        : null;
+      const built = this.prompts.buildSystemPrompt(reply.speakerCharacterId, {
+        personaName: persona?.name,
+        personaBackground: persona?.background,
+        scenarioContent,
+        group: groupTurn.context,
+      });
+
+      const excluded = new Set([reply.id, ...(precedingUser ? [precedingUser.id] : [])]);
+      let replayMessages = this.getGroupHistory(
+        conversationId,
+        reply.speakerCharacterId,
+        persona?.name,
+        DEFAULT_HISTORY_LIMIT,
+        excluded
+      );
+      if (precedingUser) {
+        replayMessages = appendUserLine(replayMessages, persona?.name ?? null, precedingUser.content);
+      }
+
+      return {
+        userMessage: precedingUser?.content ?? null,
+        assistantMessageId: reply.id,
+        model: conversation.model,
+        systemPrompt: built.prompt,
+        baseSystemPrompt: built.baseSystemPrompt,
+        characterName: built.characterName,
+        personaName: persona?.name ?? null,
+        stopPhrases: built.stopPhrases,
+        shouldExtract: true,
+        replayMessages,
+        otherCharacters: groupTurn.otherNames,
+      };
+    } catch {
+      // Speaker deleted or removed from the roster since -- nothing to rebuild a prompt from.
       return null;
     }
   }
@@ -365,7 +505,10 @@ export class ChatSessionManager {
 
     this.finalizePending(session, historyLimit);
 
-    const historyTurns = session.history.slice(-historyLimit);
+    const groupTurn = this.getGroupTurn(request.conversationId, request.characterId);
+    const historyTurns = groupTurn
+      ? this.getGroupHistory(request.conversationId, request.characterId, request.personaName, historyLimit)
+      : session.history.slice(-historyLimit);
 
     // Retrieval runs against the message being sent, not the whole transcript: what matters
     // is which stored facts bear on what the user just said.
@@ -416,20 +559,21 @@ export class ChatSessionManager {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
+      group: groupTurn?.context,
       directions: request.directions,
       memories: memoryTexts,
       worldLore,
       personalLore,
       personaLore,
     });
+    const turns = groupTurn
+      ? appendUserLine(historyTurns, request.personaName ?? null, request.userMessage)
+      : [...historyTurns, { role: 'user' as const, content: request.userMessage }];
     const messages = withStyleReminder(
-      [
-        ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-        ...historyTurns,
-        { role: 'user' as const, content: request.userMessage },
-      ],
+      [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
-      request.personaName
+      request.personaName,
+      groupTurn?.otherNames
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -456,8 +600,11 @@ export class ChatSessionManager {
       const generationMs = Date.now() - startedAt;
 
       // Post-processing is trim() only, as in the source. Anything more (stripping name
-      // prefixes, collapsing whitespace) silently mangles legitimate output.
-      const content = finalizeReply(result.content, {
+      // prefixes, collapsing whitespace) silently mangles legitimate output. The one exception
+      // is a group conversation's own "Name:" label -- see stripSelfLabel.
+      // The label is stripped from the raw text first: finalizeReply's markdown formatting would
+      // otherwise turn "Name:" into "*Name:*" before it could be recognised.
+      const content = finalizeReply(groupTurn ? stripSelfLabel(result.content, built.characterName) : result.content, {
         concise,
         evalCount: result.evalCount,
         numPredict: options.num_predict,
@@ -490,7 +637,8 @@ export class ChatSessionManager {
         content,
         request.model,
         debug,
-        generationMs
+        generationMs,
+        groupTurn ? request.characterId : undefined
       );
       // The model can change freely turn to turn -- keep the conversation record (and the
       // sidebar) pointed at whichever one was actually used most recently.
@@ -509,6 +657,8 @@ export class ChatSessionManager {
         personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
+        replayMessages: groupTurn ? turns : undefined,
+        otherCharacters: groupTurn?.otherNames,
       };
 
       return { message, debug, userMessage };
@@ -559,14 +709,19 @@ export class ChatSessionManager {
     );
     // A continuation turn (see continueAsCharacter) has no user message to replay here either --
     // same "no trailing user turn" shape its own generation used.
+    // A group turn replays the exact per-speaker messages it was first sent (see
+    // PendingTurn.replayMessages); a one-character turn rebuilds them from the flat history.
     const messages = withStyleReminder(
       [
         ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
-        ...session.history,
-        ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
+        ...(pending.replayMessages ?? [
+          ...session.history,
+          ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
+        ]),
       ],
       pending.characterName,
-      pending.personaName
+      pending.personaName,
+      pending.otherCharacters
     );
 
     const controller = new AbortController();
@@ -582,11 +737,10 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = finalizeReply(result.content, {
-        concise,
-        evalCount: result.evalCount,
-        numPredict: options.num_predict,
-      });
+      const content = finalizeReply(
+        pending.replayMessages ? stripSelfLabel(result.content, pending.characterName) : result.content,
+        { concise, evalCount: result.evalCount, numPredict: options.num_predict }
+      );
 
       // A message from before redo support has no variant of its own yet -- back one out of
       // its current content first, or selecting the new variant below would lose it for good.
@@ -701,8 +855,23 @@ export class ChatSessionManager {
       ...request.samplers,
     };
     const historyLimit = request.historyLimit ?? DEFAULT_HISTORY_LIMIT;
-    // Not finalizePending -- this turn isn't being moved past, it's being redone in place.
-    const historyTurns = session.history.slice(-historyLimit);
+    // A group reply is redone by whoever wrote it, whatever speaker the request names -- the
+    // variant lands on that character's message.
+    const speakerId =
+      this.conversations.getMessage(pending.assistantMessageId)?.speakerCharacterId ?? request.characterId;
+    const groupTurn = this.getGroupTurn(request.conversationId, speakerId);
+
+    // Not finalizePending -- this turn isn't being moved past, it's being redone in place. A
+    // group's history is rebuilt without the pending pair (the edited message goes back on last).
+    const historyTurns = groupTurn
+      ? this.getGroupHistory(
+          request.conversationId,
+          speakerId,
+          request.personaName,
+          historyLimit,
+          new Set([priorUserMessage.id, pending.assistantMessageId])
+        )
+      : session.history.slice(-historyLimit);
 
     const retrieval = await this.retrieve(
       request.conversationId,
@@ -714,7 +883,7 @@ export class ChatSessionManager {
       ? retrieval.result.selected.map((entry) => entry.memory.content)
       : (request.memories ?? []);
 
-    const characterLore = scanLore(this.lorebooks.getEntriesForCharacter(request.characterId), historyTurns, trimmed);
+    const characterLore = scanLore(this.lorebooks.getEntriesForCharacter(speakerId), historyTurns, trimmed);
     const personaLoreResult = request.personaId
       ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, trimmed)
       : null;
@@ -734,24 +903,25 @@ export class ChatSessionManager {
       : characterLore;
     this.recordLoreHits(lore.selected);
 
-    const built = this.prompts.buildSystemPrompt(request.characterId, {
+    const built = this.prompts.buildSystemPrompt(speakerId, {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
+      group: groupTurn?.context,
       directions: request.directions,
       memories: memoryTexts,
       worldLore,
       personalLore,
       personaLore,
     });
+    const turns = groupTurn
+      ? appendUserLine(historyTurns, request.personaName ?? null, trimmed)
+      : [...historyTurns, { role: 'user' as const, content: trimmed }];
     const messages = withStyleReminder(
-      [
-        ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-        ...historyTurns,
-        { role: 'user' as const, content: trimmed },
-      ],
+      [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
-      request.personaName
+      request.personaName,
+      groupTurn?.otherNames
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -775,7 +945,9 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = finalizeReply(result.content, {
+      // The label is stripped from the raw text first: finalizeReply's markdown formatting would
+      // otherwise turn "Name:" into "*Name:*" before it could be recognised.
+      const content = finalizeReply(groupTurn ? stripSelfLabel(result.content, built.characterName) : result.content, {
         concise,
         evalCount: result.evalCount,
         numPredict: options.num_predict,
@@ -831,6 +1003,8 @@ export class ChatSessionManager {
         personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: request.extractMemories !== false,
+        replayMessages: groupTurn ? turns : undefined,
+        otherCharacters: groupTurn?.otherNames,
       };
 
       return { message, debug, userMessage };
@@ -867,13 +1041,18 @@ export class ChatSessionManager {
 
     this.finalizePending(session, historyLimit);
 
-    const historyTurns = session.history.slice(-historyLimit);
-    if (historyTurns.length === 0) {
+    const groupTurn = this.getGroupTurn(request.conversationId, request.characterId);
+    const historyTurns = groupTurn
+      ? this.getGroupHistory(request.conversationId, request.characterId, request.personaName, historyLimit)
+      : session.history.slice(-historyLimit);
+    // A group scene can be opened by a character before the user has said anything (a group with
+    // no greeting); a one-character chat has nothing to continue until there's a first exchange.
+    if (historyTurns.length === 0 && !groupTurn) {
       throw new Error('Nothing to continue -- send a message first.');
     }
     // No new user message to scan against -- the most recent line already in the scene is the
     // closest thing to "what's relevant right now".
-    const scanQuery = historyTurns.at(-1)!.content;
+    const scanQuery = historyTurns.at(-1)?.content ?? '';
 
     const retrieval = await this.retrieve(
       request.conversationId,
@@ -914,6 +1093,7 @@ export class ChatSessionManager {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
+      group: groupTurn?.context,
       directions,
       memories: memoryTexts,
       worldLore,
@@ -929,7 +1109,8 @@ export class ChatSessionManager {
         ...historyTurns,
       ],
       built.characterName,
-      request.personaName
+      request.personaName,
+      groupTurn?.otherNames
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -947,7 +1128,9 @@ export class ChatSessionManager {
         onToken,
       });
       const generationMs = Date.now() - startedAt;
-      const content = finalizeReply(result.content, {
+      // The label is stripped from the raw text first: finalizeReply's markdown formatting would
+      // otherwise turn "Name:" into "*Name:*" before it could be recognised.
+      const content = finalizeReply(groupTurn ? stripSelfLabel(result.content, built.characterName) : result.content, {
         concise,
         evalCount: result.evalCount,
         numPredict: options.num_predict,
@@ -980,7 +1163,8 @@ export class ChatSessionManager {
         content,
         request.model,
         debug,
-        generationMs
+        generationMs,
+        groupTurn ? request.characterId : undefined
       );
       this.conversations.updateConversationModel(request.conversationId, request.model);
 
@@ -994,6 +1178,8 @@ export class ChatSessionManager {
         personaName: request.personaName ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
+        replayMessages: groupTurn ? historyTurns : undefined,
+        otherCharacters: groupTurn?.otherNames,
       };
 
       return { message, debug };
@@ -1075,7 +1261,14 @@ export class ChatSessionManager {
       .getMessages(conversationId)
       .filter((m) => m.role !== 'system')
       .slice(-historyLimit);
-    const recentTurns = transcript.map((m) => ({ role: m.role, content: m.content }));
+    // In a group, several characters speak, so each line keeps its own speaker's name; the
+    // `characterId` given is whichever character the user is mainly answering.
+    const groupTurn = this.getGroupTurn(conversationId, characterId);
+    const recentTurns = transcript.map((m) => ({
+      role: m.role,
+      content: m.content,
+      speakerName: groupTurn ? m.speakerName : null,
+    }));
 
     // Unlike generate(), also pulls in world books attached to the persona itself -- this is
     // the one place that's meant to surface. See getEntriesForPersonaWithWorldBooks.
@@ -1089,6 +1282,7 @@ export class ChatSessionManager {
       personaName,
       personaBackground,
       scenarioContent: this.getScenarioContent(conversationId),
+      group: groupTurn?.context,
       personaLore,
       worldLore: personaWorldLore,
     });

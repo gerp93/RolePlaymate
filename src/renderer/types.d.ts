@@ -1,5 +1,6 @@
 import { Character, CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { CharacterField } from '../shared/types/characterField';
+import { GroupWithMembers, CreateGroupInput, UpdateGroupInput } from '../shared/types/group';
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
@@ -106,8 +107,18 @@ declare global {
         set: (input: SetImageCropInput) => Promise<ImageCrop>;
         reset: (imageId: string, location: ImageCropLocation) => Promise<{ success: boolean }>;
       };
+      groups: {
+        getAll: () => Promise<GroupWithMembers[]>;
+        getById: (id: string) => Promise<GroupWithMembers | null>;
+        create: (input: CreateGroupInput) => Promise<GroupWithMembers>;
+        update: (id: string, input: UpdateGroupInput) => Promise<GroupWithMembers>;
+        setMembers: (id: string, characterIds: string[]) => Promise<GroupWithMembers>;
+        setHidden: (id: string, hidden: boolean) => Promise<GroupWithMembers>;
+        delete: (id: string) => Promise<{ success: boolean }>;
+      };
       scenarios: {
         getByCharacter: (characterId: string) => Promise<Scenario[]>;
+        getByGroup: (groupId: string) => Promise<Scenario[]>;
         getById: (id: string) => Promise<Scenario | null>;
         create: (input: CreateScenarioInput) => Promise<Scenario>;
         update: (id: string, input: UpdateScenarioInput) => Promise<Scenario>;

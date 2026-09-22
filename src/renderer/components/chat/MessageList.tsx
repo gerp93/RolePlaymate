@@ -67,6 +67,10 @@ interface Props {
   personaName: string;
   characterImages: CharacterImage[];
   personaImages: PersonaImage[];
+  /** Group conversations only: every character's gallery keyed by id, so each line gets its own
+   * speaker's avatar (name comes from the message's stored speakerName). Omitted in a
+   * one-character chat, where `characterImages` is the one speaker's. */
+  speakerImages?: Record<string, CharacterImage[]>;
   tts?: MessageTtsProps;
 }
 
@@ -95,6 +99,7 @@ export default function MessageList({
   personaName,
   characterImages,
   personaImages,
+  speakerImages,
   tts,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -134,8 +139,16 @@ export default function MessageList({
   // (that's what the large margin portraits' carousel is for). Cheap to compute once per role.
   const characterAvatarImage = resolveCoverImage(characterImages);
   const personaAvatarImage = resolveCoverImage(personaImages);
+  const speakerAvatarImages: Record<string, CharacterImage | undefined> = {};
+  for (const [id, images] of Object.entries(speakerImages ?? {})) {
+    speakerAvatarImages[id] = resolveCoverImage(images) ?? undefined;
+  }
   const { crops: avatarCrops, refresh: refreshAvatarCrops } = useImageCrops(
-    [characterAvatarImage?.id, personaAvatarImage?.id].filter((id): id is string => !!id)
+    [
+      characterAvatarImage?.id,
+      personaAvatarImage?.id,
+      ...Object.values(speakerAvatarImages).map((image) => image?.id),
+    ].filter((id): id is string => !!id)
   );
   const characterAvatar: AvatarInfo = {
     url: characterAvatarImage ? toImageUrl(characterAvatarImage.path) : null,
@@ -149,7 +162,21 @@ export default function MessageList({
     imageOwner: 'persona',
     crop: personaAvatarImage ? avatarCrops[personaAvatarImage.id]?.chatAvatar : undefined,
   };
-  const avatarFor = (role: string) => (role === 'user' ? personaAvatar : characterAvatar);
+  // In a group each reply carries its own speaker; everywhere else (and for a line whose speaker
+  // has since been deleted) it is the one character.
+  const avatarFor = (message: Message): AvatarInfo => {
+    if (message.role === 'user') return personaAvatar;
+    const speakerImage = message.speakerCharacterId ? speakerAvatarImages[message.speakerCharacterId] : undefined;
+    if (!speakerImage) return characterAvatar;
+    return {
+      url: toImageUrl(speakerImage.path),
+      imageId: speakerImage.id,
+      imageOwner: 'character',
+      crop: avatarCrops[speakerImage.id]?.chatAvatar,
+    };
+  };
+  const nameFor = (message: Message): string =>
+    message.role === 'user' ? personaName : (message.speakerName ?? characterName);
 
   // Follow the stream as it grows, and jump to the end when a conversation is opened.
   useEffect(() => {
@@ -226,8 +253,8 @@ export default function MessageList({
             key={message.id}
             containerStyle={isEditing && editWidth ? { width: editWidth, maxWidth: editWidth } : undefined}
             role={message.role}
-            name={message.role === 'user' ? personaName : characterName}
-            avatar={avatarFor(message.role)}
+            name={nameFor(message)}
+            avatar={avatarFor(message)}
             onAvatarCropSaved={refreshAvatarCrops}
             content={message.content}
             directions={message.role === 'user' ? message.directions : null}
@@ -274,7 +301,7 @@ export default function MessageList({
                     playing={tts.playing}
                     paused={tts.paused}
                     analyser={tts.analyser}
-                    speakerName={message.role === 'user' ? personaName : characterName}
+                    speakerName={nameFor(message)}
                     onPlay={() => tts.onPlay(message)}
                     onPause={tts.onPause}
                     onGenerate={() => tts.onGenerate(message)}

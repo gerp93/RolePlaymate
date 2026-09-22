@@ -18,14 +18,25 @@ export const SUGGESTION_OPTIONS = {
   num_predict: 150,
 };
 
+/** One transcript line. `speakerName` labels an assistant line in a group conversation, where
+ * several characters speak; without it the line is attributed to the one `characterName`. */
+export interface SuggestionTurn {
+  role: string;
+  content: string;
+  speakerName?: string | null;
+}
+
 function buildSuggestionPrompt(
   characterContext: string,
-  historyTurns: { role: string; content: string }[],
+  historyTurns: SuggestionTurn[],
   characterName: string,
   personaName: string
 ): string {
   const transcript = historyTurns
-    .map((turn) => `${turn.role === 'assistant' ? characterName : personaName}: ${turn.content}`)
+    .map(
+      (turn) =>
+        `${turn.role === 'assistant' ? (turn.speakerName ?? characterName) : personaName}: ${turn.content}`
+    )
     .join('\n\n');
 
   return [
@@ -51,7 +62,7 @@ export async function suggestPersonaReply(
   model: string,
   input: {
     characterContext: string;
-    historyTurns: { role: string; content: string }[];
+    historyTurns: SuggestionTurn[];
     characterName: string;
     personaName: string;
   },

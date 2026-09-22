@@ -2,8 +2,11 @@ import type { ReactNode } from 'react';
 import { Character } from '../../../shared/types/character';
 import { UserPersona } from '../../../shared/types/userPersona';
 import { Scenario } from '../../../shared/types/scenario';
+import { GroupWithMembers } from '../../../shared/types/group';
 import {
   buildCharacterPickerOptions,
+  buildGroupPickerOptions,
+  GROUP_PICKER_PREFIX,
   buildPersonaPickerOptions,
   buildScenarioPickerOptions,
 } from '../../utils/chatPickerOptions';
@@ -50,11 +53,15 @@ function characterToScenarioBranch() {
 
 interface Props {
   characters: Character[];
+  /** Groups offered in the same picker as characters -- see GROUP_PICKER_PREFIX. */
+  groups: GroupWithMembers[];
   personas: UserPersona[];
   scenarios: Scenario[];
   modelPickerOptions: StartPickerOption[];
   modelsReady: boolean;
   characterId: string;
+  /** Set instead of `characterId` when a group is the chosen party. */
+  groupId: string;
   personaId: string;
   scenarioId: string;
   model: string;
@@ -73,6 +80,7 @@ interface Props {
   crops: Record<string, Partial<Record<ImageCropLocation, ImageCrop>>>;
   onCropSaved: () => void;
   onCharacterChange: (id: string) => void;
+  onGroupChange: (id: string) => void;
   onPersonaChange: (id: string) => void;
   onScenarioChange: (id: string) => void;
   onModelChange: (name: string) => void;
@@ -194,11 +202,13 @@ function StartNode({
  */
 export default function ChatStartScreen({
   characters,
+  groups,
   personas,
   scenarios,
   modelPickerOptions,
   modelsReady,
   characterId,
+  groupId,
   personaId,
   scenarioId,
   model,
@@ -213,18 +223,22 @@ export default function ChatStartScreen({
   crops,
   onCropSaved,
   onCharacterChange,
+  onGroupChange,
   onPersonaChange,
   onScenarioChange,
   onModelChange,
   onStart,
 }: Props) {
   const character = characters.find((c) => c.id === characterId) ?? null;
+  const group = groups.find((g) => g.id === groupId) ?? null;
+  // A group is chosen through the same picker as a character, so the party is one or the other.
+  const partyChosen = Boolean(characterId || groupId);
   const selectedPersona = personas.find((p) => p.id === personaId) ?? null;
   const selectedScenario = scenarios.find((s) => s.id === scenarioId) ?? null;
-  const ready = Boolean(characterId && personaId && model && modelsReady);
-  const hasScenarioSlot = Boolean(characterId && scenarios.length > 0);
+  const ready = Boolean(partyChosen && personaId && model && modelsReady);
+  const hasScenarioSlot = Boolean(partyChosen && scenarios.length > 0);
   const modelY = 80;
-  const partyReady = Boolean(characterId && personaId);
+  const partyReady = Boolean(partyChosen && personaId);
   const bridgeActive = partyReady;
   const trunkActive = partyReady;
   const scenarioBranchActive = Boolean(scenarioId);
@@ -245,6 +259,7 @@ export default function ChatStartScreen({
     personaId ? { [personaId]: personaWorldBooks } : {}
   );
   const scenarioOptions = buildScenarioPickerOptions(scenarios, scenarioCoverUrls);
+  const partyOptions = [...characterOptions, ...buildGroupPickerOptions(groups, characters, characterCoverUrls)];
 
   return (
     <div className={`chat-start-screen${ready ? ' chat-start-screen-ready' : ''}`}>
@@ -310,21 +325,25 @@ export default function ChatStartScreen({
 
         <StartNode
           placement="character"
-          role="Character"
+          role={groups.length > 0 ? 'Character or group' : 'Character'}
           panel={
             <StartScreenPicker
-              value={characterId}
-              onChange={onCharacterChange}
-              options={characterOptions}
+              value={groupId ? `${GROUP_PICKER_PREFIX}${groupId}` : characterId}
+              onChange={(value) =>
+                value.startsWith(GROUP_PICKER_PREFIX)
+                  ? onGroupChange(value.slice(GROUP_PICKER_PREFIX.length))
+                  : onCharacterChange(value)
+              }
+              options={partyOptions}
               placeholder="Select…"
-              ariaLabel="Character"
+              ariaLabel="Character or group"
             />
           }
         >
           <PortraitFrame
             portrait={characterPortrait}
-            alt={character?.name ?? 'Character'}
-            fallback={character?.name?.charAt(0).toUpperCase() ?? '?'}
+            alt={group?.name ?? character?.name ?? 'Character'}
+            fallback={(group?.name ?? character?.name)?.charAt(0).toUpperCase() ?? '?'}
             imageOwner="character"
             crop={characterPortrait ? crops[characterPortrait.id]?.chatStart : undefined}
             onCropSaved={onCropSaved}
@@ -422,7 +441,7 @@ export default function ChatStartScreen({
               Begin
             </>
           ) : (
-            'Choose character, persona & model'
+            'Choose character or group, persona & model'
           )}
         </button>
       </div>

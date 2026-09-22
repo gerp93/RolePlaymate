@@ -16,8 +16,11 @@ export interface Conversation {
    * old conversation can warn when the currently loaded model differs. */
   model: string;
   characterId: string | null;
+  /** Set instead of `characterId` for a group conversation -- never both. The roster is read
+   * live from the group, and each assistant message records its own speaker. */
+  groupId: string | null;
   userPersonaId: string | null;
-  /** Which of this character's Scenarios (if any) this conversation is set in -- see
+  /** Which of this character's (or group's) Scenarios (if any) this conversation is set in -- see
    * shared/types/scenario.ts. Null means no scenario selected; behaves exactly as if the
    * character had none. Fixed at conversation start; not swappable mid-conversation. */
   scenarioId: string | null;
@@ -38,8 +41,10 @@ export interface Conversation {
   updatedAt: string;
 }
 
+/** Exactly one of `characterId` / `groupId`. */
 export interface CreateConversationInput {
-  characterId: string;
+  characterId?: string;
+  groupId?: string;
   model: string;
   userPersonaId?: string;
   scenarioId?: string;
@@ -56,4 +61,6 @@ export interface ConversationListItem extends Conversation {
   userMessageCount: number;
   lastMessageAt: string | null;
   scenarioName: string | null;
+  /** The group's name for a group conversation, so the sidebar can label it without a lookup. */
+  groupName: string | null;
 }

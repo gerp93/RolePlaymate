@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
+import { CreateGroupInput, UpdateGroupInput } from '../shared/types/group';
 
 type EncryptionResult = { ok: true; enabled: boolean } | { ok: false; error: string };
 
@@ -54,10 +55,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('imageCrops:reset', imageId, location),
   },
 
+  groups: {
+    getAll: () => ipcRenderer.invoke('groups:getAll'),
+    getById: (id: string) => ipcRenderer.invoke('groups:getById', id),
+    create: (input: CreateGroupInput) => ipcRenderer.invoke('groups:create', input),
+    update: (id: string, input: UpdateGroupInput) => ipcRenderer.invoke('groups:update', id, input),
+    setMembers: (id: string, characterIds: string[]) => ipcRenderer.invoke('groups:setMembers', id, characterIds),
+    setHidden: (id: string, hidden: boolean) => ipcRenderer.invoke('groups:setHidden', id, hidden),
+    delete: (id: string) => ipcRenderer.invoke('groups:delete', id),
+  },
+
   scenarios: {
     getByCharacter: (characterId: string) => ipcRenderer.invoke('scenarios:getByCharacter', characterId),
+    getByGroup: (groupId: string) => ipcRenderer.invoke('scenarios:getByGroup', groupId),
     getById: (id: string) => ipcRenderer.invoke('scenarios:getById', id),
-    create: (input: { characterId: string; name: string; description?: string }) => ipcRenderer.invoke('scenarios:create', input),
+    create: (input: { characterId?: string; groupId?: string; name: string; description?: string }) => ipcRenderer.invoke('scenarios:create', input),
     update: (id: string, input: { name?: string; description?: string }) => ipcRenderer.invoke('scenarios:update', id, input),
     setHidden: (id: string, hidden: boolean) => ipcRenderer.invoke('scenarios:setHidden', id, hidden),
     delete: (id: string) => ipcRenderer.invoke('scenarios:delete', id),

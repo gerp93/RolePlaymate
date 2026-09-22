@@ -26,6 +26,10 @@ export interface PromptTemplates {
   /** The persona's own history -- personalLore's counterpart for {{user}} rather than
    * {{char}}. Takes {lore} and {persona}. */
   personaLore: string;
+  /** Injected only in a group conversation, telling each member who else is in the scene. Takes
+   * {char}, {persona}, {group}, {others} (a pre-rendered "- Name: description" list of the other
+   * members) and {group_instructions} (the group's own instructions text). */
+  groupContext: string;
 }
 
 /** The locked `[TAG]`/`[/TAG]` text wrapped around each template's body (see PromptTemplates'
@@ -39,6 +43,7 @@ export const TEMPLATE_TAGS: Record<keyof PromptTemplates, string> = {
   worldLore: 'WORLD INFORMATION',
   personalLore: '{char} - PERSONAL HISTORY',
   personaLore: '{persona} - PERSONAL HISTORY',
+  groupContext: 'GROUP CHAT',
 };
 
 export interface StopPhraseSettings {
@@ -56,6 +61,7 @@ export const TEMPLATE_FIELD_KEYS: (keyof PromptTemplates)[] = [
   'worldLore',
   'personalLore',
   'personaLore',
+  'groupContext',
 ];
 
 /** A single saved version of one prompt template field's body text -- same shape as

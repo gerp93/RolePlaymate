@@ -1,6 +1,7 @@
 import { Character } from '../../shared/types/character';
 import { UserPersona } from '../../shared/types/userPersona';
 import { Scenario } from '../../shared/types/scenario';
+import { GroupWithMembers } from '../../shared/types/group';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 import { StartPickerOption } from '../components/chat/StartScreenPicker';
 import {
@@ -62,6 +63,31 @@ export function buildCharacterPickerOptions(
     fallbackGlyph: c.name.charAt(0).toUpperCase() || '?',
     badges: worldBookBadges(worldBookNames[c.id] ?? []),
   }));
+}
+
+/** A group's picker value is prefixed so it can share one dropdown with characters (see
+ * ChatStartScreen) without a character id ever being mistaken for a group id. */
+export const GROUP_PICKER_PREFIX = 'group:';
+
+/** Groups offered alongside characters on the start screen. The cover is the first member that has
+ * one; the subtext names the roster so two groups with similar names can be told apart. */
+export function buildGroupPickerOptions(
+  groups: GroupWithMembers[],
+  characters: Character[],
+  characterCoverUrls: Record<string, string | null>
+): StartPickerOption[] {
+  const nameById = new Map(characters.map((c) => [c.id, c.name]));
+  return groups.map((g) => {
+    const names = g.members.map((m) => nameById.get(m.characterId)).filter((n): n is string => !!n);
+    const coverUrl = g.members.map((m) => characterCoverUrls[m.characterId]).find((url) => !!url) ?? null;
+    return {
+      value: `${GROUP_PICKER_PREFIX}${g.id}`,
+      label: `${g.name} (group)`,
+      subtext: names.join(', ') || g.description,
+      imageUrl: coverUrl,
+      fallbackGlyph: '👥',
+    };
+  });
 }
 
 export function buildPersonaPickerOptions(

@@ -86,22 +86,53 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_character_images_character ON character_images(character_id);
 
-    -- A character's own list of settings/situations, each independently versioned and
-    -- hideable -- see scenarioService.ts. Split out from character_fields (where "scenario"
-    -- used to be a fixed single slot) so a character's permanent traits (personality/dialogue)
-    -- don't have to be duplicated onto a whole new character just to reuse them somewhere else.
+    -- A group is a deliberate ensemble of 2+ characters that chat together -- a peer of
+    -- \`characters\` (own name, own hide flag, own scenarios). \`instructions\` is plain text
+    -- injected into every member's prompt. Named character_groups rather than \`groups\` because
+    -- GROUPS is a window-frame keyword in newer SQLite.
+    CREATE TABLE IF NOT EXISTS character_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      instructions TEXT,
+      is_hidden INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- The roster, many-to-many. Deleting a character just drops it from every roster; deleting a
+    -- group leaves its characters alone. \`position\` is the display/greeting order.
+    CREATE TABLE IF NOT EXISTS character_group_members (
+      group_id TEXT NOT NULL,
+      character_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (group_id, character_id),
+      FOREIGN KEY (group_id) REFERENCES character_groups(id) ON DELETE CASCADE,
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_group_members_character ON character_group_members(character_id);
+
+    -- A list of settings/situations owned by EITHER one character or one group (exactly one --
+    -- see the CHECK), each independently versioned and hideable -- see scenarioService.ts. Split
+    -- out from character_fields (where "scenario" used to be a fixed single slot) so a
+    -- character's permanent traits (personality/dialogue) don't have to be duplicated onto a
+    -- whole new character just to reuse them somewhere else. A group-owned scenario is the
+    -- shared setting for that ensemble. Databases created before groups existed have
+    -- character_id NOT NULL and no group_id; migrateScenariosToNullableOwner rebuilds them.
     CREATE TABLE IF NOT EXISTS scenarios (
       id TEXT PRIMARY KEY,
-      character_id TEXT NOT NULL,
+      character_id TEXT,
+      group_id TEXT,
       name TEXT NOT NULL,
       description TEXT,
       is_hidden INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+      FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+      FOREIGN KEY (group_id) REFERENCES character_groups(id) ON DELETE CASCADE,
+      CHECK ((character_id IS NULL) <> (group_id IS NULL))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_scenarios_character ON scenarios(character_id);
 
     -- Mirrors character_field_versions exactly (self-healing "active always tracks latest").
     CREATE TABLE IF NOT EXISTS scenario_versions (
@@ -301,6 +332,15 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   ensureColumn(db, 'conversations', 'scenario_image_id', 'TEXT REFERENCES scenario_images(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'keep_forever', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'scenarios', 'description', 'TEXT');
+  // Group chat: a conversation is either one character's (character_id) or a group's (group_id),
+  // never both. Each assistant message records who spoke it; speaker_name is a snapshot so a
+  // line keeps its label after that character is deleted (speaker_character_id then goes NULL).
+  ensureColumn(db, 'conversations', 'group_id', 'TEXT REFERENCES character_groups(id) ON DELETE SET NULL');
+  ensureColumn(db, 'messages', 'speaker_character_id', 'TEXT REFERENCES characters(id) ON DELETE SET NULL');
+  ensureColumn(db, 'messages', 'speaker_name', 'TEXT');
+  migrateScenariosToNullableOwner(db);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_group ON conversations(group_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_speaker ON messages(speaker_character_id)`);
   // The non-static mode was originally called 'random' (reroll per message); it's since become
   // 'carousel' (auto-cycle every 10s in the margin portraits). ensureColumn only sets the
   // DEFAULT for brand-new databases, so existing rows written under the old default need a
@@ -332,6 +372,71 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, columnDdl
   if (!hasColumn) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnDdl}`);
   }
+}
+
+/**
+ * One-time upgrade path: scenarios used to be owned by exactly one character
+ * (`character_id NOT NULL`, no `group_id`). Group-owned scenarios need the owner to be either a
+ * character or a group, and SQLite can't relax NOT NULL in place, so the table is rebuilt.
+ *
+ * The dangerous part: with foreign keys on, `DROP TABLE scenarios` would cascade-delete every
+ * scenario version, greeting and image and null out `conversations.scenario_id`. Foreign keys
+ * therefore have to be OFF for the rebuild -- and that pragma is a no-op inside a transaction,
+ * so it is toggled around `transaction()`, not inside it. Child tables refer to `scenarios` by
+ * name, so they pick the rebuilt table up without being touched.
+ *
+ * Idempotent: does nothing once `character_id` is nullable and `group_id` exists. Fails loudly
+ * (and rolls back) if the rebuild leaves any dangling reference to `scenarios`, rather than let
+ * the app start on a half-migrated library.
+ */
+function migrateScenariosToNullableOwner(db: DatabaseSync): void {
+  const columns = db.prepare(`PRAGMA table_info(scenarios)`).all();
+  const owner = columns.find((c) => c.name === 'character_id');
+  const hasGroupColumn = columns.some((c) => c.name === 'group_id');
+  const ownerAlreadyNullable = owner ? !owner.notnull : false;
+
+  if (!ownerAlreadyNullable || !hasGroupColumn) {
+    const before = (db.prepare(`SELECT COUNT(*) as n FROM scenarios`).get() as { n: number }).n;
+
+    db.pragma('foreign_keys = OFF');
+    try {
+      transaction(db, () => {
+        db.exec(`
+          CREATE TABLE scenarios_new (
+            id TEXT PRIMARY KEY,
+            character_id TEXT,
+            group_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            is_hidden INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES character_groups(id) ON DELETE CASCADE,
+            CHECK ((character_id IS NULL) <> (group_id IS NULL))
+          );
+          INSERT INTO scenarios_new (id, character_id, group_id, name, description, is_hidden, created_at, updated_at)
+            SELECT id, character_id, NULL, name, description, is_hidden, created_at, updated_at FROM scenarios;
+          DROP TABLE scenarios;
+          ALTER TABLE scenarios_new RENAME TO scenarios;
+        `);
+
+        const after = (db.prepare(`SELECT COUNT(*) as n FROM scenarios`).get() as { n: number }).n;
+        if (after !== before) {
+          throw new Error(`Scenario migration lost rows (${before} before, ${after} after)`);
+        }
+        const dangling = db.prepare(`PRAGMA foreign_key_check`).all().filter((v) => v.parent === 'scenarios');
+        if (dangling.length > 0) {
+          throw new Error(`Scenario migration left ${dangling.length} dangling reference(s) to scenarios`);
+        }
+      });
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_scenarios_character ON scenarios(character_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_scenarios_group ON scenarios(group_id)`);
 }
 
 /** One-time upgrade path: characters created before multi-image support had a single
