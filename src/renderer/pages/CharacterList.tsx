@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { CharacterImage } from '../../shared/types/characterImage';
 import { toImageUrl } from '../utils/imageUrl';
@@ -23,6 +23,7 @@ function tileMinWidthFor(count: number): number {
 }
 
 export default function CharacterList() {
+  const navigate = useNavigate();
   const { hiddenUnlocked } = useSecurity();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [coverImages, setCoverImages] = useState<Record<string, CharacterImage[]>>({});
@@ -109,6 +110,12 @@ export default function CharacterList() {
     e.stopPropagation();
     await window.electronAPI.characters.setHidden(id, !hidden);
     await reload();
+  }
+
+  function handleChatNow(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    navigate('/chat', { state: { presetCharacterId: id } });
   }
 
   async function handleImport() {
@@ -239,17 +246,22 @@ export default function CharacterList() {
                           </div>
                         )}
                         <div className="character-card-actions">
-                          {hiddenUnlocked && (
-                            <button
-                              className="btn"
-                              onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
-                            >
-                              {character.isHidden ? 'Unhide' : 'Hide'}
-                            </button>
-                          )}
-                          <button className="btn" onClick={(e) => handleClone(e, character.id)}>
-                            Clone
+                          <button className="btn btn-primary" onClick={(e) => handleChatNow(e, character.id)}>
+                            Chat Now
                           </button>
+                          <div className="character-card-actions-row">
+                            {hiddenUnlocked && (
+                              <button
+                                className="btn"
+                                onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
+                              >
+                                {character.isHidden ? 'Unhide' : 'Hide'}
+                              </button>
+                            )}
+                            <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                              Clone
+                            </button>
+                          </div>
                           <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
                             Delete
                           </button>

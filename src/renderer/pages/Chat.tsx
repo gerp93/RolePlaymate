@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { Conversation, ConversationListItem, ImageMode } from '../../shared/types/conversation';
 import { UserPersona } from '../../shared/types/userPersona';
@@ -120,7 +120,11 @@ function saveBoolean(key: string, value: boolean): void {
 export default function Chat() {
   const { conversationId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { hiddenUnlocked } = useSecurity();
+  // Set by CharacterList's "Chat Now" -- consumed once by the start-screen effect below,
+  // which preselects this character instead of resuming whatever conversation was active.
+  const presetCharacterIdRef = useRef((location.state as { presetCharacterId?: string } | null)?.presetCharacterId ?? null);
 
   const [characters, setCharacters] = useState<Character[]>([]);
   const [personas, setPersonas] = useState<UserPersona[]>([]);
@@ -381,6 +385,17 @@ export default function Chat() {
       return;
     }
 
+    if (presetCharacterIdRef.current) {
+      const presetId = presetCharacterIdRef.current;
+      presetCharacterIdRef.current = null;
+      clearSessionActiveConversationId();
+      resetStartScreenSelections();
+      setCharacterId(presetId);
+      setSidebarCollapsed(true);
+      saveBoolean(SIDEBAR_COLLAPSED_KEY, true);
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       const sessionId = getSessionActiveConversationId();
@@ -401,7 +416,7 @@ export default function Chat() {
     return () => {
       cancelled = true;
     };
-  }, [conversationId, navigate]);
+  }, [conversationId, navigate, resetStartScreenSelections]);
 
   useEffect(() => {
     if (!conversationId && model && disabledModels.has(model)) {
