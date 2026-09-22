@@ -263,12 +263,22 @@ textarea {
   padding: 12px 14px;
 }
 
-/* Wraps instead of overflowing -- .character-card clips overflow, so on narrow tiles
-   (many cards) an unwrapped Unhide/Clone/Delete row got silently cut off at the edge. */
+/* Stacked rows instead of one wrapping flex row -- at narrow tile widths, flex-wrap put a
+   different number of buttons per line depending on label length ("Hide" vs "Unhide"),
+   which looked inconsistent from card to card. Buttons stretch to fill each row instead. */
 .character-card-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.character-card-actions-row {
+  display: flex;
+  gap: 6px;
+}
+
+.character-card-actions-row .btn {
+  flex: 1;
 }
 
 .character-card-issues {
