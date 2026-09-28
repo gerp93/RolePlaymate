@@ -14,6 +14,17 @@ import { normalizeCloneVoices, stemFromVoiceName } from '../../shared/utils/ttsP
 import { useVoicePreview, VoicePreviewState } from '../hooks/useVoicePreview';
 import EncryptionPanel from '../components/EncryptionPanel';
 
+/** Formats a byte count in whichever of KB/MB/GB fits its magnitude, e.g. `842 KB`, `4.1 MB`,
+ * `1.3 GB` -- see KVG_Standards' db-location-versioning.md. */
+function formatDbFileSize(bytes: number): string {
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
+  if (bytes >= MB) return `${(bytes / MB).toFixed(1)} MB`;
+  return `${Math.round(bytes / KB)} KB`;
+}
+
 function SettingsVoiceTable({
   rows,
   mode,
@@ -88,9 +99,9 @@ export default function Settings() {
   const { currentTheme, setTheme, availableThemes } = useTheme();
   const [retentionDraftUnsaved, setRetentionDraftUnsaved] = useState(false);
 
-  const [dbLocation, setDbLocation] = useState<{ path: string; isDefault: boolean; defaultPath: string } | null>(
-    null
-  );
+  const [dbLocation, setDbLocation] = useState<
+    { path: string; isDefault: boolean; defaultPath: string; sizeBytes: number | null } | null
+  >(null);
   const [dbBusy, setDbBusy] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
 
@@ -637,7 +648,15 @@ export default function Settings() {
         {dbLocation && (
           <>
             <div className="field">
-              <label>Current File{dbLocation.isDefault ? ' (default)' : ''}</label>
+              <label>
+                Current File{dbLocation.isDefault ? ' (default)' : ''}
+                {dbLocation.sizeBytes != null && (
+                  <span className="text-muted" style={{ fontWeight: 'normal' }}>
+                    {' '}
+                    ({formatDbFileSize(dbLocation.sizeBytes)})
+                  </span>
+                )}
+              </label>
               <input value={dbLocation.path} readOnly style={{ fontFamily: 'monospace', fontSize: 12 }} />
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

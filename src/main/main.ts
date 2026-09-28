@@ -1445,11 +1445,22 @@ function registerIPCHandlers() {
   });
 
   // Database location handlers
-  ipcMain.handle('dbLocation:get', () => ({
-    path: getEffectiveDbPath(),
-    isDefault: isUsingDefaultLocation(),
-    defaultPath: getDefaultDbPath(),
-  }));
+  ipcMain.handle('dbLocation:get', () => {
+    const dbPath = getEffectiveDbPath();
+    let sizeBytes: number | null = null;
+    try {
+      sizeBytes = fs.statSync(dbPath).size;
+    } catch {
+      // Not created yet (e.g. first launch before the schema is initialized) -- leave null
+      // so the Settings UI can skip the size display instead of showing a stale/bogus value.
+    }
+    return {
+      path: dbPath,
+      isDefault: isUsingDefaultLocation(),
+      defaultPath: getDefaultDbPath(),
+      sizeBytes,
+    };
+  });
 
   ipcMain.handle('dbLocation:browseExisting', async () => {
     if (!mainWindow) return null;
