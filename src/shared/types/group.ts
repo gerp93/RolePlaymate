@@ -42,4 +42,4 @@ export interface UpdateGroupInput {
 /** A group needs at least two characters to be a group; the cap keeps the prompt (which carries
  * every member's card across turns) from growing past what a local model handles well. */
 export const MIN_GROUP_CHARACTERS = 2;
-export const MAX_GROUP_CHARACTERS = 4;
+export const MAX_GROUP_CHARACTERS = 6;

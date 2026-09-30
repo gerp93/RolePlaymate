@@ -216,7 +216,7 @@ picking one clears the other.
 
 ## Groups
 
-A named ensemble of 2-4 characters (`MIN_GROUP_CHARACTERS`/
+A named ensemble of 2-6 characters (`MIN_GROUP_CHARACTERS`/
 `MAX_GROUP_CHARACTERS` in `shared/types/group.ts`) that chat together -- a
 peer of Character, not a conversation setting: its own row
 (`character_groups`), its own hide flag, and its own [Scenarios](#scenarios)
