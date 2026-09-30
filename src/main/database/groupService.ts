@@ -115,7 +115,7 @@ export class GroupService {
     return this.getGroupById(id)!;
   }
 
-  /** Replaces the whole roster (order included) in one step, so the 2-4 bound is checked against
+  /** Replaces the whole roster (order included) in one step, so the 2-6 bound is checked against
    * the final list rather than tripped by an intermediate add/remove. */
   setMembers(id: string, characterIds: string[]): GroupWithMembers {
     if (!this.getGroupById(id)) throw new Error(`Group with id ${id} not found`);
