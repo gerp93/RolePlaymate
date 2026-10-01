@@ -98,7 +98,7 @@ export function buildPersonaPickerOptions(
   coverUrls: Record<string, string | null>,
   worldBookNames: Record<string, string[]> = {}
 ): StartPickerOption[] {
-  return personas.map((p) => ({
+  return [...personas].sort(byName).map((p) => ({
     value: p.id,
     label: p.name,
     subtext: p.description,
@@ -112,7 +112,7 @@ export function buildScenarioPickerOptions(
   scenarios: Scenario[],
   coverUrls: Record<string, string | null>
 ): StartPickerOption[] {
-  return scenarios.map((s) => ({
+  return [...scenarios].sort(byName).map((s) => ({
     value: s.id,
     label: s.name,
     subtext: s.description,
