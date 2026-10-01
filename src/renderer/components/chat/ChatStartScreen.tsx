@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Character } from '../../../shared/types/character';
 import { UserPersona } from '../../../shared/types/userPersona';
 import { Scenario } from '../../../shared/types/scenario';
@@ -6,7 +6,6 @@ import { GroupWithMembers } from '../../../shared/types/group';
 import {
   buildCharacterPickerOptions,
   buildGroupPickerOptions,
-  GROUP_PICKER_PREFIX,
   buildPersonaPickerOptions,
   buildScenarioPickerOptions,
 } from '../../utils/chatPickerOptions';
@@ -53,7 +52,7 @@ function characterToScenarioBranch() {
 
 interface Props {
   characters: Character[];
-  /** Groups offered in the same picker as characters -- see GROUP_PICKER_PREFIX. */
+  /** Groups offered behind the Character/Group toggle in the party picker. */
   groups: GroupWithMembers[];
   personas: UserPersona[];
   scenarios: Scenario[];
@@ -231,7 +230,7 @@ export default function ChatStartScreen({
 }: Props) {
   const character = characters.find((c) => c.id === characterId) ?? null;
   const group = groups.find((g) => g.id === groupId) ?? null;
-  // A group is chosen through the same picker as a character, so the party is one or the other.
+  // A group is chosen through the same slot as a character, so the party is one or the other.
   const partyChosen = Boolean(characterId || groupId);
   const selectedPersona = personas.find((p) => p.id === personaId) ?? null;
   const selectedScenario = scenarios.find((s) => s.id === scenarioId) ?? null;
@@ -259,7 +258,23 @@ export default function ChatStartScreen({
     personaId ? { [personaId]: personaWorldBooks } : {}
   );
   const scenarioOptions = buildScenarioPickerOptions(scenarios, scenarioCoverUrls);
-  const partyOptions = [...characterOptions, ...buildGroupPickerOptions(groups, characters, characterCoverUrls)];
+  const groupOptions = buildGroupPickerOptions(groups, characters, characterCoverUrls);
+
+  // The party is a character OR a group; a radio picks which list the dropdown shows. Seeded from
+  // the current selection so returning to this screen with a group chosen lands on "Group".
+  const [partyKind, setPartyKind] = useState<'character' | 'group'>(groupId ? 'group' : 'character');
+  useEffect(() => {
+    if (groupId) setPartyKind('group');
+    else if (characterId) setPartyKind('character');
+  }, [groupId, characterId]);
+  const showGroups = groups.length > 0 && partyKind === 'group';
+  const changePartyKind = (kind: 'character' | 'group') => {
+    if (kind === partyKind) return;
+    setPartyKind(kind);
+    // The other list can't hold the current pick; clearing it (and its scenario) beats a
+    // dropdown that silently shows a stale portrait.
+    onCharacterChange('');
+  };
 
   return (
     <div className={`chat-start-screen${ready ? ' chat-start-screen-ready' : ''}`}>
@@ -325,19 +340,32 @@ export default function ChatStartScreen({
 
         <StartNode
           placement="character"
-          role={groups.length > 0 ? 'Character or group' : 'Character'}
+          role={groups.length > 0 ? 'Who you meet' : 'Character'}
           panel={
-            <StartScreenPicker
-              value={groupId ? `${GROUP_PICKER_PREFIX}${groupId}` : characterId}
-              onChange={(value) =>
-                value.startsWith(GROUP_PICKER_PREFIX)
-                  ? onGroupChange(value.slice(GROUP_PICKER_PREFIX.length))
-                  : onCharacterChange(value)
-              }
-              options={partyOptions}
-              placeholder="Select…"
-              ariaLabel="Character or group"
-            />
+            <>
+              {groups.length > 0 && (
+                <div className="chat-start-kind-toggle" role="radiogroup" aria-label="Character or group">
+                  {(['character', 'group'] as const).map((kind) => (
+                    <label key={kind} className="chat-start-kind-option">
+                      <input
+                        type="radio"
+                        name="chat-start-party-kind"
+                        checked={partyKind === kind}
+                        onChange={() => changePartyKind(kind)}
+                      />
+                      {kind === 'character' ? 'Character' : 'Group'}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <StartScreenPicker
+                value={showGroups ? groupId : characterId}
+                onChange={showGroups ? onGroupChange : onCharacterChange}
+                options={showGroups ? groupOptions : characterOptions}
+                placeholder="Select…"
+                ariaLabel={showGroups ? 'Group' : 'Character'}
+              />
+            </>
           }
         >
           <PortraitFrame

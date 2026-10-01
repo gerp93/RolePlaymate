@@ -279,8 +279,8 @@ conversation rather than the conversation's (nonexistent) owning character.
 There is deliberately no saved-vs-quick-group distinction yet (see the
 group-chat plan this section was written from) -- every group today is a
 deliberate library entry created from the Groups page, picked from the same
-start-screen picker a character is (prefixed `group:` so one dropdown can
-offer both, see `GROUP_PICKER_PREFIX`). The chat page tracks a group
+start-screen slot a character is (a Character/Group radio above the dropdown
+swaps which alphabetized list it shows; switching clears the pick). The chat page tracks a group
 conversation's *next speaker* as ordinary `characterId` state -- advanced
 round-robin around the roster after each reply (`Chat.tsx`'s group-turn
 effect) -- so `chat:send`/`chat:continue`'s existing one-speaker-at-a-time

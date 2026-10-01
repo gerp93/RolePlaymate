@@ -10,6 +10,7 @@ import {
   MODEL_CAPABILITY_ICONS,
   MODEL_CAPABILITY_LABELS,
   MODEL_TIER_COLORS,
+  modelCompositeScore,
   modelPickerExtraCapabilities,
   modelPickerSubtext,
 } from './modelPresentation';
@@ -47,6 +48,11 @@ function worldBookBadges(names: string[]) {
   );
 }
 
+/** Library lists come back oldest-first; pickers read better alphabetically. Numeric-aware and
+ * case-insensitive so "Bram 2" lands before "Bram 10". */
+const byName = (a: { name: string }, b: { name: string }) =>
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+
 export function buildCharacterPickerOptions(
   characters: Character[],
   coverUrls: Record<string, string | null>,
@@ -55,7 +61,7 @@ export function buildCharacterPickerOptions(
    * one per character in the list. */
   worldBookNames: Record<string, string[]> = {}
 ): StartPickerOption[] {
-  return characters.map((c) => ({
+  return [...characters].sort(byName).map((c) => ({
     value: c.id,
     label: c.name,
     subtext: c.description,
@@ -65,24 +71,21 @@ export function buildCharacterPickerOptions(
   }));
 }
 
-/** A group's picker value is prefixed so it can share one dropdown with characters (see
- * ChatStartScreen) without a character id ever being mistaken for a group id. */
-export const GROUP_PICKER_PREFIX = 'group:';
-
-/** Groups offered alongside characters on the start screen. The cover is the first member that has
- * one; the subtext names the roster so two groups with similar names can be told apart. */
+/** Groups offered on the start screen (behind its Character/Group toggle, so values are plain
+ * group ids). The cover is the first member that has one; the subtext names the roster so two
+ * groups with similar names can be told apart. */
 export function buildGroupPickerOptions(
   groups: GroupWithMembers[],
   characters: Character[],
   characterCoverUrls: Record<string, string | null>
 ): StartPickerOption[] {
   const nameById = new Map(characters.map((c) => [c.id, c.name]));
-  return groups.map((g) => {
+  return [...groups].sort(byName).map((g) => {
     const names = g.members.map((m) => nameById.get(m.characterId)).filter((n): n is string => !!n);
     const coverUrl = g.members.map((m) => characterCoverUrls[m.characterId]).find((url) => !!url) ?? null;
     return {
-      value: `${GROUP_PICKER_PREFIX}${g.id}`,
-      label: `${g.name} (group)`,
+      value: g.id,
+      label: g.name,
       subtext: names.join(', ') || g.description,
       imageUrl: coverUrl,
       fallbackGlyph: '👥',
@@ -95,7 +98,7 @@ export function buildPersonaPickerOptions(
   coverUrls: Record<string, string | null>,
   worldBookNames: Record<string, string[]> = {}
 ): StartPickerOption[] {
-  return personas.map((p) => ({
+  return [...personas].sort(byName).map((p) => ({
     value: p.id,
     label: p.name,
     subtext: p.description,
@@ -109,7 +112,7 @@ export function buildScenarioPickerOptions(
   scenarios: Scenario[],
   coverUrls: Record<string, string | null>
 ): StartPickerOption[] {
-  return scenarios.map((s) => ({
+  return [...scenarios].sort(byName).map((s) => ({
     value: s.id,
     label: s.name,
     subtext: s.description,
@@ -140,7 +143,14 @@ export function buildModelPickerOptions(
   tierRankModels?: OllamaModelInfo[]
 ): StartPickerOption[] {
   const modelTiers = assignModelTiers(tierRankModels ?? modelOptions);
-  return modelOptions.map((m) => {
+  // Strongest first (same score the tiers come from, so Best/Better/Good read as three runs),
+  // unscoreable models last, ties alphabetical by tag so the order is stable.
+  const ordered = [...modelOptions].sort(
+    (a, b) =>
+      modelCompositeScore(b) - modelCompositeScore(a) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+  );
+  return ordered.map((m) => {
     const tier = modelTiers[m.name];
     return {
       value: m.name,
