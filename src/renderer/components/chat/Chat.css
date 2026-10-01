@@ -2970,6 +2970,20 @@
   white-space: nowrap;
 }
 
+.chat-start-kind-toggle {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.chat-start-kind-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
 /* --- start screen rich pickers ------------------------------------------------------- */
 
 .start-screen-picker {
