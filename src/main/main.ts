@@ -102,6 +102,9 @@ import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudi
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { isHardpointReachable, openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
+import { KvgeniusClient } from './chat/kvgeniusClient';
+import { ImageGenService } from './imageGen';
+import type { ImageGenAspect, ImageGenSaveTarget } from '../shared/types/imageGen';
 import {
   chooseCharacterImage,
   chooseCharacterImages,
@@ -109,6 +112,7 @@ import {
   cloneCharacterImage,
   getImagesDir,
   getImageLibraryDirs,
+  copyImageIntoLibrary,
 } from './images';
 import { getTtsLibraryDirs, isTtsLibraryPath, writeTtsWav, concatenateWavBuffers } from './ttsAudio';
 import { getHardwareSnapshot } from './hardware';
@@ -421,6 +425,7 @@ let promptFieldVersionService: PromptFieldVersionService;
 let ollamaClient: OllamaClient;
 let chatterboxClient: ChatterboxClient;
 let chatSessions: ChatSessionManager;
+let imageGen: ImageGenService;
 let lorebookService: LorebookService;
 let securityService: SecurityService;
 
@@ -923,6 +928,13 @@ app.whenReady().then(async () => {
   // the db path, which OllamaClient never caches for that reason.
   ollamaClient = new OllamaClient(getEffectiveOllamaHost);
   chatterboxClient = new ChatterboxClient(getEffectiveChatterboxHost);
+  // KVGenius writes mcp-api.json into its own userData folder: `kvgenius` when packaged,
+  // `kvgenius-dev` from source. Try the installed app first.
+  imageGen = new ImageGenService(
+    new KvgeniusClient(() =>
+      ['kvgenius', 'kvgenius-dev'].map((name) => path.join(app.getPath('appData'), name, 'mcp-api.json'))
+    )
+  );
   lorebookService = new LorebookService(db, securityService);
   modelSamplerService = new ModelSamplerService(db);
   chatSessions = new ChatSessionManager(
@@ -2755,6 +2767,60 @@ function registerChatHandlers() {
   // Prompt Debugging pane's history list -- every turn's logged prompt for this conversation.
   ipcMain.handle('chat:getDebugHistory', (_, conversationId: string) =>
     conversationService.getDebugHistory(conversationId)
+  );
+
+  // "Generate image": the loaded chat model drafts a prompt from the scene, the user edits it,
+  // KVGenius renders it, and the user picks a character or persona gallery to keep it in.
+  // Nothing is written to a gallery until imageGen:save.
+  ipcMain.handle('imageGen:status', () => imageGen.status());
+
+  ipcMain.handle(
+    'imageGen:composePrompt',
+    async (
+      _,
+      request: { conversationId: string; characterId: string; personaId?: string; model: string; hint?: string }
+    ) => {
+      const conversation = conversationService.getConversation(request.conversationId);
+      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
+      const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+      const prompt = await chatSessions.composeImagePrompt(
+        request.conversationId,
+        request.characterId,
+        request.personaId ?? null,
+        persona?.name ?? null,
+        persona?.background ?? null,
+        request.model,
+        request.hint
+      );
+      return { prompt };
+    }
+  );
+
+  ipcMain.handle(
+    'imageGen:generate',
+    (_, request: { requestId: string; prompt: string; aspect: ImageGenAspect }) =>
+      imageGen.generate(request.requestId, request.prompt, request.aspect)
+  );
+
+  ipcMain.handle('imageGen:cancel', (_, requestId: string) => imageGen.cancel(requestId));
+
+  ipcMain.handle(
+    'imageGen:save',
+    (_, request: { resultId: string; target: ImageGenSaveTarget; targetId: string }) => {
+      if (request.target === 'character') {
+        assertHiddenContentAccessible(request.targetId);
+        if (!characterService.getCharacterById(request.targetId)) throw new Error('Character not found.');
+      } else {
+        assertHiddenContentAccessible(null, request.targetId);
+        if (!conversationService.getPersona(request.targetId)) throw new Error('Persona not found.');
+      }
+      // Copied (and encrypted, when app encryption is on) like any other imported portrait, so
+      // the gallery keeps working after KVGenius clears its own folder.
+      const stored = copyImageIntoLibrary(imageGen.resultPath(request.resultId));
+      return request.target === 'character'
+        ? characterImageService.addImage(request.targetId, stored)
+        : personaImageService.addImage(request.targetId, stored);
+    }
   );
 
   // A draft for the composer, not a real turn -- never persisted, never touches the model

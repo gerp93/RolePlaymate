@@ -17,6 +17,7 @@ import { useSecurity } from '../context/SecurityContext';
 import MessageList from '../components/chat/MessageList';
 import Composer from '../components/chat/Composer';
 import MessagePromptDialog from '../components/chat/MessagePromptDialog';
+import ImageGenDialog from '../components/chat/ImageGenDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
@@ -138,6 +139,7 @@ export default function Chat() {
   // every send/continue path keeps working unchanged; `groupId` says it is a group at all. On the
   // start screen the two are exclusive -- picking a group clears the character and vice versa.
   const [characterId, setCharacterId] = useState('');
+  const [imageGenOpen, setImageGenOpen] = useState(false);
   const [groupId, setGroupId] = useState('');
   const [groups, setGroups] = useState<GroupWithMembers[]>([]);
   const [personaId, setPersonaId] = useState('');
@@ -1429,6 +1431,7 @@ export default function Chat() {
                   tts.stop();
                   void session.cancel();
                 }}
+                onGenerateImage={canChat && conversationId ? () => setImageGenOpen(true) : undefined}
                 onSuggest={
                   canChat && conversationId
                     ? async () => {
@@ -1525,6 +1528,18 @@ export default function Chat() {
           </div>
           )}
         </div>
+
+        {imageGenOpen && conversationId && (
+          <ImageGenDialog
+            conversationId={conversationId}
+            characterId={characterId}
+            characterName={characters.find((c) => c.id === characterId)?.name ?? 'character'}
+            personaId={personaId}
+            personaName={personas.find((p) => p.id === personaId)?.name ?? ''}
+            model={model}
+            onClose={() => setImageGenOpen(false)}
+          />
+        )}
 
         {promptDialogOpen && (
           <MessagePromptDialog

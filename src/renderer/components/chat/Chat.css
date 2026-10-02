@@ -1974,6 +1974,11 @@
   cursor: pointer;
 }
 
+/* Sits to the left of Suggest, which is anchored at right: 10px. */
+.chat-image-in-field {
+  right: 92px;
+}
+
 .chat-suggest-in-field:hover:not(:disabled) {
   color: var(--color-text);
   background: var(--color-bg-hover);
@@ -3401,4 +3406,53 @@
   .chat-start-btn:not(:disabled):hover {
     transform: translateY(-2px) scale(1.03);
   }
+}
+
+/* "Generate image" dialog -- built on the memories dialog's shell. */
+.imagegen-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.imagegen-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.imagegen-hint-row,
+.imagegen-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.imagegen-hint-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.imagegen-prompt {
+  width: 100%;
+  resize: vertical;
+}
+
+.imagegen-preview {
+  max-width: 100%;
+  max-height: 55vh;
+  object-fit: contain;
+  align-self: center;
+  border-radius: var(--radius);
+}
+
+.imagegen-warning,
+.imagegen-error {
+  margin: 0;
+  font-size: 13px;
+}
+
+.imagegen-error {
+  color: var(--color-danger, #e5484d);
 }

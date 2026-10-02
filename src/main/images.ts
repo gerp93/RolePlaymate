@@ -35,7 +35,7 @@ function libraryExtension(sourcePath: string): string {
 
 /** Copies one file into the db-adjacent images folder under a fresh uuid name, so it survives
  * wherever the user originally had it. Throws for anything outside the allowed extensions. */
-function copyImageIntoLibrary(sourcePath: string): string {
+export function copyImageIntoLibrary(sourcePath: string): string {
   const ext = libraryExtension(sourcePath);
 
   const imagesDir = getImagesDir();
