@@ -18,6 +18,7 @@ import {
 import { extractMemories } from './memoryExtraction';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply } from './suggestReply';
+import { composeImagePrompt, IMAGE_PROMPT_HISTORY_LINES } from './imagePrompt';
 import { Message } from '../../shared/types/message';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
@@ -1257,6 +1258,73 @@ export class ChatSessionManager {
     model: string,
     historyLimit: number = DEFAULT_HISTORY_LIMIT
   ): Promise<string> {
+    const { built, recentTurns } = this.buildSceneContext(
+      conversationId,
+      characterId,
+      personaId,
+      personaName,
+      personaBackground,
+      historyLimit
+    );
+
+    return suggestPersonaReply(this.ollama, model, {
+      characterContext: built.prompt,
+      historyTurns: recentTurns,
+      characterName: built.characterName,
+      personaName: personaName?.trim() || 'You',
+    });
+  }
+
+  /**
+   * Drafts a text-to-image prompt for the current moment, for the "Generate image" dialog.
+   * Like suggestReply this is never persisted and never touches `history` or `pending`; the
+   * user reviews and edits the draft before anything is sent to KVGenius.
+   */
+  async composeImagePrompt(
+    conversationId: string,
+    characterId: string,
+    personaId: string | null,
+    personaName: string | null,
+    personaBackground: string | null,
+    model: string,
+    hint?: string,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const { built, recentTurns } = this.buildSceneContext(
+      conversationId,
+      characterId,
+      personaId,
+      personaName,
+      personaBackground,
+      IMAGE_PROMPT_HISTORY_LINES
+    );
+
+    return composeImagePrompt(
+      this.ollama,
+      model,
+      {
+        characterContext: built.prompt,
+        historyTurns: recentTurns,
+        characterName: built.characterName,
+        personaName: personaName?.trim() || 'You',
+        hint,
+      },
+      signal
+    );
+  }
+
+  /** The character's prompt plus the recent transcript, as seen by a one-shot helper call
+   * (suggest, image prompt) rather than a real turn. Reads straight from the database so it
+   * matches what is on screen, and pulls in the persona's own world books -- see
+   * getEntriesForPersonaWithWorldBooks. */
+  private buildSceneContext(
+    conversationId: string,
+    characterId: string,
+    personaId: string | null,
+    personaName: string | null,
+    personaBackground: string | null,
+    historyLimit: number
+  ) {
     const transcript = this.conversations
       .getMessages(conversationId)
       .filter((m) => m.role !== 'system')
@@ -1287,12 +1355,7 @@ export class ChatSessionManager {
       worldLore: personaWorldLore,
     });
 
-    return suggestPersonaReply(this.ollama, model, {
-      characterContext: built.prompt,
-      historyTurns: recentTurns,
-      characterName: built.characterName,
-      personaName: personaName?.trim() || 'You',
-    });
+    return { built, recentTurns };
   }
 
   /**

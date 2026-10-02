@@ -6,6 +6,7 @@ import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
 import { EmbeddingModelStatus } from '../shared/embeddingModel';
 import { PersonaImage } from '../shared/types/personaImage';
+import { ImageGenAspect, ImageGenResult, ImageGenSaveTarget, ImageGenStatus } from '../shared/types/imageGen';
 import {
   BuiltPrompt,
   ChatStreamEvent,
@@ -196,6 +197,25 @@ declare global {
         set: (model: string) => Promise<{ success: true }>;
         resetToDefault: () => Promise<{ success: true }>;
       };
+      imageGen: {
+        status: () => Promise<ImageGenStatus>;
+        composePrompt: (request: {
+          conversationId: string;
+          characterId: string;
+          personaId?: string;
+          model: string;
+          hint?: string;
+        }) => Promise<{ prompt: string }>;
+        /** Blocks until KVGenius finishes (or fails); `requestId` is what `cancel` takes. */
+        generate: (request: { requestId: string; prompt: string; aspect: ImageGenAspect }) => Promise<ImageGenResult>;
+        cancel: (requestId: string) => Promise<void>;
+        save: (request: {
+          resultId: string;
+          target: ImageGenSaveTarget;
+          targetId: string;
+        }) => Promise<CharacterImage | PersonaImage>;
+      };
+
       chat: {
         previewSystemPrompt: (
           characterId: string,
