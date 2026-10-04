@@ -11,6 +11,8 @@ interface Props {
   /** Undefined when there's nothing to suggest from yet (no character/model picked) -- the
    * control is hidden rather than disabled in that case. */
   onSuggest?: () => Promise<string>;
+  /** Opens the "Generate image" dialog. Hidden when omitted (no conversation yet). */
+  onGenerateImage?: () => void;
   /** Controlled from Chat.tsx (rather than owned locally) so a persona swap can prepopulate a
    * stock scene note here without reaching into the composer's internals. */
   directions: string;
@@ -42,6 +44,7 @@ export default function Composer({
   onSend,
   onCancel,
   onSuggest,
+  onGenerateImage,
   directions,
   onDirectionsChange,
   directionsOpen,
@@ -248,6 +251,17 @@ export default function Composer({
             }
           }}
         />
+        {onGenerateImage && (
+          <button
+            type="button"
+            className="chat-suggest-in-field chat-image-in-field"
+            disabled={disabled || isGenerating}
+            onClick={onGenerateImage}
+            title="Draw the current scene with KVGenius"
+          >
+            🖼 Image
+          </button>
+        )}
         {onSuggest && (
           <button
             type="button"

@@ -162,6 +162,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetToDefault: () => ipcRenderer.invoke('memoryEmbeddingModel:resetToDefault'),
   },
 
+  imageGen: {
+    status: () => ipcRenderer.invoke('imageGen:status'),
+    composePrompt: (request: unknown) => ipcRenderer.invoke('imageGen:composePrompt', request),
+    generate: (request: unknown) => ipcRenderer.invoke('imageGen:generate', request),
+    cancel: (requestId: string) => ipcRenderer.invoke('imageGen:cancel', requestId),
+    save: (request: unknown) => ipcRenderer.invoke('imageGen:save', request),
+  },
+
   chat: {
     previewSystemPrompt: (
       characterId: string,

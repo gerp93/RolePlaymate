@@ -279,8 +279,8 @@ conversation rather than the conversation's (nonexistent) owning character.
 There is deliberately no saved-vs-quick-group distinction yet (see the
 group-chat plan this section was written from) -- every group today is a
 deliberate library entry created from the Groups page, picked from the same
-start-screen picker a character is (prefixed `group:` so one dropdown can
-offer both, see `GROUP_PICKER_PREFIX`). The chat page tracks a group
+start-screen slot a character is (a Character/Group radio above the dropdown
+swaps which alphabetized list it shows; switching clears the pick). The chat page tracks a group
 conversation's *next speaker* as ordinary `characterId` state -- advanced
 round-robin around the roster after each reply (`Chat.tsx`'s group-turn
 effect) -- so `chat:send`/`chat:continue`'s existing one-speaker-at-a-time
@@ -311,6 +311,33 @@ owner's. `getSession`/`reconstructGroupPending` use the same test on a cold star
 `appendMessage` credits a recorded speaker's `message_count` before falling back to the owner.
 `assertHiddenContentAccessible` refuses a conversation with a hidden guest while locked, like a
 group's hidden member.
+
+## Image generation (KVGenius)
+
+Optional, same pattern as Ollama and Chatterbox: the app ships no image model and the
+library and chat stay fully usable when KVGenius is absent. The composer's "Image" button
+opens `ImageGenDialog`: the **chat model currently selected** drafts a text-to-image prompt
+from the character's card and the last few lines (`chat/imagePrompt.ts`, a flat one-shot prompt
+like `suggestReply` -- the roleplay system prompt would fight a "describe this scene" request),
+the user edits it, KVGenius renders it, and the result can be saved to the character's or the
+persona's gallery. Nothing is stored until a Save button is pressed; Save copies the file into
+the images library (`copyImageIntoLibrary`, so it is encrypted when app encryption is on).
+
+The transport is KVGenius's loopback HTTP API (`POST /v1/tools/<name>`, bearer token), **not**
+the MCP stdio shim: that shim is only an adapter for MCP clients, and RolePlaymate is not one.
+`chat/kvgeniusClient.ts` reads `mcp-api.json` (port + token, written by KVGenius while its
+Settings -> "Other Apps (MCP)" toggle is on) from KVGenius's userData folder (`kvgenius`, then
+`kvgenius-dev`) on every call, so a KVGenius restart needs no reconfiguration. It queues
+`generate_image` and long-polls `get_job`; KVGenius runs jobs one at a time on its own queue,
+and ours carry the batch label `roleplaymate`. KVGenius only shows a client what that client
+created, which is all we ask about. The token never leaves the main process.
+
+`imageGen.ts` holds the in-flight requests and the finished results. Unlike chat this does **not**
+push events: `imageGen:generate` is a plain `invoke` that resolves when the image is ready, with a
+renderer-supplied request id so `imageGen:cancel` can stop it (and cancels the KVGenius job, or the
+GPU would keep rendering an image nobody will see). The renderer only ever holds an opaque
+`resultId`, never a file path, so it cannot ask the main process to copy an arbitrary file into
+the library.
 
 ## Memories
 
