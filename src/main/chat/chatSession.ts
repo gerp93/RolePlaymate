@@ -59,6 +59,10 @@ export interface PendingTurn {
   /** Group conversations only: the other characters in the scene, for the style reminder a redo
    * rebuilds from the current Chat Settings. */
   otherCharacters?: string[];
+  /** The directions this turn was sent with, so a redo repeats them at the end of the prompt too
+   * (see withStyleReminder). Also recoverable after a restart: they are stored on the user
+   * message. */
+  directions?: string;
 }
 
 /** A group conversation's per-speaker prompt inputs -- see ChatSessionManager.getGroupTurn. */
@@ -173,7 +177,8 @@ export function withStyleReminder(
   messages: OllamaChatMessage[],
   charName: string,
   personaName: string | null | undefined,
-  otherCharacters: string[] = []
+  otherCharacters: string[] = [],
+  directions?: string
 ): OllamaChatMessage[] {
   const reminder = buildStyleReminder({
     charName,
@@ -181,6 +186,7 @@ export function withStyleReminder(
     concise: getConciseReplies(),
     pov: getNarrationPov(),
     otherCharacters,
+    directions,
   });
 
   const last = messages[messages.length - 1];
@@ -367,7 +373,7 @@ export class ChatSessionManager {
             )
           : null
         : last?.role === 'assistant' && precedingUser?.role === 'user'
-          ? this.reconstructPending(conversationId, precedingUser.content, last.id)
+          ? this.reconstructPending(conversationId, precedingUser.content, last.id, precedingUser.directions ?? undefined)
           : null;
       // A group's prompts are built from the stored transcript per speaker (see getGroupHistory),
       // so this flat cache is never read for one -- it stays empty rather than holding a
@@ -391,8 +397,8 @@ export class ChatSessionManager {
    * turn that outlived the process that generated it (app restart, or the very first
    * `getSession` after the app starts).
    *
-   * This is necessarily approximate: per-turn directions, retrieved memories and lore firing
-   * aren't recoverable, only the character/persona backdrop is. A redo issued after a restart
+   * This is necessarily approximate: retrieved memories and lore firing aren't recoverable, only
+   * the character/persona backdrop (and the directions, which are stored on the user message) is. A redo issued after a restart
    * therefore uses a slightly plainer prompt than the turn it's replacing would have. Within
    * one continuous run this path is never hit -- `pending` is set directly by `generate`,
    * carrying the exact prompt that turn used.
@@ -400,7 +406,8 @@ export class ChatSessionManager {
   private reconstructPending(
     conversationId: string,
     userMessage: string,
-    assistantMessageId: string
+    assistantMessageId: string,
+    directions?: string
   ): PendingTurn | null {
     const conversation = this.conversations.getConversation(conversationId);
     if (!conversation?.characterId) return null;
@@ -427,6 +434,7 @@ export class ChatSessionManager {
         personaName: persona?.name ?? null,
         stopPhrases: built.stopPhrases,
         shouldExtract: true,
+        directions,
       };
     } catch {
       // Character deleted out from under the conversation -- nothing to rebuild a prompt from.
@@ -435,8 +443,8 @@ export class ChatSessionManager {
   }
 
   /**
-   * reconstructPending for a group conversation: same approximation (per-turn directions,
-   * memories and lore aren't recoverable), but the speaker comes from the reply itself, and the
+   * reconstructPending for a group conversation: same approximation (memories and lore aren't
+   * recoverable), but the speaker comes from the reply itself, and the
    * context a redo replays is rebuilt from the stored transcript minus the pending turn.
    * `precedingUser` is set only when the reply directly followed a user message; otherwise it was
    * a continuation, replayed with no trailing user turn.
@@ -489,6 +497,7 @@ export class ChatSessionManager {
         shouldExtract: true,
         replayMessages,
         otherCharacters: groupTurn.otherNames,
+        directions: precedingUser?.directions ?? undefined,
       };
     } catch {
       // Speaker deleted or removed from the roster since -- nothing to rebuild a prompt from.
@@ -628,7 +637,8 @@ export class ChatSessionManager {
       [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
       request.personaName,
-      groupTurn?.otherNames
+      groupTurn?.otherNames,
+      request.directions
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -714,6 +724,7 @@ export class ChatSessionManager {
         shouldExtract: request.extractMemories !== false,
         replayMessages: groupTurn ? turns : undefined,
         otherCharacters: groupTurn?.otherNames,
+        directions: request.directions,
       };
 
       return { message, debug, userMessage };
@@ -776,7 +787,8 @@ export class ChatSessionManager {
       ],
       pending.characterName,
       pending.personaName,
-      pending.otherCharacters
+      pending.otherCharacters,
+      pending.directions
     );
 
     const controller = new AbortController();
@@ -976,7 +988,8 @@ export class ChatSessionManager {
       [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
       request.personaName,
-      groupTurn?.otherNames
+      groupTurn?.otherNames,
+      request.directions
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1060,6 +1073,7 @@ export class ChatSessionManager {
         shouldExtract: request.extractMemories !== false,
         replayMessages: groupTurn ? turns : undefined,
         otherCharacters: groupTurn?.otherNames,
+        directions: request.directions,
       };
 
       return { message, debug, userMessage };
@@ -1165,7 +1179,8 @@ export class ChatSessionManager {
       ],
       built.characterName,
       request.personaName,
-      groupTurn?.otherNames
+      groupTurn?.otherNames,
+      directions
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1235,6 +1250,7 @@ export class ChatSessionManager {
         shouldExtract: true,
         replayMessages: groupTurn ? historyTurns : undefined,
         otherCharacters: groupTurn?.otherNames,
+        directions,
       };
 
       return { message, debug };
