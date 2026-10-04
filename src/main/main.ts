@@ -151,6 +151,7 @@ import {
   guardLoreEntryCreate,
   guardLoreEntryUpdate,
   guardProseContent,
+  guardScenarioContent,
   guardGreeting,
   guardLoreText,
   guardChatMessage,
@@ -1407,11 +1408,11 @@ function registerIPCHandlers() {
     scenarioService.getVersions(scenarioId)
   );
   ipcMain.handle('scenarioVersions:create', (_, scenarioId: string, content: string) => {
-    guardProseContent(content, 'Scenario text');
+    guardScenarioContent(content);
     return scenarioService.createVersion(scenarioId, content);
   });
   ipcMain.handle('scenarioVersions:updateContent', (_, id: string, content: string) => {
-    guardProseContent(content, 'Scenario text');
+    guardScenarioContent(content);
     return scenarioService.updateVersionContent(id, content);
   });
   ipcMain.handle('scenarioVersions:delete', (_, id: string) => {
