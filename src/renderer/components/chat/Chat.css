@@ -1874,7 +1874,58 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+/* "Respond as" sits at the start of the controls row, pushing Directions to the far side. */
+.chat-respond-as {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.chat-respond-as-field {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chat-respond-as select.chat-respond-as-active {
+  border-color: var(--color-primary-action);
+  font-weight: 600;
+}
+
+.chat-respond-as-new {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-respond-as-new input {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 13px;
+  min-width: 120px;
+}
+
+.chat-respond-as-description {
+  flex: 1 1 260px;
+}
+
+.chat-respond-as-error {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--color-accent-red);
 }
 
 .chat-skip-dialogue-wrap {
