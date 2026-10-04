@@ -10,6 +10,23 @@ export interface GroupHistoryOptions {
   /** Sliding window over the transcript's non-system messages, same meaning as the solo path's
    * history limit. Applied before merging, so it counts messages, not merged turns. */
   limit: number;
+  /** A one-character conversation's own character, for when a guest has spoken (see
+   * isGuestLine). Replies written before that, and its greeting, never recorded a speaker --
+   * without this they would read as some other character's lines. Unused for a real group,
+   * where every line records its speaker. */
+  defaultSpeaker?: { id: string; name: string };
+}
+
+/**
+ * Whether an assistant line was written by someone other than a solo conversation's own
+ * character -- a guest brought in with "Respond as". A line whose speaker row was deleted
+ * (`speakerCharacterId` null, `speakerName` kept) is still a guest's: a line from before guests
+ * existed has neither.
+ */
+export function isGuestLine(message: Message, leadCharacterId: string): boolean {
+  if (message.role !== 'assistant') return false;
+  if (message.speakerCharacterId) return message.speakerCharacterId !== leadCharacterId;
+  return message.speakerName !== null;
 }
 
 function userLine(personaName: string | null, text: string): string {
@@ -45,18 +62,22 @@ export function buildGroupHistory(
   const window = transcript.filter((m) => m.role !== 'system').slice(-Math.max(options.limit, 0));
 
   let turns: OllamaChatMessage[] = [];
+  const fallback = options.defaultSpeaker;
   for (const message of window) {
     if (message.role === 'user') {
       turns = pushTurn(turns, 'user', userLine(options.personaName, message.content));
-    } else if (message.speakerCharacterId === speakerCharacterId) {
+      continue;
+    }
+    // The fallback applies only to a line with no speaker information at all -- one whose speaker
+    // was deleted still has its name, and belongs to that (now removed) character.
+    const unattributed = !message.speakerCharacterId && !message.speakerName;
+    const lineSpeakerId = message.speakerCharacterId ?? (unattributed ? (fallback?.id ?? null) : null);
+    const lineSpeakerName = message.speakerName ?? (unattributed ? (fallback?.name ?? null) : null);
+    if (lineSpeakerId === speakerCharacterId) {
       turns = pushTurn(turns, 'assistant', message.content);
     } else {
       // Another character -- or a line whose speaker was never recorded, which just goes in bare.
-      turns = pushTurn(
-        turns,
-        'user',
-        message.speakerName ? `${message.speakerName}: ${message.content}` : message.content
-      );
+      turns = pushTurn(turns, 'user', lineSpeakerName ? `${lineSpeakerName}: ${message.content}` : message.content);
     }
   }
   return turns;

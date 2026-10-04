@@ -22,6 +22,7 @@ import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
 import GroupRosterBar from '../components/chat/GroupRosterBar';
+import RespondAsPicker from '../components/chat/RespondAsPicker';
 import CroppableImage from '../components/CroppableImage';
 import ChatStartScreen, { startScreenPortraitUrl, startScreenPortraitImage } from '../components/chat/ChatStartScreen';
 import StartScreenPicker from '../components/chat/StartScreenPicker';
@@ -139,6 +140,12 @@ export default function Chat() {
   // start screen the two are exclusive -- picking a group clears the character and vice versa.
   const [characterId, setCharacterId] = useState('');
   const [groupId, setGroupId] = useState('');
+  // "Respond as": a library character who writes the next reply instead of this conversation's
+  // own. One-shot -- cleared once that send/continue goes out. '' means the usual character.
+  const [respondAsId, setRespondAsId] = useState('');
+  useEffect(() => {
+    setRespondAsId('');
+  }, [conversationId]);
   const [groups, setGroups] = useState<GroupWithMembers[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [scenarioId, setScenarioId] = useState('');
@@ -648,8 +655,19 @@ export default function Chat() {
       ? (characters.find((c) => c.id === message.speakerCharacterId)?.ttsVoice ?? null)
       : characterVoice;
   ttsVoiceForMessageRef.current = voiceForMessage;
+  // A guest ("Respond as") with a voice of their own counts once they've spoken, even when the
+  // conversation's own character has none.
+  const guestHasVoice =
+    !groupId &&
+    session.messages.some(
+      (m) =>
+        m.role === 'assistant' &&
+        m.speakerCharacterId &&
+        m.speakerCharacterId !== characterId &&
+        characters.find((c) => c.id === m.speakerCharacterId)?.ttsVoice
+    );
   const characterSpeechAvailable = Boolean(
-    (groupId ? rosterCharacters.some((c) => c.ttsVoice) : characterVoice) || narratorVoice
+    (groupId ? rosterCharacters.some((c) => c.ttsVoice) : characterVoice) || guestHasVoice || narratorVoice
   );
   const personaSpeechAvailable = Boolean(personaVoice || narratorVoice);
   const ttsAvailable = characterSpeechAvailable || personaSpeechAvailable;
@@ -785,8 +803,10 @@ export default function Chat() {
       if (!characterId || !model) return;
       if (tts.overlapMode === 'interrupt') tts.stop();
       unlockSpeechPlayback();
+      const speakerId = !groupId && respondAsId ? respondAsId : characterId;
+      setRespondAsId('');
       await session.send({
-        characterId,
+        characterId: speakerId,
         model,
         message,
         personaId: personaId || undefined,
@@ -795,7 +815,7 @@ export default function Chat() {
       });
       void refreshConversations();
     },
-    [characterId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
+    [characterId, groupId, respondAsId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
   );
 
   const handleContinue = useCallback(
@@ -803,8 +823,10 @@ export default function Chat() {
       if (!characterId || !model) return;
       if (tts.overlapMode === 'interrupt') tts.stop();
       unlockSpeechPlayback();
+      const speakerId = !groupId && respondAsId ? respondAsId : characterId;
+      setRespondAsId('');
       await session.continueAsCharacter({
-        characterId,
+        characterId: speakerId,
         model,
         personaId: personaId || undefined,
         directions: directions || undefined,
@@ -812,8 +834,24 @@ export default function Chat() {
       });
       void refreshConversations();
     },
-    [characterId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
+    [characterId, groupId, respondAsId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
   );
+
+  // Everyone but the conversation's own character, as the "Respond as" picker offers them --
+  // hidden ones only while the privacy screen is unlocked, same as the other pickers.
+  const guestCharacters = useMemo(
+    () => characters.filter((c) => c.id !== characterId && (hiddenUnlocked || !c.isHidden)),
+    [characters, characterId, hiddenUnlocked]
+  );
+
+  const handleCreateGuest = useCallback(async (name: string, description: string): Promise<Character> => {
+    const created = await window.electronAPI.characters.create({
+      name,
+      description: description || undefined,
+    });
+    setCharacters((current) => [...current, created]);
+    return created;
+  }, []);
 
   const handleRegenerate = useCallback(() => {
     tts.stop();
@@ -1373,7 +1411,7 @@ export default function Chat() {
                   personaName={persona?.name ?? 'You'}
                   characterImages={characterImages}
                   personaImages={personaImages}
-                  speakerImages={groupId ? startCharacterCovers : undefined}
+                  speakerImages={startCharacterCovers}
                   tts={
                     ttsAvailable
                       ? {
@@ -1410,6 +1448,18 @@ export default function Chat() {
               <Composer
                 disabled={!canChat}
                 isGenerating={session.isGenerating}
+                respondAs={
+                  canChat && !groupId && character ? (
+                    <RespondAsPicker
+                      leadName={character.name}
+                      guests={guestCharacters}
+                      value={respondAsId}
+                      onChange={setRespondAsId}
+                      onCreate={handleCreateGuest}
+                      disabled={session.isGenerating}
+                    />
+                  ) : undefined
+                }
                 directions={directions}
                 onDirectionsChange={setDirections}
                 directionsOpen={directionsOpen}

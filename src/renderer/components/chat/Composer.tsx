@@ -24,6 +24,9 @@ interface Props {
   onSkipDialogue?: () => void;
   /** True while a clip is generating, playing, or paused -- the skip control is disabled otherwise. */
   skipDialogueReady?: boolean;
+  /** "Respond as" picker, rendered at the start of the controls row. Omitted where it doesn't
+   * apply (no conversation yet, or a group, whose roster bar already picks the speaker). */
+  respondAs?: ReactNode;
 }
 
 /**
@@ -47,6 +50,7 @@ export default function Composer({
   messageCount,
   onSkipDialogue,
   skipDialogueReady,
+  respondAs,
 }: Props) {
   const [message, setMessage] = useState('');
 
@@ -121,6 +125,7 @@ export default function Composer({
   return (
     <div className="chat-composer">
       <div className="chat-composer-controls">
+        {respondAs}
         {onSkipDialogue && (
           <span
             className="chat-skip-dialogue-wrap"

@@ -287,6 +287,31 @@ effect) -- so `chat:send`/`chat:continue`'s existing one-speaker-at-a-time
 IPC shape needed no changes; `GroupRosterBar` lets the user override that
 pick before sending.
 
+### Respond as (guest speakers)
+
+A one-character conversation can hand a single reply to another library character: the composer's
+"Respond as" picker (not shown in a group, whose roster bar already does this) sets `characterId`
+on that one `chat:send`/`chat:continue`, then resets. "Quick character..." creates a real library
+character (name + one-line description) and selects it -- the description is all the other
+speakers see of them, since a speaker only gets their *own* full card.
+
+There is **no stored roster**. `ChatSessionManager.getGuestScene` derives an implicit scene from
+the transcript: the conversation's own character plus every distinct guest with an assistant line
+in it (`isGuestLine`). While nobody but the owner has spoken, `getGroupTurn` returns null and the
+chat is byte-for-byte the plain solo path. Once a guest has spoken -- or is about to -- *every*
+turn, the owner's included, takes the group path: labelled per-speaker history, the `[GROUP
+CHAT]` section (named "<owner>'s scene"), other-speaker stop phrases. The owner must get it too,
+or `finalizePending`'s flat history would fold the guest's line in as the owner's own. Deleting
+every guest line returns the conversation to plain solo (`deleteMessage` drops the session).
+
+Replies written before any guest spoke (and the greeting) recorded no speaker, so
+`buildGroupHistory` takes a `defaultSpeaker` -- the owner -- for lines with *neither* id nor name.
+A guest whose character was later deleted has a name but no id and stays theirs, not the
+owner's. `getSession`/`reconstructGroupPending` use the same test on a cold start, and
+`appendMessage` credits a recorded speaker's `message_count` before falling back to the owner.
+`assertHiddenContentAccessible` refuses a conversation with a hidden guest while locked, like a
+group's hidden member.
+
 ## Memories
 
 Facts extracted from a conversation and carried into later turns, so continuity survives the

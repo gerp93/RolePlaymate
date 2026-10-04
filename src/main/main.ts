@@ -102,6 +102,7 @@ import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudi
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { isHardpointReachable, openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
+import { isGuestLine } from './chat/groupHistory';
 import {
   chooseCharacterImage,
   chooseCharacterImages,
@@ -2509,11 +2510,31 @@ function assertHiddenContentAccessible(
   characterId: string | null,
   personaId?: string | null,
   scenarioId?: string | null,
-  groupId?: string | null
+  groupId?: string | null,
+  conversationId?: string
 ): void {
   if (securityService.isUnlocked()) return;
   if (characterId && characterService.getCharacterById(characterId)?.isHidden) {
     throw new Error('This character is hidden -- unlock with the PIN before chatting with it.');
+  }
+  // A guest brought in with "Respond as" puts their name and description into the owning
+  // character's prompt from then on (see ChatSessionManager.getGuestScene), so -- like a group's
+  // roster below -- one hidden guest is enough to refuse.
+  if (conversationId && !groupId) {
+    const ownerId = conversationService.getConversation(conversationId)?.characterId;
+    const hiddenGuest =
+      ownerId &&
+      conversationService
+        .getMessages(conversationId)
+        .some(
+          (m) =>
+            isGuestLine(m, ownerId) &&
+            m.speakerCharacterId &&
+            characterService.getCharacterById(m.speakerCharacterId)?.isHidden
+        );
+    if (hiddenGuest) {
+      throw new Error('A character in this scene is hidden -- unlock with the PIN before chatting here.');
+    }
   }
   if (groupId) {
     const group = groupService.getGroupById(groupId);
@@ -2575,7 +2596,7 @@ function registerChatHandlers() {
     void (async () => {
       try {
         const conversation = conversationService.getConversation(request.conversationId);
-        assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
+        assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
         const { message, debug, userMessage } = await chatSessions.generate(
           {
             conversationId: request.conversationId,
@@ -2621,7 +2642,8 @@ function registerChatHandlers() {
           conversation?.characterId ?? null,
           conversation?.userPersonaId,
           conversation?.scenarioId,
-          conversation?.groupId
+          conversation?.groupId,
+          request.conversationId
         );
         const { message, debug } = await chatSessions.regenerate(
           request.conversationId,
@@ -2665,7 +2687,7 @@ function registerChatHandlers() {
       void (async () => {
         try {
           const conversation = conversationService.getConversation(request.conversationId);
-          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
           const { message, debug, userMessage } = await chatSessions.editPriorUserMessage(
             {
               conversationId: request.conversationId,
@@ -2714,7 +2736,7 @@ function registerChatHandlers() {
       void (async () => {
         try {
           const conversation = conversationService.getConversation(request.conversationId);
-          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
           const { message, debug } = await chatSessions.continueAsCharacter(
             {
               conversationId: request.conversationId,
@@ -2766,7 +2788,7 @@ function registerChatHandlers() {
       request: { conversationId: string; characterId: string; personaId?: string; model: string }
     ) => {
       const conversation = conversationService.getConversation(request.conversationId);
-      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId);
+      assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
       const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
       const suggestion = await chatSessions.suggestReply(
         request.conversationId,

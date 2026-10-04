@@ -858,9 +858,10 @@ export class ConversationService {
       const owner = this.db
         .prepare(`SELECT character_id as characterId, user_persona_id as userPersonaId FROM conversations WHERE id = ?`)
         .get(input.conversationId) as unknown as { characterId: string | null; userPersonaId: string | null };
-      // A group conversation has no owning character: credit the speaker of an assistant line
-      // instead, and nobody for the user's own lines (only the persona's counter moves there).
-      const countedCharacterId = owner.characterId ?? speakerCharacterId;
+      // A line with a recorded speaker credits that speaker -- a group conversation has no owning
+      // character, and a guest in a one-character conversation isn't its owner. Otherwise it
+      // credits the owner, and nobody for a group's user lines (only the persona's counter moves).
+      const countedCharacterId = speakerCharacterId ?? owner.characterId;
       if (countedCharacterId) {
         this.db
           .prepare(`UPDATE characters SET message_count = message_count + 1 WHERE id = ?`)

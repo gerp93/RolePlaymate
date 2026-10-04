@@ -4,7 +4,7 @@ import { LorebookService } from '../database/lorebookService';
 import { ScenarioService } from '../database/scenarioService';
 import { GroupService } from '../database/groupService';
 import { CharacterService } from '../database/characterService';
-import { appendUserLine, buildGroupHistory, stripSelfLabel } from './groupHistory';
+import { appendUserLine, buildGroupHistory, isGuestLine, stripSelfLabel } from './groupHistory';
 import { scanLore, splitByScope } from './loreMatcher';
 import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
@@ -19,6 +19,7 @@ import { extractMemories } from './memoryExtraction';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply } from './suggestReply';
 import { Message } from '../../shared/types/message';
+import { Conversation } from '../../shared/types/conversation';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
@@ -223,9 +224,10 @@ export class ChatSessionManager {
   ) {}
 
   /**
-   * For a group conversation, what one speaker's prompt needs beyond their own card: the group's
-   * name and instructions and everyone else in the scene. Null for a one-character conversation,
-   * which is how every generation path below tells the two apart.
+   * For a group conversation -- or a one-character one that has had a guest speak, see
+   * getGuestScene -- what one speaker's prompt needs beyond their own card: the scene's name and
+   * instructions and everyone else in it. Null for a plain one-character conversation, which is
+   * how every generation path below tells the two apart.
    *
    * Throws rather than quietly falling back to solo behaviour when the speaker isn't on the
    * roster (the roster is live, so it can have changed under an open chat) -- a reply written
@@ -233,7 +235,8 @@ export class ChatSessionManager {
    */
   private getGroupTurn(conversationId: string, speakerId: string): GroupTurn | null {
     const conversation = this.conversations.getConversation(conversationId);
-    if (!conversation?.groupId) return null;
+    if (!conversation) return null;
+    if (!conversation.groupId) return this.getGuestScene(conversation, speakerId);
 
     const group = this.groups.getGroupById(conversation.groupId);
     if (!group) throw new Error("This conversation's group no longer exists");
@@ -253,6 +256,44 @@ export class ChatSessionManager {
     };
   }
 
+  /**
+   * A one-character conversation's implicit scene, for "Respond as": the character it belongs to
+   * plus every guest who has spoken in it, derived from the transcript rather than stored -- there
+   * is no roster to maintain, and deleting the guest's lines puts the conversation back to plain
+   * solo. Null while nobody but its own character has spoken or is about to.
+   *
+   * Once a guest has spoken, the conversation's own character gets the same scene context and
+   * labelled history (see getGroupHistory), or it would read the guest's lines as its own.
+   */
+  private getGuestScene(conversation: Conversation, speakerId: string): GroupTurn | null {
+    const leadId = conversation.characterId;
+    if (!leadId) return null;
+
+    const transcript = this.conversations.getMessages(conversation.id);
+    const guestIds: string[] = [];
+    for (const message of transcript) {
+      if (isGuestLine(message, leadId) && message.speakerCharacterId && !guestIds.includes(message.speakerCharacterId)) {
+        guestIds.push(message.speakerCharacterId);
+      }
+    }
+    const hasGuestLines = transcript.some((message) => isGuestLine(message, leadId));
+    const speakerIsGuest = speakerId !== leadId;
+    if (!hasGuestLines && !speakerIsGuest) return null;
+    if (speakerIsGuest && !guestIds.includes(speakerId)) guestIds.push(speakerId);
+
+    const lead = this.characters.getCharacterById(leadId);
+    const others = [leadId, ...guestIds]
+      .filter((id) => id !== speakerId)
+      .map((id) => this.characters.getCharacterById(id))
+      .filter((character): character is NonNullable<typeof character> => character !== null)
+      .map((character) => ({ name: character.name, description: character.description }));
+
+    return {
+      context: { name: `${lead?.name ?? 'The'}'s scene`, others },
+      otherNames: others.map((other) => other.name),
+    };
+  }
+
   /** The stored transcript as one speaker sees it -- see buildGroupHistory. `excludeIds` drops
    * the pending turn's own messages when a redo rebuilds the context that turn was sent with. */
   private getGroupHistory(
@@ -263,7 +304,14 @@ export class ChatSessionManager {
     excludeIds: ReadonlySet<string> = new Set()
   ): OllamaChatMessage[] {
     const transcript = this.conversations.getMessages(conversationId).filter((m) => !excludeIds.has(m.id));
-    return buildGroupHistory(transcript, speakerId, { personaName: personaName ?? null, limit });
+    // A one-character conversation's own replies never recorded a speaker -- see getGuestScene.
+    const leadId = this.conversations.getConversation(conversationId)?.characterId;
+    const lead = leadId ? this.characters.getCharacterById(leadId) : null;
+    return buildGroupHistory(transcript, speakerId, {
+      personaName: personaName ?? null,
+      limit,
+      defaultSpeaker: lead ? { id: lead.id, name: lead.name } : undefined,
+    });
   }
 
   /** Resolves a conversation's selected scenario (if any) into the text `buildSystemPrompt`
@@ -298,7 +346,13 @@ export class ChatSessionManager {
       const transcript = this.conversations.getMessages(conversationId).filter((m) => m.role !== 'system');
       const last = transcript.at(-1);
       const precedingUser = transcript.at(-2);
-      const isGroup = Boolean(this.conversations.getConversation(conversationId)?.groupId);
+      const conversation = this.conversations.getConversation(conversationId);
+      // A one-character conversation counts once a guest has spoken in it -- see getGuestScene.
+      const isGroup =
+        Boolean(conversation?.groupId) ||
+        (conversation?.characterId
+          ? transcript.some((m) => isGuestLine(m, conversation.characterId!))
+          : false);
 
       // A group turn is pending whenever the last line is a character's reply -- two characters
       // speaking back to back is normal there, so unlike a one-character chat it needn't follow
@@ -392,7 +446,7 @@ export class ChatSessionManager {
     precedingUser: Message | null
   ): PendingTurn | null {
     const conversation = this.conversations.getConversation(conversationId);
-    if (!conversation?.groupId || !reply.speakerCharacterId) return null;
+    if (!conversation || !reply.speakerCharacterId) return null;
 
     try {
       const groupTurn = this.getGroupTurn(conversationId, reply.speakerCharacterId);
