@@ -7,7 +7,8 @@
  * - name: titles and identifiers
  * - short: one-line taglines and descriptions
  * - loreKeys: comma-separated trigger lists
- * - proseContent: versioned character/persona/scenario/prompt prose
+ * - proseContent: versioned character/persona/prompt prose
+ * - scenarioContent: versioned scenario text (setting/situation)
  * - greeting: scenario opening greetings
  * - loreText: lore entry body text
  * - chatMessage / directions / memory: live chat and continuity
@@ -22,6 +23,7 @@ export const FIELD_LIMITS = {
   short: 500,
   loreKeys: 1_000,
   proseContent: 5_000,
+  scenarioContent: 10_000,
   greeting: 2_000,
   loreText: 2_000,
   chatMessage: 8_000,

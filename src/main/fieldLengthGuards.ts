@@ -24,6 +24,10 @@ export function guardProseContent(value: string, label = 'Content'): void {
   assertMaxLength(value, FIELD_LIMITS.proseContent, label);
 }
 
+export function guardScenarioContent(value: string, label = 'Scenario text'): void {
+  assertMaxLength(value, FIELD_LIMITS.scenarioContent, label);
+}
+
 export function guardGreeting(value: string, label = 'Opening greeting'): void {
   assertMaxLength(value, FIELD_LIMITS.greeting, label);
 }

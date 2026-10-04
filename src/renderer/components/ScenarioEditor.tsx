@@ -279,7 +279,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
             <LimitedTextarea
               id={`scenario-content-${scenario.id}`}
               className="content-textarea"
-              limit={FIELD_LIMITS.proseContent}
+              limit={FIELD_LIMITS.scenarioContent}
               rows={5}
               value={draft}
               onChange={(e) => isEditable && setDraft(e.target.value)}
