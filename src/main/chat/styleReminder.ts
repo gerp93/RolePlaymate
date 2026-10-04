@@ -5,6 +5,10 @@ export interface StyleReminderInput {
   pov: 'first' | 'third' | null;
   /** The other characters in a group conversation; empty or absent for a one-character chat. */
   otherCharacters?: string[];
+  /** The user's per-message directions for this reply, if any -- repeated here, at the end, because
+   * the copy in the system prompt sits above the whole transcript and a 12B model largely ignores
+   * it there. */
+  directions?: string;
 }
 
 /**
@@ -22,10 +26,20 @@ export function buildStyleReminder({
   concise,
   pov,
   otherCharacters = [],
+  directions,
 }: StyleReminderInput): string {
-  const lines = [
-    `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`,
-  ];
+  const lines: string[] = [];
+
+  // First, and worded as binding: the user wrote this for exactly this reply, so it outranks the
+  // standing style rules below it.
+  const direction = directions?.trim();
+  if (direction) {
+    lines.push(`Direction for this reply (the user wants this to happen -- do it): ${direction}`);
+  }
+
+  lines.push(
+    `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`
+  );
 
   // In a group the history labels every line "Name: text", and a model will copy that habit or
   // carry on for the next speaker unless told otherwise right where it's about to write.

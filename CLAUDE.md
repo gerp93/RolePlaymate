@@ -85,6 +85,13 @@ greeting is deliberately *not* in the system prompt; it seeds the conversation
 as its first assistant message. The scenario section's text is no longer a
 character field -- see "Scenarios" below.
 
+Per-message **directions** are in the system prompt (that last section) *and* repeated at the
+very end of the request, first in the `styleReminder.ts` block appended to the last user turn
+(or, for a Continue, which has no user turn, to the system prompt's end). The system-prompt
+copy alone was ignored: a 12B model imitates the recent transcript far more than a section
+above thousands of tokens of history. `PendingTurn.directions` carries them so a redo repeats
+them, and a restart recovers them from the stored user message.
+
 `{{char}}`/`{{user}}` macros in field content are substituted before the text
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
 "User" when none is selected.
