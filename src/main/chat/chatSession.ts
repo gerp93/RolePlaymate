@@ -4,7 +4,7 @@ import { LorebookService } from '../database/lorebookService';
 import { ScenarioService } from '../database/scenarioService';
 import { GroupService } from '../database/groupService';
 import { CharacterService } from '../database/characterService';
-import { appendUserLine, buildGroupHistory, isGuestLine, stripSelfLabel } from './groupHistory';
+import { appendUserLine, buildGroupHistory, isGuestLine, mergeAdjacentTurns, stripSelfLabel } from './groupHistory';
 import { scanLore, splitByScope } from './loreMatcher';
 import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
@@ -19,13 +19,13 @@ import { extractMemories } from './memoryExtraction';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply } from './suggestReply';
 import { composeImagePrompt, IMAGE_PROMPT_HISTORY_LINES } from './imagePrompt';
-import { Message } from '../../shared/types/message';
+import { Message, isDirectionsOnly } from '../../shared/types/message';
 import { Conversation } from '../../shared/types/conversation';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
 import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
-import { buildStyleReminder } from './styleReminder';
+import { buildContinuationCue, buildStyleReminder } from './styleReminder';
 
 /**
  * A generated reply that hasn't been folded into the model's context or mined for memories
@@ -133,20 +133,29 @@ export interface GenerateRequest {
   /** Regenerating must not extract: the exchange has already been mined once, and running it
    * again on a second phrasing of the same reply just inserts near-duplicates. */
   extractMemories?: boolean;
+  /** Reply to a user message that is already stored and unanswered (its reply was deleted, or
+   * generation failed) instead of inserting a new one. Must be the conversation's last message.
+   * `userMessage` is then ignored -- the stored text is the turn's user line. */
+  replyToMessageId?: string;
 }
 
 export interface GenerateResult {
   message: Message;
   debug: ChatDebugInfo;
-  /** The real, persisted user turn this reply answers -- set by `generate` (a fresh insert)
-   * and `editPriorUserMessage` (an in-place rewrite) so the renderer can reconcile its
-   * optimistic copy with what's actually in the database. Absent for `continueAsCharacter`
-   * (no user message involved) and `regenerate` (doesn't touch one). */
+  /** The real, persisted user turn this reply answers -- set by `generate` (a fresh insert, or
+   * the existing row when replying to one) and `editPriorUserMessage` (an in-place rewrite) so the
+   * renderer can reconcile its optimistic copy with what's actually in the database. Also set by
+   * `continueAsCharacter` when it records the user's directions as a line of their own.
+   * Absent for a plain continuation and for `regenerate` (doesn't touch one). */
   userMessage?: Message;
 }
 
 /** Same shape as GenerateRequest minus `userMessage` -- see ChatSessionManager.continueAsCharacter. */
-export type ContinueRequest = Omit<GenerateRequest, 'userMessage' | 'extractMemories'>;
+export type ContinueRequest = Omit<GenerateRequest, 'userMessage' | 'extractMemories' | 'replyToMessageId'> & {
+  /** Store the user's directions as a directions-only user line before generating, so the turn
+   * shows in the transcript (see isDirectionsOnly). Ignored when there are no directions. */
+  recordDirections?: boolean;
+};
 
 /** Clamps ported verbatim from the source -- a temperature of 0 or a repeat_penalty below 1
  * makes Ollama behave in ways users read as broken. */
@@ -169,9 +178,10 @@ function capForConcise(options: OllamaOptions, concise: boolean): OllamaOptions 
 
 /**
  * Appends the reply guidance (formatting, plus the live Chat Settings length/POV toggles) to the
- * end of the request -- the last user turn if there is one, otherwise (a continuation, which has
- * no trailing user turn) the system prompt. Read from the settings on every call so it always
- * reflects what's toggled right now, redo included.
+ * end of the request -- the last user turn. Every request ends on one: a continuation supplies its
+ * own (see buildContinuationCue); the system prompt is only the fallback for a request with none.
+ * Read from the settings on every call so it always reflects what's toggled right now, redo
+ * included.
  */
 export function withStyleReminder(
   messages: OllamaChatMessage[],
@@ -373,12 +383,21 @@ export class ChatSessionManager {
             )
           : null
         : last?.role === 'assistant' && precedingUser?.role === 'user'
-          ? this.reconstructPending(conversationId, precedingUser.content, last.id, precedingUser.directions ?? undefined)
+          ? this.reconstructPending(
+              conversationId,
+              // A directions-only line is a continuation: there was no user message to answer.
+              isDirectionsOnly(precedingUser) ? null : precedingUser.content,
+              last.id,
+              precedingUser.directions ?? undefined
+            )
           : null;
       // A group's prompts are built from the stored transcript per speaker (see getGroupHistory),
       // so this flat cache is never read for one -- it stays empty rather than holding a
-      // speaker-less view that would be wrong for everyone.
-      const historyMessages = isGroup ? [] : pending ? transcript.slice(0, -2) : transcript;
+      // speaker-less view that would be wrong for everyone. Directions-only lines have no words
+      // to put in front of a model, so they never enter it.
+      const historyMessages = (isGroup ? [] : pending ? transcript.slice(0, -2) : transcript).filter(
+        (m) => !isDirectionsOnly(m)
+      );
 
       session = {
         conversationId,
@@ -405,7 +424,7 @@ export class ChatSessionManager {
    */
   private reconstructPending(
     conversationId: string,
-    userMessage: string,
+    userMessage: string | null,
     assistantMessageId: string,
     directions?: string
   ): PendingTurn | null {
@@ -447,7 +466,7 @@ export class ChatSessionManager {
    * recoverable), but the speaker comes from the reply itself, and the
    * context a redo replays is rebuilt from the stored transcript minus the pending turn.
    * `precedingUser` is set only when the reply directly followed a user message; otherwise it was
-   * a continuation, replayed with no trailing user turn.
+   * a continuation, replayed with its continuation note instead of a user turn.
    */
   private reconstructGroupPending(
     conversationId: string,
@@ -481,12 +500,14 @@ export class ChatSessionManager {
         DEFAULT_HISTORY_LIMIT,
         excluded
       );
-      if (precedingUser) {
-        replayMessages = appendUserLine(replayMessages, persona?.name ?? null, precedingUser.content);
+      // A directions-only line (excluded above, with its directions kept) is not a user line.
+      const userLine = precedingUser && !isDirectionsOnly(precedingUser) ? precedingUser : null;
+      if (userLine) {
+        replayMessages = appendUserLine(replayMessages, persona?.name ?? null, userLine.content);
       }
 
       return {
-        userMessage: precedingUser?.content ?? null,
+        userMessage: userLine?.content ?? null,
         assistantMessageId: reply.id,
         model: conversation.model,
         systemPrompt: built.prompt,
@@ -569,16 +590,50 @@ export class ChatSessionManager {
 
     this.finalizePending(session, historyLimit);
 
+    // Replying to a user message that is already stored (its reply is gone): that row is this
+    // turn's user line, so it is neither inserted a second time nor left in the history below.
+    let existingUser: Message | null = null;
+    if (request.replyToMessageId) {
+      const last = this.conversations.getMessages(request.conversationId).at(-1);
+      if (!last || last.id !== request.replyToMessageId || last.role !== 'user') {
+        throw new Error('That message already has a reply.');
+      }
+      // A line with only directions has no words to answer: replying to it means acting on its
+      // directions, which is exactly a continuation (and the line stays as it is).
+      if (isDirectionsOnly(last)) {
+        return this.continueAsCharacter(
+          { ...request, directions: request.directions?.trim() ? request.directions : (last.directions ?? undefined) },
+          onToken
+        );
+      }
+      // Fresh directions typed for this reply are kept on the message, like any sent with one.
+      existingUser = request.directions
+        ? this.conversations.updateMessageContent(last.id, last.content, request.directions)
+        : last;
+    }
+    const userText = existingUser ? existingUser.content : request.userMessage;
+
     const groupTurn = this.getGroupTurn(request.conversationId, request.characterId);
+    if (existingUser) {
+      // The flat history was rebuilt from the transcript, so it ends with this very message.
+      const tail = session.history.at(-1);
+      if (tail?.role === 'user' && tail.content === existingUser.content) session.history.pop();
+    }
     const historyTurns = groupTurn
-      ? this.getGroupHistory(request.conversationId, request.characterId, request.personaName, historyLimit)
+      ? this.getGroupHistory(
+          request.conversationId,
+          request.characterId,
+          request.personaName,
+          historyLimit,
+          existingUser ? new Set([existingUser.id]) : undefined
+        )
       : session.history.slice(-historyLimit);
 
     // Retrieval runs against the message being sent, not the whole transcript: what matters
     // is which stored facts bear on what the user just said.
     const retrieval = await this.retrieve(
       request.conversationId,
-      request.userMessage,
+      userText,
       request.memories,
       request.memoryOptions
     );
@@ -591,14 +646,14 @@ export class ChatSessionManager {
     const characterLore = scanLore(
       this.lorebooks.getEntriesForCharacter(request.characterId),
       historyTurns,
-      request.userMessage
+      userText
     );
     // Scanned separately, with its own budget, rather than merged into the character's
     // entries before scanning -- a persona's history shouldn't lose its budget race to a
     // character with a bigger book, and keeping the two scans independent is what makes that
     // true regardless of either book's size.
     const personaLoreResult = request.personaId
-      ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, request.userMessage)
+      ? scanLore(this.lorebooks.getEntriesForPersona(request.personaId), historyTurns, userText)
       : null;
 
     const { world: worldLore, personal: personalLore } = splitByScope(characterLore.selected);
@@ -631,8 +686,8 @@ export class ChatSessionManager {
       personaLore,
     });
     const turns = groupTurn
-      ? appendUserLine(historyTurns, request.personaName ?? null, request.userMessage)
-      : [...historyTurns, { role: 'user' as const, content: request.userMessage }];
+      ? appendUserLine(historyTurns, request.personaName ?? null, userText)
+      : mergeAdjacentTurns([...historyTurns, { role: 'user' as const, content: userText }]);
     const messages = withStyleReminder(
       [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
@@ -643,12 +698,14 @@ export class ChatSessionManager {
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
 
-    const userMessage = this.conversations.appendMessage({
-      conversationId: request.conversationId,
-      role: 'user',
-      content: request.userMessage,
-      directions: request.directions ?? null,
-    });
+    const userMessage =
+      existingUser ??
+      this.conversations.appendMessage({
+        conversationId: request.conversationId,
+        role: 'user',
+        content: userText,
+        directions: request.directions ?? null,
+      });
 
     const controller = new AbortController();
     session.abort = controller;
@@ -685,7 +742,7 @@ export class ChatSessionManager {
         retrieval: retrieval?.result ?? null,
         lore,
         systemPrompt: built.prompt,
-        userMessage: request.userMessage,
+        userMessage: userText,
         historyTurns,
         historyLength: historyTurns.length,
         fullPrompt: renderMessagesForDebug(messages),
@@ -713,7 +770,7 @@ export class ChatSessionManager {
       // `generate` or `regenerate` call, once the user has settled on a variant by moving on
       // from this turn. See the class-level note on `pending`.
       session.pending = {
-        userMessage: request.userMessage,
+        userMessage: userText,
         assistantMessageId: message.id,
         model: request.model,
         systemPrompt: built.prompt,
@@ -773,17 +830,30 @@ export class ChatSessionManager {
       ),
       concise
     );
-    // A continuation turn (see continueAsCharacter) has no user message to replay here either --
-    // same "no trailing user turn" shape its own generation used.
+    // A continuation turn (see continueAsCharacter) has no user message of its own: it is replayed
+    // with the same continuation note its first generation ended on.
     // A group turn replays the exact per-speaker messages it was first sent (see
     // PendingTurn.replayMessages); a one-character turn rebuilds them from the flat history.
+    const replayTurns = mergeAdjacentTurns([
+      ...(pending.replayMessages ?? [
+        ...session.history,
+        ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
+      ]),
+      // A continuation has no user message to answer; it ends on the same note its first
+      // generation did (see continueAsCharacter), merged into a trailing user turn if there is one.
+      ...(pending.userMessage === null
+        ? [
+            {
+              role: 'user' as const,
+              content: buildContinuationCue(pending.characterName, pending.personaName?.trim() || 'User'),
+            },
+          ]
+        : []),
+    ]);
     const messages = withStyleReminder(
       [
         ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
-        ...(pending.replayMessages ?? [
-          ...session.history,
-          ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
-        ]),
+        ...replayTurns,
       ],
       pending.characterName,
       pending.personaName,
@@ -983,7 +1053,7 @@ export class ChatSessionManager {
     });
     const turns = groupTurn
       ? appendUserLine(historyTurns, request.personaName ?? null, trimmed)
-      : [...historyTurns, { role: 'user' as const, content: trimmed }];
+      : mergeAdjacentTurns([...historyTurns, { role: 'user' as const, content: trimmed }]);
     const messages = withStyleReminder(
       [...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []), ...turns],
       built.characterName,
@@ -1175,7 +1245,12 @@ export class ChatSessionManager {
     const messages = withStyleReminder(
       [
         ...(built.prompt ? [{ role: 'system' as const, content: built.prompt }] : []),
-        ...historyTurns,
+        // The note joins a trailing user turn rather than following it: a group or guest speaker's
+        // whole history is already one user-role turn, and two in a row defeats the point.
+        ...mergeAdjacentTurns([
+          ...historyTurns,
+          { role: 'user' as const, content: buildContinuationCue(built.characterName, request.personaName?.trim() || 'User') },
+        ]),
       ],
       built.characterName,
       request.personaName,
@@ -1184,6 +1259,19 @@ export class ChatSessionManager {
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
+
+    // The user's own directions become a line of their own, written before generating (like a
+    // sent message, so a crash can't lose it) -- otherwise the turn would leave no mark in the
+    // transcript. The built-in "continue on your own" nudge is not theirs and is never recorded.
+    const directionsLine =
+      request.recordDirections && request.directions?.trim()
+        ? this.conversations.appendMessage({
+            conversationId: request.conversationId,
+            role: 'user',
+            content: '',
+            directions: request.directions,
+          })
+        : null;
 
     const controller = new AbortController();
     session.abort = controller;
@@ -1253,7 +1341,7 @@ export class ChatSessionManager {
         directions,
       };
 
-      return { message, debug };
+      return { message, debug, userMessage: directionsLine ?? undefined };
     } finally {
       session.abort = null;
     }
@@ -1296,6 +1384,32 @@ export class ChatSessionManager {
     // still resample the last *generated* variant's model, not "null".
     const variant = this.conversations.addVariant(messageId, trimmed);
     return this.conversations.selectVariant(messageId, variant.id);
+  }
+
+  /**
+   * Edits the conversation's last message when it is a user line nobody has answered (its reply
+   * was deleted, or generation failed). In place -- there is no reply to redo -- and the cached
+   * session is dropped so its history is rebuilt from the edited text. A directions-only line may
+   * keep empty text as long as it still has directions.
+   */
+  editUnansweredUserMessage(conversationId: string, messageId: string, content: string, directions?: string): Message {
+    if (this.isGenerating(conversationId)) {
+      throw new Error('Cannot edit a message while a response is generating');
+    }
+    const last = this.conversations.getMessages(conversationId).at(-1);
+    if (!last || last.id !== messageId || last.role !== 'user') {
+      throw new Error('Only a user message that has no reply yet can be edited this way');
+    }
+    const trimmed = content.trim();
+    // Omitted keeps the stored directions; an empty string clears them.
+    const nextDirections = directions === undefined ? undefined : directions.trim() || null;
+    const effective = nextDirections === undefined ? last.directions : nextDirections;
+    if (!trimmed && !effective?.trim()) {
+      throw new Error('Message cannot be empty');
+    }
+    const updated = this.conversations.updateMessageContent(messageId, trimmed, nextDirections);
+    this.dropSession(conversationId);
+    return updated;
   }
 
   /** Switches which variant of the pending message is shown -- cheap and immediate, no model

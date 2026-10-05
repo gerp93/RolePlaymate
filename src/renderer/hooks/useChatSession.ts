@@ -41,6 +41,11 @@ export interface UseChatSession {
    * take a second turn on its own. Streams and appends exactly like `send`, just without the
    * optimistic user bubble (there's no new user message to show). */
   continueAsCharacter: (input: ContinueInput) => Promise<void>;
+  /** Generates the reply that is missing after the last message, when that is a user message --
+   * the existing message is answered, not sent again. Streams and appends like `continueAsCharacter`. */
+  replyToLast: (input: ContinueInput) => Promise<void>;
+  /** Edits the last message in place when it is a user line with no reply yet. */
+  editUnansweredUserMessage: (messageId: string, content: string, directions?: string) => Promise<void>;
   /** Generates another variant of the last response, using the same context it was answering.
    * Selected automatically once it lands -- nothing is folded into context or extracted until
    * the next `send`, whichever variant happens to be selected then. */
@@ -79,7 +84,10 @@ export interface SendInput {
 }
 
 /** Same shape as SendInput minus `message` -- see UseChatSession.continueAsCharacter. */
-export type ContinueInput = Omit<SendInput, 'message'>;
+export type ContinueInput = Omit<SendInput, 'message'> & {
+  /** Leave the directions in the transcript as a directions-only user line of their own. */
+  recordDirections?: boolean;
+};
 
 export function useChatSession(
   conversationId: string | null,
@@ -209,17 +217,21 @@ export function useChatSession(
             // Swap the optimistic (fake-id) user row for the real, DB-backed one before
             // appending the reply -- otherwise that fake id lingers in state until the next
             // full reload, which breaks anything that needs to address this message by id
-            // (e.g. editing it later).
-            const withRealUser = event.userMessage
-              ? current.map((m) =>
-                  m.id.startsWith('pending-')
-                    ? {
-                        ...event.userMessage!,
-                        ttsAudioPath: m.ttsAudioPath ?? event.userMessage!.ttsAudioPath,
-                      }
-                    : m
-                )
-              : current;
+            // (e.g. editing it later). A user line with no optimistic row (a reply to a message
+            // that was already on screen, which is already there) is added only if it is missing.
+            const hasOptimistic = current.some((m) => m.id.startsWith('pending-'));
+            const userMessage = event.userMessage;
+            const withRealUser = !userMessage
+              ? current
+              : hasOptimistic
+                ? current.map((m) =>
+                    m.id.startsWith('pending-')
+                      ? { ...userMessage, ttsAudioPath: m.ttsAudioPath ?? userMessage.ttsAudioPath }
+                      : m
+                  )
+                : current.some((m) => m.id === userMessage.id)
+                  ? current
+                  : [...current, userMessage];
             return [...withRealUser, event.message];
           });
           setDebug(event.debug);
@@ -338,8 +350,31 @@ export function useChatSession(
       setStreamingText('');
       setIsGenerating(true);
 
-      // No optimistic bubble to add -- unlike send(), there's no new user message, just the
-      // character's own next line once it streams in via the 'done' handler above.
+      // Normally no optimistic bubble: unlike send(), there's no new user message, just the
+      // character's own next line once it streams in via the 'done' handler above. Directions the
+      // user wants kept are the exception -- they become a directions-only user line, shown
+      // straight away like a sent message (and swapped for the real row when the reply lands).
+      const recordedDirections = input.recordDirections ? input.directions?.trim() : '';
+      if (recordedDirections) {
+        const optimistic: Message = {
+          id: `pending-${Date.now()}`,
+          conversationId,
+          role: 'user',
+          content: '',
+          selectedVariantId: null,
+          model: null,
+          generationMs: null,
+          ttsAudioPath: null,
+          directions: input.directions ?? null,
+          speakerCharacterId: null,
+          speakerName: null,
+          seq: Number.MAX_SAFE_INTEGER,
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((current) => [...current, optimistic]);
+        pendingUserOptimisticIdRef.current = optimistic.id;
+        onUserMessageRef.current?.(optimistic);
+      }
       try {
         const { streamId } = await window.electronAPI.chat.continue({
           conversationId,
@@ -347,6 +382,7 @@ export function useChatSession(
           model: input.model,
           personaId: input.personaId,
           directions: input.directions,
+          recordDirections: input.recordDirections,
           samplers: input.samplers,
         });
         activeStreamId.current = streamId;
@@ -357,6 +393,47 @@ export function useChatSession(
       }
     },
     [conversationId, isGenerating]
+  );
+
+  const replyToLast = useCallback(
+    async (input: ContinueInput) => {
+      if (!conversationId || isGenerating) return;
+
+      setError(null);
+      setStreamingText('');
+      setIsGenerating(true);
+
+      // The user message being answered is already on screen -- nothing optimistic to add.
+      try {
+        const { streamId } = await window.electronAPI.chat.replyToLast({
+          conversationId,
+          characterId: input.characterId,
+          model: input.model,
+          personaId: input.personaId,
+          directions: input.directions,
+          samplers: input.samplers,
+        });
+        activeStreamId.current = streamId;
+      } catch (replyError) {
+        setError((replyError as Error).message);
+        setIsGenerating(false);
+        activeStreamId.current = null;
+      }
+    },
+    [conversationId, isGenerating]
+  );
+
+  const editUnansweredUserMessage = useCallback(
+    async (messageId: string, content: string, directions?: string) => {
+      if (!conversationId) return;
+      try {
+        const updated = await window.electronAPI.chat.editUnansweredUser(conversationId, messageId, content, directions);
+        setMessages((current) => current.map((m) => (m.id === updated.id ? updated : m)));
+      } catch (editError) {
+        setError((editError as Error).message);
+      }
+    },
+    [conversationId]
   );
 
   const regenerate = useCallback(
@@ -502,6 +579,8 @@ export function useChatSession(
     refreshMemoryCount,
     send,
     continueAsCharacter,
+    replyToLast,
+    editUnansweredUserMessage,
     regenerate,
     selectVariant,
     toggleVariantStar,

@@ -1886,13 +1886,17 @@
   gap: 8px;
 }
 
-/* "Respond as" sits at the start of the controls row, pushing Directions to the far side. */
+/* "Respond as" sits between the transcript and the composer, lined up under the "Continue as ..."
+   links (same left inset) and above the composer's divider. */
+.chat-respond-as-bar {
+  padding: 4px 16px 10px 74px;
+}
+
 .chat-respond-as {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-right: auto;
 }
 
 .chat-respond-as-field {

@@ -2735,6 +2735,54 @@ function registerChatHandlers() {
   // replacing the pending one in place (that's what chat:regenerate's 'variantDone' is for).
   ipcMain.handle(
     'chat:continue',
+    (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; recordDirections?: boolean; samplers?: Partial<SamplerParams> }) => {
+      guardDirections(request.directions);
+      const streamId = randomUUID();
+      const sender = event.sender;
+
+      const send = (payload: ChatStreamEvent) => {
+        if (!sender.isDestroyed()) sender.send('chat:stream', payload);
+      };
+
+      const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
+
+      void (async () => {
+        try {
+          const conversation = conversationService.getConversation(request.conversationId);
+          assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
+          const { message, debug, userMessage } = await chatSessions.continueAsCharacter(
+            {
+              conversationId: request.conversationId,
+              characterId: request.characterId,
+              personaId: request.personaId ?? null,
+              personaName: persona?.name ?? null,
+              personaBackground: persona?.background ?? null,
+              model: request.model,
+              directions: request.directions,
+              recordDirections: request.recordDirections === true,
+              samplers: request.samplers,
+            },
+            (text) => send({ streamId, type: 'token', text })
+          );
+          send({ streamId, type: 'done', message, debug, userMessage });
+        } catch (error) {
+          if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+            send({ streamId, type: 'cancelled' });
+          } else {
+            send({ streamId, type: 'error', message: (error as Error).message });
+          }
+        }
+      })();
+
+      return { streamId };
+    }
+  );
+
+  // Generates the reply that is missing after a user message (its reply was deleted, or generation
+  // failed). Same streaming shape as chat:send, but the user message already exists, so it is
+  // answered rather than inserted again -- see GenerateRequest.replyToMessageId.
+  ipcMain.handle(
+    'chat:replyToLast',
     (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
       guardDirections(request.directions);
       const streamId = randomUUID();
@@ -2750,20 +2798,26 @@ function registerChatHandlers() {
         try {
           const conversation = conversationService.getConversation(request.conversationId);
           assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
-          const { message, debug } = await chatSessions.continueAsCharacter(
+          const lastMessage = conversationService.getMessages(request.conversationId).at(-1);
+          if (!lastMessage || lastMessage.role !== 'user') {
+            throw new Error('There is no unanswered message to reply to.');
+          }
+          const { message, debug, userMessage } = await chatSessions.generate(
             {
               conversationId: request.conversationId,
               characterId: request.characterId,
               personaId: request.personaId ?? null,
               personaName: persona?.name ?? null,
               personaBackground: persona?.background ?? null,
+              userMessage: lastMessage.content,
+              replyToMessageId: lastMessage.id,
               model: request.model,
               directions: request.directions,
               samplers: request.samplers,
             },
             (text) => send({ streamId, type: 'token', text })
           );
-          send({ streamId, type: 'done', message, debug });
+          send({ streamId, type: 'done', message, debug, userMessage });
         } catch (error) {
           if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
             send({ streamId, type: 'cancelled' });
@@ -2774,6 +2828,17 @@ function registerChatHandlers() {
       })();
 
       return { streamId };
+    }
+  );
+
+  // Edits the last message when it is a user line with no reply yet -- see
+  // ChatSessionManager.editUnansweredUserMessage.
+  ipcMain.handle(
+    'chat:editUnansweredUser',
+    (_, conversationId: string, messageId: string, content: string, directions?: string) => {
+      guardChatMessage(content);
+      guardDirections(directions);
+      return chatSessions.editUnansweredUserMessage(conversationId, messageId, content, directions);
     }
   );
 

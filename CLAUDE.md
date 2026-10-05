@@ -319,39 +319,36 @@ owner's. `getSession`/`reconstructGroupPending` use the same test on a cold star
 `assertHiddenContentAccessible` refuses a conversation with a hidden guest while locked, like a
 group's hidden member.
 
-The picker resets after each send, so under the last message "Continue as <owner>" stays as it
-always was and gains a second link for whoever the picker currently holds (`continueOptions`
-in `Chat.tsx`; `handleContinue` takes an optional speaker that beats the picker). Send also works
-with **directions and no message**: `Composer` enables it on either, and an empty message
-routes to the Continue path (`continueAsCharacter` already takes directions), so the speaker --
-the owner or the picked guest -- acts on them with no user line added to the transcript.
+The "Respond as" picker sits between the transcript and the composer, under the "Continue as"
+links and above the composer's divider, and resets after each send. Under the last message,
+"Continue as <owner>" stays as it always was and gains a second link for whoever the picker
+currently holds (`continueOptions` in `Chat.tsx`; `handleContinue` takes an optional speaker that
+beats the picker).
 
-## Image generation (KVGenius)
+**Continue.** A continuation used to send the model a conversation that *ended on its own
+previous reply* -- a second assistant turn straight after the first, with the reply guidance glued
+to the end of the system prompt. It restated that reply, and the more continues in a row the likelier
+it was to start writing the user's side. Now `continueAsCharacter` (and a redo of one) always ends on
+a user-role note (`buildContinuationCue`: "<persona> has not replied. Continue the scene as <char>...
+something NEW... do not repeat, restate, or rephrase... do not write anything for <persona>") with
+the reply guidance and any directions appended to it, and `mergeAdjacentTurns` folds back-to-back
+same-role messages into one turn so what the model sees strictly alternates. The stored transcript is
+untouched -- five continues are still five messages. Solo chats only reconstruct a redoable reply after
+a restart when it directly follows a user message, so a continue chain is not redoable after one.
 
-Optional, same pattern as Ollama and Chatterbox: the app ships no image model and the
-library and chat stay fully usable when KVGenius is absent. The composer's "Image" button
-opens `ImageGenDialog`: the **chat model currently selected** drafts a text-to-image prompt
-from the character's card and the last few lines (`chat/imagePrompt.ts`, a flat one-shot prompt
-like `suggestReply` -- the roleplay system prompt would fight a "describe this scene" request),
-the user edits it, KVGenius renders it, and the result can be saved to the character's or the
-persona's gallery. Nothing is stored until a Save button is pressed; Save copies the file into
-the images library (`copyImageIntoLibrary`, so it is encrypted when app encryption is on).
+**Directions only.** Send works with directions and no message: an empty message takes the Continue
+path with `recordDirections`, which stores a **directions-only user line** (`isDirectionsOnly`:
+role `user`, empty content, directions set) so the turn shows in the transcript. Such a line is never
+part of what a model is shown (`buildGroupHistory`, `getSession` skip it; a redo of its reply is a
+continuation, and after a restart its directions are read back from the row), and replying to one
+means acting on its directions. The built-in "continue on your own" nudge is never recorded.
 
-The transport is KVGenius's loopback HTTP API (`POST /v1/tools/<name>`, bearer token), **not**
-the MCP stdio shim: that shim is only an adapter for MCP clients, and RolePlaymate is not one.
-`chat/kvgeniusClient.ts` reads `mcp-api.json` (port + token, written by KVGenius while its
-Settings -> "Other Apps (MCP)" toggle is on) from KVGenius's userData folder (`kvgenius`, then
-`kvgenius-dev`) on every call, so a KVGenius restart needs no reconfiguration. It queues
-`generate_image` and long-polls `get_job`; KVGenius runs jobs one at a time on its own queue,
-and ours carry the batch label `roleplaymate`. KVGenius only shows a client what that client
-created, which is all we ask about. The token never leaves the main process.
-
-`imageGen.ts` holds the in-flight requests and the finished results. Unlike chat this does **not**
-push events: `imageGen:generate` is a plain `invoke` that resolves when the image is ready, with a
-renderer-supplied request id so `imageGen:cancel` can stop it (and cancels the KVGenius job, or the
-GPU would keep rendering an image nobody will see). The renderer only ever holds an opaque
-`resultId`, never a file path, so it cannot ask the main process to copy an arbitrary file into
-the library.
+**A user message with no reply** (the reply was deleted, or generation failed) can be edited in place
+(`editUnansweredUserMessage`; a directions-only line may keep empty text while it has directions) and
+answered with "Reply as <name>" under it, or Send with directions only. `generate` takes
+`replyToMessageId`: the stored row is the turn's user line, so it is neither inserted a second time
+nor left in the flat history (the cache is rebuilt from the transcript, so it ends with that very
+message and is popped).
 
 ## Memories
 

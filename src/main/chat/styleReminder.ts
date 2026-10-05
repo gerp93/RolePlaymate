@@ -74,3 +74,20 @@ export function buildStyleReminder({
     ']',
   ].join('\n');
 }
+
+/**
+ * The final user-role turn of a continuation -- a character taking another turn with no reply from
+ * the user. Without it the request ends on the character's own last reply, and the model is being
+ * asked for a second assistant turn straight after its first: it tends to restate that reply, and
+ * after several of them starts writing the user's side. A real turn to answer ends that, and says
+ * outright what a continuation is for. The reply guidance (and any directions) is appended to it
+ * like any other last user turn.
+ */
+export function buildContinuationCue(charName: string, personaName: string): string {
+  return (
+    `[${personaName} has not replied. Continue the scene as ${charName}: ${charName} speaks or acts again, on their own. ` +
+    `Move things forward with something NEW -- a new action, new information, or a change in the situation. ` +
+    `Do not repeat, restate, or rephrase anything ${charName} has already said or done in the lines above, ` +
+    `and do not write anything for ${personaName}. Never mention or quote this note.]`
+  );
+}

@@ -178,6 +178,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     send: (request: unknown) => ipcRenderer.invoke('chat:send', request),
     regenerate: (request: unknown) => ipcRenderer.invoke('chat:regenerate', request),
     editPriorMessage: (request: unknown) => ipcRenderer.invoke('chat:editPriorMessage', request),
+    replyToLast: (request: unknown) => ipcRenderer.invoke('chat:replyToLast', request),
+    editUnansweredUser: (conversationId: string, messageId: string, content: string, directions?: string) =>
+      ipcRenderer.invoke('chat:editUnansweredUser', conversationId, messageId, content, directions),
     continue: (request: unknown) => ipcRenderer.invoke('chat:continue', request),
     getVariants: (messageId: string) => ipcRenderer.invoke('chat:getVariants', messageId),
     getMessageDebug: (messageId: string) => ipcRenderer.invoke('chat:getMessageDebug', messageId),
