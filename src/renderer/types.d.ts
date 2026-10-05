@@ -234,8 +234,25 @@ declare global {
           personaId?: string;
           model: string;
           directions?: string;
+          /** Store the directions as a directions-only user line before generating. */
+          recordDirections?: boolean;
           samplers?: Partial<SamplerParams>;
         }) => Promise<{ streamId: string }>;
+        /** Generates the missing reply to the conversation's last (unanswered) user message. */
+        replyToLast: (request: {
+          conversationId: string;
+          characterId: string;
+          personaId?: string;
+          model: string;
+          directions?: string;
+          samplers?: Partial<SamplerParams>;
+        }) => Promise<{ streamId: string }>;
+        editUnansweredUser: (
+          conversationId: string,
+          messageId: string,
+          content: string,
+          directions?: string
+        ) => Promise<Message>;
         getVariants: (messageId: string) => Promise<MessageVariant[]>;
         getMessageDebug: (messageId: string) => Promise<ChatDebugInfo | null>;
         getDebugHistory: (conversationId: string) => Promise<ChatDebugHistoryEntry[]>;

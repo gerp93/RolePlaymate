@@ -1,4 +1,4 @@
-import type { Message } from '../../shared/types/message';
+import { isDirectionsOnly, type Message } from '../../shared/types/message';
 import type { OllamaChatMessage } from './ollamaClient';
 
 /** Label for the user's lines when no persona is selected -- matches promptBuilder's fallback so
@@ -33,15 +33,36 @@ function userLine(personaName: string | null, text: string): string {
   return `${personaName?.trim() || DEFAULT_USER_LABEL}: ${text}`;
 }
 
-/** Adds a `user`-role entry, merging into the previous one when that is also `user` -- most chat
- * templates expect roles to alternate, and in a group two other characters routinely speak back
- * to back. Returns a new array; the input is not mutated. */
+/** Adds an entry, merging into the previous one when it has the same role -- most chat templates
+ * expect roles to alternate. In a group two other characters routinely speak back to back, and a
+ * character who continues on their own speaks twice in a row. Returns a new array; the input is
+ * not mutated. */
 function pushTurn(turns: OllamaChatMessage[], role: 'user' | 'assistant', content: string): OllamaChatMessage[] {
   const last = turns.at(-1);
-  if (role === 'user' && last?.role === 'user') {
-    return [...turns.slice(0, -1), { role: 'user', content: `${last.content}\n\n${content}` }];
+  if (last?.role === role) {
+    return [...turns.slice(0, -1), { role, content: `${last.content}\n\n${content}` }];
   }
   return [...turns, { role, content }];
+}
+
+/**
+ * Folds neighbouring turns of the same role into one, so what a model is sent strictly alternates.
+ * A conversation gains back-to-back assistant turns every time a character continues on their own
+ * (and back-to-back user turns when a message went unanswered); models handle a run of them badly
+ * -- the more there are, the likelier the reply drifts into writing the other side. The stored
+ * transcript is untouched; this only shapes the request.
+ */
+export function mergeAdjacentTurns(turns: OllamaChatMessage[]): OllamaChatMessage[] {
+  const out: OllamaChatMessage[] = [];
+  for (const turn of turns) {
+    const prev = out.at(-1);
+    if (prev && prev.role === turn.role && turn.role !== 'system') {
+      out[out.length - 1] = { ...prev, content: `${prev.content}\n\n${turn.content}` };
+    } else {
+      out.push({ ...turn });
+    }
+  }
+  return out;
 }
 
 /**
@@ -65,6 +86,8 @@ export function buildGroupHistory(
   const fallback = options.defaultSpeaker;
   for (const message of window) {
     if (message.role === 'user') {
+      // A directions-only line has no words to show anyone -- see isDirectionsOnly.
+      if (isDirectionsOnly(message)) continue;
       turns = pushTurn(turns, 'user', userLine(options.personaName, message.content));
       continue;
     }

@@ -821,13 +821,39 @@ export default function Chat() {
   );
 
   const handleContinue = useCallback(
-    async (directions: string) => {
+    async (directions: string, asCharacterId?: string) => {
       if (!characterId || !model) return;
       if (tts.overlapMode === 'interrupt') tts.stop();
       unlockSpeechPlayback();
-      const speakerId = !groupId && respondAsId ? respondAsId : characterId;
+      // An explicit pick (a "Continue as ..." link) beats the "Respond as" picker, which beats the
+      // conversation's own character. A group's next speaker is always `characterId`.
+      const speakerId = (!groupId && (asCharacterId || respondAsId)) || characterId;
       setRespondAsId('');
       await session.continueAsCharacter({
+        characterId: speakerId,
+        model,
+        personaId: personaId || undefined,
+        directions: directions || undefined,
+        // Directions the user typed are kept in the transcript as a directions-only line; the
+        // backend ignores this when there are none (the built-in nudge is never recorded).
+        recordDirections: true,
+        samplers,
+      });
+      void refreshConversations();
+    },
+    [characterId, groupId, respondAsId, model, personaId, samplers, session, refreshConversations, tts.overlapMode, tts.stop]
+  );
+
+  // The reply missing after the last message, when that is a user message: the same speaker rules
+  // as Continue, but the stored message is answered instead of a new turn being started.
+  const handleReply = useCallback(
+    async (directions: string, asCharacterId?: string) => {
+      if (!characterId || !model) return;
+      if (tts.overlapMode === 'interrupt') tts.stop();
+      unlockSpeechPlayback();
+      const speakerId = (!groupId && (asCharacterId || respondAsId)) || characterId;
+      setRespondAsId('');
+      await session.replyToLast({
         characterId: speakerId,
         model,
         personaId: personaId || undefined,
@@ -845,6 +871,17 @@ export default function Chat() {
     () => characters.filter((c) => c.id !== characterId && (hiddenUnlocked || !c.isHidden)),
     [characters, characterId, hiddenUnlocked]
   );
+
+  // The "Continue as ..." links under the last message: always the conversation's own character
+  // (in a group, whoever is up next), plus the guest currently picked in "Respond as", if any.
+  const continueOptions = (() => {
+    if (!characterId) return [];
+    const ids = !groupId && respondAsId && respondAsId !== characterId ? [characterId, respondAsId] : [characterId];
+    return ids.flatMap((id) => {
+      const name = characters.find((c) => c.id === id)?.name;
+      return name ? [{ id, name }] : [];
+    });
+  })();
 
   const handleCreateGuest = useCallback(async (name: string, description: string): Promise<Character> => {
     const created = await window.electronAPI.characters.create({
@@ -1401,14 +1438,29 @@ export default function Chat() {
                   onViewPrompt={(messageId) => void handleViewPrompt(messageId)}
                   onContinue={
                     canChat
-                      ? () => {
+                      ? (asCharacterId) => {
                           unlockSpeechPlayback();
-                          void handleContinue(directions);
+                          void handleContinue(directions, asCharacterId);
                           setDirections('');
                           setDirectionsOpen(false);
                         }
                       : undefined
                   }
+                  onReply={
+                    canChat
+                      ? (asCharacterId) => {
+                          unlockSpeechPlayback();
+                          void handleReply(directions, asCharacterId);
+                          setDirections('');
+                          setDirectionsOpen(false);
+                        }
+                      : undefined
+                  }
+                  onEditUnansweredUser={(messageId, content, msgDirections) => {
+                    tts.stop();
+                    void session.editUnansweredUserMessage(messageId, content, msgDirections);
+                  }}
+                  continueOptions={continueOptions}
                   characterName={character?.name ?? 'Assistant'}
                   personaName={persona?.name ?? 'You'}
                   characterImages={characterImages}
@@ -1447,26 +1499,40 @@ export default function Chat() {
                   }
                 />
 
+              {/* Under the "Continue as ..." links and above the composer's divider line, so the
+                  speaker is picked right where a reply or a Continue is about to be asked for. A
+                  group's roster bar already does this job, so it isn't shown there. */}
+              {canChat && !groupId && character && (
+                <div className="chat-respond-as-bar">
+                  <RespondAsPicker
+                    leadName={character.name}
+                    guests={guestCharacters}
+                    value={respondAsId}
+                    onChange={setRespondAsId}
+                    onCreate={handleCreateGuest}
+                    disabled={session.isGenerating}
+                  />
+                </div>
+              )}
+
               <Composer
                 disabled={!canChat}
                 isGenerating={session.isGenerating}
-                respondAs={
-                  canChat && !groupId && character ? (
-                    <RespondAsPicker
-                      leadName={character.name}
-                      guests={guestCharacters}
-                      value={respondAsId}
-                      onChange={setRespondAsId}
-                      onCreate={handleCreateGuest}
-                      disabled={session.isGenerating}
-                    />
-                  ) : undefined
-                }
                 directions={directions}
                 onDirectionsChange={setDirections}
                 directionsOpen={directionsOpen}
                 onDirectionsOpenChange={setDirectionsOpen}
-                onSend={(message, msgDirections) => void handleSend(message, msgDirections)}
+                // Directions with no message are a turn of their own: the speaker acts on them with
+                // no line from the user, which is what Continue already does (and it already honours
+                // directions), so that is the path they take.
+                onSend={(message, msgDirections) =>
+                  message.trim()
+                    ? void handleSend(message, msgDirections)
+                    : // Nothing to answer unless the last line is a user message whose reply is missing.
+                      session.messages.at(-1)?.role === 'user'
+                      ? void handleReply(msgDirections)
+                      : void handleContinue(msgDirections)
+                }
                 onSkipDialogue={
                   ttsAvailable &&
                   tts.overlapMode === 'queue' &&

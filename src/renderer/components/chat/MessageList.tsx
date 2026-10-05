@@ -1,5 +1,5 @@
 import { MouseEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { Message, MessageVariant, ttsPathForMessage } from '../../../shared/types/message';
+import { Message, MessageVariant, isDirectionsOnly, ttsPathForMessage } from '../../../shared/types/message';
 import { ChatDebugInfo } from '../../../shared/types/chat';
 import { CharacterImage } from '../../../shared/types/characterImage';
 import { PersonaImage } from '../../../shared/types/personaImage';
@@ -58,11 +58,20 @@ interface Props {
    * regenerates that reply -- Save only, never when the textarea opens. See
    * chatSession.editPriorUserMessage. */
   onEditPrior: (messageId: string, content: string, directions: string) => void;
+  /** Commits an edit of the last message when it is a user line with no reply yet -- in place,
+   * nothing to regenerate. Save only. See chatSession.editUnansweredUserMessage. */
+  onEditUnansweredUser?: (messageId: string, content: string, directions: string) => void;
   onDeleteLast: () => void;
   onViewPrompt: (messageId: string) => void;
   /** Have the character take another turn with no new user message. Omitted when Continue
    * isn't available (no conversation, generating, last line isn't theirs). */
-  onContinue?: () => void;
+  onContinue?: (characterId: string) => void;
+  /** Generate the reply that is missing after the last message, when that is a user message. One
+   * "Reply as ..." link per option, like Continue. Omitted when it isn't available. */
+  onReply?: (characterId: string) => void;
+  /** Who can take the next turn on their own: the conversation's character, plus any guest who
+   * has already spoken or is picked in "Respond as". One "Continue as ..." link each. */
+  continueOptions?: { id: string; name: string }[];
   characterName: string;
   personaName: string;
   characterImages: CharacterImage[];
@@ -92,9 +101,12 @@ export default function MessageList({
   onToggleVariantStar,
   onEditLast,
   onEditPrior,
+  onEditUnansweredUser,
   onDeleteLast,
   onViewPrompt,
   onContinue,
+  onReply,
+  continueOptions = [],
   characterName,
   personaName,
   characterImages,
@@ -209,7 +221,14 @@ export default function MessageList({
   // is answering. Anything earlier already has a reply after it -- see
   // chatSession.editPriorUserMessage for why that boundary exists.
   const canEditPriorUser =
-    canActOnLast && lastIndex >= 1 && shown[lastIndex]?.role === 'assistant' && shown[lastIndex - 1]?.role === 'user';
+    canActOnLast &&
+    lastIndex >= 1 &&
+    shown[lastIndex]?.role === 'assistant' &&
+    shown[lastIndex - 1]?.role === 'user' &&
+    !isDirectionsOnly(shown[lastIndex - 1]);
+  // A user message nobody has answered (its reply was deleted, or generation failed): editable in
+  // place, and the reply to it can be generated again.
+  const isUnansweredUser = canActOnLast && shown[lastIndex]?.role === 'user';
 
   // Local textarea only -- do not call onEditLast/onEditPrior here. Those are Save, and Chat
   // stops conversation TTS on them. Opening the editor must leave audio playing.
@@ -236,12 +255,14 @@ export default function MessageList({
                 ? tts.personaTrack
                 : 'off'
               : 'off';
-        const showTts = Boolean(tts && ttsTrack !== 'off' && editingId !== message.id);
+        // A directions-only line has no words to speak.
+        const showTts = Boolean(tts && ttsTrack !== 'off' && editingId !== message.id && message.content.trim());
         const showVariantNav =
           !isEditing && canActOnLast && i === lastIndex && message.role === 'assistant' && !isGreeting;
         const showEdit =
           !isEditing &&
           ((canActOnLast && i === lastIndex && message.role === 'assistant' && !isGreeting) ||
+            (isUnansweredUser && i === lastIndex) ||
             (canEditPriorUser && i === lastIndex - 1));
         const showDelete = !isEditing && canActOnLast && i === lastIndex && !isGreeting;
         // Available on every real reply, not just the last -- unlike edit/delete/redo, browsing
@@ -264,11 +285,14 @@ export default function MessageList({
             isEditing={isEditing}
             editDraft={editDraft}
             onEditDraftChange={setEditDraft}
-            showDirectionsField={isEditing && message.role === 'user' && i === lastIndex - 1}
+            showDirectionsField={isEditing && message.role === 'user'}
+            allowEmptyText={isUnansweredUser && i === lastIndex}
             editDirectionsDraft={editDirectionsDraft}
             onEditDirectionsDraftChange={setEditDirectionsDraft}
             onSaveEdit={() => {
-              if (i === lastIndex) onEditLast(editDraft);
+              if (i === lastIndex && message.role === 'user') {
+                onEditUnansweredUser?.(message.id, editDraft, editDirectionsDraft);
+              } else if (i === lastIndex) onEditLast(editDraft);
               else onEditPrior(message.id, editDraft, editDirectionsDraft);
               setEditingId(null);
               setEditWidth(null);
@@ -312,8 +336,20 @@ export default function MessageList({
                     type="button"
                     className="chat-variant-btn chat-message-edit"
                     onClick={(e) => startEdit(e, message)}
-                    title={i === lastIndex ? 'Edit this response' : 'Edit this message and regenerate the reply to it'}
-                    aria-label={i === lastIndex ? 'Edit this response' : 'Edit this message and regenerate the reply to it'}
+                    title={
+                      i !== lastIndex
+                        ? 'Edit this message and regenerate the reply to it'
+                        : message.role === 'user'
+                          ? 'Edit this message'
+                          : 'Edit this response'
+                    }
+                    aria-label={
+                      i !== lastIndex
+                        ? 'Edit this message and regenerate the reply to it'
+                        : message.role === 'user'
+                          ? 'Edit this message'
+                          : 'Edit this response'
+                    }
                   >
                     ✏️
                   </button>
@@ -368,14 +404,37 @@ export default function MessageList({
         shown[lastIndex]?.role === 'assistant' &&
         !isGenerating &&
         !streamingText && (
-          <button
-            type="button"
-            className="chat-continue-cta"
-            onClick={onContinue}
-            title="Have the character take another turn on its own, without a reply from you"
-          >
-            Continue as {characterName}
-          </button>
+          <div className="chat-continue-row">
+            {continueOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="chat-continue-cta"
+                onClick={() => onContinue(option.id)}
+                title={`Have ${option.name} take another turn on their own, without a reply from you`}
+              >
+                Continue as {option.name}
+              </button>
+            ))}
+          </div>
+        )}
+      {onReply &&
+        isUnansweredUser &&
+        !isGenerating &&
+        !streamingText && (
+          <div className="chat-continue-row">
+            {continueOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="chat-continue-cta"
+                onClick={() => onReply(option.id)}
+                title={`Generate ${option.name}'s missing reply to this message`}
+              >
+                Reply as {option.name}
+              </button>
+            ))}
+          </div>
         )}
       <div ref={bottom} />
     </div>
@@ -566,6 +625,7 @@ function Bubble({
   editDraft = '',
   onEditDraftChange,
   showDirectionsField = false,
+  allowEmptyText = false,
   editDirectionsDraft = '',
   onEditDirectionsDraftChange,
   onSaveEdit,
@@ -598,6 +658,8 @@ function Bubble({
   /** Only true for the one editable prior-user-message slot -- the assistant edit slot never
    * shows a directions field, since directions belong to the user turn, not the reply. */
   showDirectionsField?: boolean;
+  /** An unanswered user line may be saved with no text as long as it still has directions. */
+  allowEmptyText?: boolean;
   editDirectionsDraft?: string;
   onEditDirectionsDraftChange?: (value: string) => void;
   onSaveEdit?: () => void;
@@ -660,7 +722,12 @@ function Bubble({
               </div>
             )}
             <div className="chat-bubble-edit-actions">
-              <button type="button" className="btn btn-primary" disabled={!editDraft.trim()} onClick={onSaveEdit}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!editDraft.trim() && !(allowEmptyText && editDirectionsDraft.trim())}
+                onClick={onSaveEdit}
+              >
                 Save
               </button>
               <button type="button" className="btn" onClick={onCancelEdit}>

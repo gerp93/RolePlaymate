@@ -26,9 +26,6 @@ interface Props {
   onSkipDialogue?: () => void;
   /** True while a clip is generating, playing, or paused -- the skip control is disabled otherwise. */
   skipDialogueReady?: boolean;
-  /** "Respond as" picker, rendered at the start of the controls row. Omitted where it doesn't
-   * apply (no conversation yet, or a group, whose roster bar already picks the speaker). */
-  respondAs?: ReactNode;
 }
 
 /**
@@ -53,7 +50,6 @@ export default function Composer({
   messageCount,
   onSkipDialogue,
   skipDialogueReady,
-  respondAs,
 }: Props) {
   const [message, setMessage] = useState('');
 
@@ -80,8 +76,11 @@ export default function Composer({
     return () => clearInterval(interval);
   }, [isGenerating]);
 
+  // Directions alone are enough to send -- the character acts on them with no line from the user.
+  const canSubmit = Boolean(message.trim() || directions.trim());
+
   const submit = () => {
-    if (!message.trim() || disabled || isGenerating) return;
+    if (!canSubmit || disabled || isGenerating) return;
     onSend(message, directions);
     setMessage('');
     onDirectionsChange('');
@@ -128,7 +127,6 @@ export default function Composer({
   return (
     <div className="chat-composer">
       <div className="chat-composer-controls">
-        {respondAs}
         {onSkipDialogue && (
           <span
             className="chat-skip-dialogue-wrap"
@@ -285,10 +283,15 @@ export default function Composer({
           <button
             type="button"
             className="btn btn-primary chat-send"
-            disabled={disabled || !message.trim()}
+            disabled={disabled || !canSubmit}
             onClick={submit}
+            title={
+              message.trim() || !directions.trim()
+                ? undefined
+                : 'No message -- the character will act on your directions on their own'
+            }
           >
-            Send
+            {message.trim() || !directions.trim() ? 'Send' : 'Send directions'}
           </button>
         )}
         {messageCount}

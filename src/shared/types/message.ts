@@ -66,6 +66,16 @@ export interface MessageVariant {
   createdAt: string;
 }
 
+/**
+ * A user line with no text, only directions -- what sending directions with an empty message
+ * leaves in the transcript, so the turn shows up there. It is never part of what a model is shown
+ * (the directions reach it through the end-of-prompt reply guidance instead), and replying to it
+ * means acting on its directions rather than answering a message.
+ */
+export function isDirectionsOnly(message: Pick<Message, 'role' | 'content'>): boolean {
+  return message.role === 'user' && !message.content.trim();
+}
+
 /** Spoken WAV for what's currently on screen. Assistant redos each have their own file --
  * never reuse another variant's clip just because they share a message id. */
 export function ttsPathForMessage(
