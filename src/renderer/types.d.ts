@@ -145,7 +145,7 @@ declare global {
         setCover: (id: string) => Promise<{ success: boolean }>;
       };
       dbLocation: {
-        get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string }>;
+        get: () => Promise<{ path: string; isDefault: boolean; defaultPath: string; sizeBytes: number | null }>;
         browseExisting: () => Promise<string | null>;
         browseParentFolder: () => Promise<string | null>;
         set: (newPath: string) => Promise<{ success: boolean }>;
