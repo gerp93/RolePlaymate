@@ -319,6 +319,13 @@ owner's. `getSession`/`reconstructGroupPending` use the same test on a cold star
 `assertHiddenContentAccessible` refuses a conversation with a hidden guest while locked, like a
 group's hidden member.
 
+The picker resets after each send, so under the last message "Continue as <owner>" stays as it
+always was and gains a second link for whoever the picker currently holds (`continueOptions`
+in `Chat.tsx`; `handleContinue` takes an optional speaker that beats the picker). Send also works
+with **directions and no message**: `Composer` enables it on either, and an empty message
+routes to the Continue path (`continueAsCharacter` already takes directions), so the speaker --
+the owner or the picked guest -- acts on them with no user line added to the transcript.
+
 ## Image generation (KVGenius)
 
 Optional, same pattern as Ollama and Chatterbox: the app ships no image model and the

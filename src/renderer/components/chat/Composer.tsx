@@ -80,8 +80,11 @@ export default function Composer({
     return () => clearInterval(interval);
   }, [isGenerating]);
 
+  // Directions alone are enough to send -- the character acts on them with no line from the user.
+  const canSubmit = Boolean(message.trim() || directions.trim());
+
   const submit = () => {
-    if (!message.trim() || disabled || isGenerating) return;
+    if (!canSubmit || disabled || isGenerating) return;
     onSend(message, directions);
     setMessage('');
     onDirectionsChange('');
@@ -285,10 +288,15 @@ export default function Composer({
           <button
             type="button"
             className="btn btn-primary chat-send"
-            disabled={disabled || !message.trim()}
+            disabled={disabled || !canSubmit}
             onClick={submit}
+            title={
+              message.trim() || !directions.trim()
+                ? undefined
+                : 'No message -- the character will act on your directions on their own'
+            }
           >
-            Send
+            {message.trim() || !directions.trim() ? 'Send' : 'Send directions'}
           </button>
         )}
         {messageCount}

@@ -1389,9 +1389,17 @@
   justify-content: center;
 }
 
-.chat-continue-cta {
+/* One "Continue as ..." link per speaker who can take the next turn, in a wrapping row. */
+.chat-continue-row {
   align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
   margin: 2px 0 4px 74px;
+}
+
+.chat-continue-cta {
+  margin: 0;
   padding: 0;
   border: none;
   background: none;

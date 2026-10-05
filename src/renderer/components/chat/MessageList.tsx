@@ -62,7 +62,10 @@ interface Props {
   onViewPrompt: (messageId: string) => void;
   /** Have the character take another turn with no new user message. Omitted when Continue
    * isn't available (no conversation, generating, last line isn't theirs). */
-  onContinue?: () => void;
+  onContinue?: (characterId: string) => void;
+  /** Who can take the next turn on their own: the conversation's character, plus any guest who
+   * has already spoken or is picked in "Respond as". One "Continue as ..." link each. */
+  continueOptions?: { id: string; name: string }[];
   characterName: string;
   personaName: string;
   characterImages: CharacterImage[];
@@ -95,6 +98,7 @@ export default function MessageList({
   onDeleteLast,
   onViewPrompt,
   onContinue,
+  continueOptions = [],
   characterName,
   personaName,
   characterImages,
@@ -368,14 +372,19 @@ export default function MessageList({
         shown[lastIndex]?.role === 'assistant' &&
         !isGenerating &&
         !streamingText && (
-          <button
-            type="button"
-            className="chat-continue-cta"
-            onClick={onContinue}
-            title="Have the character take another turn on its own, without a reply from you"
-          >
-            Continue as {characterName}
-          </button>
+          <div className="chat-continue-row">
+            {continueOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="chat-continue-cta"
+                onClick={() => onContinue(option.id)}
+                title={`Have ${option.name} take another turn on their own, without a reply from you`}
+              >
+                Continue as {option.name}
+              </button>
+            ))}
+          </div>
         )}
       <div ref={bottom} />
     </div>

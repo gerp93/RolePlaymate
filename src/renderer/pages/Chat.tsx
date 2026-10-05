@@ -821,11 +821,13 @@ export default function Chat() {
   );
 
   const handleContinue = useCallback(
-    async (directions: string) => {
+    async (directions: string, asCharacterId?: string) => {
       if (!characterId || !model) return;
       if (tts.overlapMode === 'interrupt') tts.stop();
       unlockSpeechPlayback();
-      const speakerId = !groupId && respondAsId ? respondAsId : characterId;
+      // An explicit pick (a "Continue as ..." link) beats the "Respond as" picker, which beats the
+      // conversation's own character. A group's next speaker is always `characterId`.
+      const speakerId = (!groupId && (asCharacterId || respondAsId)) || characterId;
       setRespondAsId('');
       await session.continueAsCharacter({
         characterId: speakerId,
@@ -845,6 +847,17 @@ export default function Chat() {
     () => characters.filter((c) => c.id !== characterId && (hiddenUnlocked || !c.isHidden)),
     [characters, characterId, hiddenUnlocked]
   );
+
+  // The "Continue as ..." links under the last message: always the conversation's own character
+  // (in a group, whoever is up next), plus the guest currently picked in "Respond as", if any.
+  const continueOptions = (() => {
+    if (!characterId) return [];
+    const ids = !groupId && respondAsId && respondAsId !== characterId ? [characterId, respondAsId] : [characterId];
+    return ids.flatMap((id) => {
+      const name = characters.find((c) => c.id === id)?.name;
+      return name ? [{ id, name }] : [];
+    });
+  })();
 
   const handleCreateGuest = useCallback(async (name: string, description: string): Promise<Character> => {
     const created = await window.electronAPI.characters.create({
@@ -1401,14 +1414,15 @@ export default function Chat() {
                   onViewPrompt={(messageId) => void handleViewPrompt(messageId)}
                   onContinue={
                     canChat
-                      ? () => {
+                      ? (asCharacterId) => {
                           unlockSpeechPlayback();
-                          void handleContinue(directions);
+                          void handleContinue(directions, asCharacterId);
                           setDirections('');
                           setDirectionsOpen(false);
                         }
                       : undefined
                   }
+                  continueOptions={continueOptions}
                   characterName={character?.name ?? 'Assistant'}
                   personaName={persona?.name ?? 'You'}
                   characterImages={characterImages}
@@ -1466,7 +1480,12 @@ export default function Chat() {
                 onDirectionsChange={setDirections}
                 directionsOpen={directionsOpen}
                 onDirectionsOpenChange={setDirectionsOpen}
-                onSend={(message, msgDirections) => void handleSend(message, msgDirections)}
+                // Directions with no message are a turn of their own: the speaker acts on them with
+                // no line from the user, which is what Continue already does (and it already honours
+                // directions), so that is the path they take.
+                onSend={(message, msgDirections) =>
+                  message.trim() ? void handleSend(message, msgDirections) : void handleContinue(msgDirections)
+                }
                 onSkipDialogue={
                   ttsAvailable &&
                   tts.overlapMode === 'queue' &&
