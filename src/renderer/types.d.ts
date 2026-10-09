@@ -291,7 +291,7 @@ declare global {
         /** Starts a run in the background; progress arrives through onProgress. */
         start: (request: AutomationStartRequest) => Promise<AutomationRunSummary>;
         stop: () => Promise<{ success: true }>;
-        getActive: () => Promise<AutomationRunSummary | null>;
+        getActive: () => Promise<AutomationProgress | null>;
         list: () => Promise<AutomationRunSummary[]>;
         delete: (runId: string) => Promise<{ success: true }>;
         /** Opens a save dialog; `saved` is false when it was cancelled. */

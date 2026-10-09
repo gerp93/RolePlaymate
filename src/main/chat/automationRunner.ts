@@ -78,6 +78,11 @@ export class AutomationRunner {
     return this.active?.summary ?? null;
   }
 
+  /** The active run plus which step it is on, for a page that opens mid-run. */
+  getActiveProgress(): AutomationProgress | null {
+    return this.active ? { run: this.active.summary, phase: this.active.phase, transcriptChanged: false } : null;
+  }
+
   /** True while a run owns this conversation -- the chat handlers refuse to touch it meanwhile. */
   isAutomating(conversationId: string): boolean {
     return this.active?.conversationId === conversationId;

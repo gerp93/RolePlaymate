@@ -45,6 +45,9 @@ interface Props {
   messages: Message[];
   streamingText: string;
   isGenerating: boolean;
+  /** Whose typing dots show while nothing has streamed yet. Always the character in a normal chat;
+   * an automated run also writes the persona's line, and shows the persona then. */
+  typingAs?: 'character' | 'persona';
   isRegenerating: boolean;
   variants: MessageVariant[];
   onRegenerate: () => void;
@@ -94,6 +97,7 @@ export default function MessageList({
   messages,
   streamingText,
   isGenerating,
+  typingAs = 'character',
   isRegenerating,
   variants,
   onRegenerate,
@@ -396,7 +400,12 @@ export default function MessageList({
         />
       ) : (
         isGenerating && (
-          <TypingIndicator name={characterName} avatar={characterAvatar} onAvatarCropSaved={refreshAvatarCrops} />
+          <TypingIndicator
+            name={typingAs === 'persona' ? personaName : characterName}
+            avatar={typingAs === 'persona' ? personaAvatar : characterAvatar}
+            side={typingAs === 'persona' ? 'user' : 'assistant'}
+            onAvatarCropSaved={refreshAvatarCrops}
+          />
         )
       )}
       {onContinue &&
@@ -447,14 +456,16 @@ export default function MessageList({
 function TypingIndicator({
   name,
   avatar,
+  side,
   onAvatarCropSaved,
 }: {
   name: string;
   avatar: AvatarInfo;
+  side: 'assistant' | 'user';
   onAvatarCropSaved?: () => void;
 }) {
   return (
-    <div className="chat-bubble chat-bubble-assistant chat-bubble-typing">
+    <div className={`chat-bubble chat-bubble-${side} chat-bubble-typing`}>
       <BubbleAvatarPanel avatar={avatar} name={name} onCropSaved={onAvatarCropSaved} />
       <div className="chat-bubble-content">
         <div className="chat-bubble-name">{name}</div>
