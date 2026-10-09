@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { CharacterTtsVoice } from '../../../shared/types/tts';
 import { TtsOverlapMode, TtsReadingMode, TtsTrackMode } from '../../../shared/utils/ttsSegments';
 import { CHAT_FONT_SIZES, ChatFontSize } from '../../utils/chatFontSize';
+import AutomationLock from './AutomationLock';
 import StartScreenPicker, { StartPickerOption } from './StartScreenPicker';
 
 interface Samplers {
@@ -46,6 +47,9 @@ interface Props {
   onConciseRepliesChange: (value: boolean) => void;
   narrationPov: 'first' | 'third' | null;
   onNarrationPovChange: (value: 'first' | 'third' | null) => void;
+  /** An automated run is going: the sections that change how the chat behaves are covered. The
+   * ones that only change how it looks or sounds stay editable. */
+  automationLocked?: boolean;
 }
 
 /** Hover/focus card — Electron's native `title` tooltips look dated and often don't show. */
@@ -112,6 +116,7 @@ export default function ChatSettingsPanel({
   onConciseRepliesChange,
   narrationPov,
   onNarrationPovChange,
+  automationLocked = false,
 }: Props) {
   const speechAvailable = characterSpeechAvailable || personaSpeechAvailable;
   const speechActive =
@@ -120,6 +125,15 @@ export default function ChatSettingsPanel({
 
   return (
     <div className="chat-settings-panel">
+      <AutomationLock
+        locked={automationLocked}
+        message={
+          <>
+            <strong>Locked during an automated run</strong>
+            <span>The run plays this persona.</span>
+          </>
+        }
+      >
       {conversationId && (
         <section className="chat-settings-section">
           <h3 className="chat-settings-section-title">Persona</h3>
@@ -135,6 +149,7 @@ export default function ChatSettingsPanel({
           </div>
         </section>
       )}
+      </AutomationLock>
 
       <section className="chat-settings-section">
         <h3 className="chat-settings-section-title">Display</h3>
@@ -386,6 +401,15 @@ export default function ChatSettingsPanel({
         </section>
       )}
 
+      <AutomationLock
+        locked={automationLocked}
+        message={
+          <>
+            <strong>Locked during an automated run</strong>
+            <span>Changing how replies are written midway would make the run's log misleading.</span>
+          </>
+        }
+      >
       <section className="chat-settings-section">
         <h3 className="chat-settings-section-title">
           Reply style
@@ -416,7 +440,17 @@ export default function ChatSettingsPanel({
           </select>
         </label>
       </section>
+      </AutomationLock>
 
+      <AutomationLock
+        locked={automationLocked}
+        message={
+          <>
+            <strong>Locked during an automated run</strong>
+            <span>The run uses the values it started with.</span>
+          </>
+        }
+      >
       <section className="chat-settings-section">
         <h3 className="chat-settings-section-title">AI model tuning</h3>
 
@@ -462,6 +496,7 @@ export default function ChatSettingsPanel({
           </button>
         </label>
       </section>
+      </AutomationLock>
     </div>
   );
 }

@@ -21,6 +21,7 @@ import ImageGenDialog from '../components/chat/ImageGenDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import AutomationPanel from '../components/chat/AutomationPanel';
+import AutomationLock from '../components/chat/AutomationLock';
 import { useAutomation } from '../hooks/useAutomation';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
@@ -1523,6 +1524,18 @@ export default function Chat() {
                 </div>
               )}
 
+              <AutomationLock
+                locked={automation.automatingHere}
+                message={
+                  <>
+                    <strong>Automated run in progress</strong>
+                    <span>The chat is locked until it finishes or you stop it.</span>
+                    <button type="button" className="btn btn-danger" onClick={() => void automation.stop()}>
+                      Stop
+                    </button>
+                  </>
+                }
+              >
               <Composer
                 disabled={!canChat}
                 isGenerating={session.isGenerating}
@@ -1591,6 +1604,7 @@ export default function Chat() {
                   ) : null
                 }
               />
+              </AutomationLock>
 
               {tts.error && (
                 <p className="chat-tts-error text-muted">
@@ -1744,6 +1758,7 @@ export default function Chat() {
               onConciseRepliesChange={handleConciseRepliesChange}
               narrationPov={narrationPov}
               onNarrationPovChange={handleNarrationPovChange}
+              automationLocked={automation.active !== null}
             />
           }
         />
