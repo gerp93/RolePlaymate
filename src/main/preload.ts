@@ -223,6 +223,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Automated runs (chat sidebar -> Automate). Progress is pushed, so onProgress returns an
   // unsubscribe closure like the chat stream does.
+  // Speed tests (Model Tuning). Progress is pushed; onProgress returns an unsubscribe closure.
+  benchmark: {
+    start: (request: unknown) => ipcRenderer.invoke('benchmark:start', request),
+    stop: () => ipcRenderer.invoke('benchmark:stop'),
+    getActive: () => ipcRenderer.invoke('benchmark:getActive'),
+    list: () => ipcRenderer.invoke('benchmark:list'),
+    get: (id: string) => ipcRenderer.invoke('benchmark:get', id),
+    delete: (id: string) => ipcRenderer.invoke('benchmark:delete', id),
+    export: (id: string, format: string) => ipcRenderer.invoke('benchmark:export', id, format),
+    onProgress: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('benchmark:progress', handler);
+      return () => ipcRenderer.removeListener('benchmark:progress', handler);
+    },
+  },
+
   automation: {
     start: (request: unknown) => ipcRenderer.invoke('automation:start', request),
     stop: () => ipcRenderer.invoke('automation:stop'),

@@ -63,7 +63,23 @@ export interface ChatDebugInfo {
   cleanedResponse: string;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** Where the time went, from Ollama's own counters (null on a reply from before they were kept). */
+  timings?: ReplyTimings | null;
   error?: string;
+}
+
+/** Milliseconds, from Ollama's final response chunk, except `firstTokenMs` which is measured here
+ * from sending the request to the first words arriving. */
+export interface ReplyTimings {
+  /** Wall time Ollama spent on the request. */
+  totalMs: number | null;
+  /** Loading the model into memory -- large on a cold start, near zero when it was already loaded. */
+  loadMs: number | null;
+  /** Reading the prompt (grows with context). */
+  promptEvalMs: number | null;
+  /** Writing the reply (what tokens-per-second means). */
+  evalMs: number | null;
+  firstTokenMs: number | null;
 }
 
 /** One historical turn's logged prompt, as shown in the Prompt Debugging pane's history list --

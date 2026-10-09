@@ -554,6 +554,12 @@ export class ChatSessionManager {
     this.dropSession(conversationId);
   }
 
+  /** Asks Ollama to drop a model from memory (best effort). A speed test does this between models so
+   * each one is timed from a cold start, with the GPU to itself. */
+  unloadModel(model: string): Promise<void> {
+    return this.ollama.unloadModel(model);
+  }
+
   isGenerating(conversationId: string): boolean {
     return this.sessions.get(conversationId)?.abort != null;
   }
@@ -760,6 +766,7 @@ export class ChatSessionManager {
         rawResponse: result.content,
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
+        timings: result.timings,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -931,6 +938,7 @@ export class ChatSessionManager {
         rawResponse: result.content,
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
+        timings: result.timings,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -1121,6 +1129,7 @@ export class ChatSessionManager {
         rawResponse: result.content,
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
+        timings: result.timings,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -1326,6 +1335,7 @@ export class ChatSessionManager {
         rawResponse: result.content,
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
+        timings: result.timings,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;

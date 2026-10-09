@@ -5,6 +5,7 @@
  * The app loads no model itself and makes no network calls of its own -- everything here
  * targets a server the user runs on their own machine. Uses global `fetch`, so no dependency.
  */
+import { ReplyTimings } from '../../shared/types/chat';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 
 export const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
@@ -45,6 +46,8 @@ export interface OllamaChatResult {
   /** Token counts arrive only in the final NDJSON chunk; null when the server omits them. */
   promptEvalCount: number | null;
   evalCount: number | null;
+  /** Where the time went, from Ollama's own counters. Null when the server reports none. */
+  timings: ReplyTimings | null;
 }
 
 export interface ChatRequest {
@@ -169,12 +172,16 @@ export class OllamaClient {
         content: data.message?.content ?? '',
         promptEvalCount: data.prompt_eval_count ?? null,
         evalCount: data.eval_count ?? null,
+        timings: timingsFromChunk(data, null),
       };
     }
 
     let content = '';
     let promptEvalCount: number | null = null;
     let evalCount: number | null = null;
+    let timings: ReplyTimings | null = null;
+    let firstTokenMs: number | null = null;
+    const startedAt = performance.now();
 
     for await (const chunk of readNdjson<OllamaChatChunk>(response)) {
       if (chunk.error) {
@@ -182,6 +189,8 @@ export class OllamaClient {
       }
       const delta = chunk.message?.content ?? '';
       if (delta) {
+        // Request sent to first words back: what makes a model feel responsive or sluggish.
+        if (firstTokenMs === null) firstTokenMs = performance.now() - startedAt;
         content += delta;
         request.onToken!(delta);
       }
@@ -189,10 +198,11 @@ export class OllamaClient {
       if (chunk.done) {
         promptEvalCount = chunk.prompt_eval_count ?? null;
         evalCount = chunk.eval_count ?? null;
+        timings = timingsFromChunk(chunk, firstTokenMs);
       }
     }
 
-    return { content, promptEvalCount, evalCount };
+    return { content, promptEvalCount, evalCount, timings };
   }
 
   /**
@@ -283,7 +293,27 @@ interface OllamaChatChunk {
   done?: boolean;
   prompt_eval_count?: number;
   eval_count?: number;
+  /** All durations are nanoseconds, on the final chunk only. */
+  total_duration?: number;
+  load_duration?: number;
+  prompt_eval_duration?: number;
+  eval_duration?: number;
   error?: string;
+}
+
+const NS_PER_MS = 1_000_000;
+
+/** Ollama's duration counters as milliseconds, or null when it sent none of them. */
+function timingsFromChunk(chunk: OllamaChatChunk, firstTokenMs: number | null): ReplyTimings | null {
+  const ms = (ns: number | undefined) => (typeof ns === 'number' ? ns / NS_PER_MS : null);
+  const timings: ReplyTimings = {
+    totalMs: ms(chunk.total_duration),
+    loadMs: ms(chunk.load_duration),
+    promptEvalMs: ms(chunk.prompt_eval_duration),
+    evalMs: ms(chunk.eval_duration),
+    firstTokenMs,
+  };
+  return Object.values(timings).some((value) => value !== null) ? timings : null;
 }
 
 interface OllamaPullChunk {

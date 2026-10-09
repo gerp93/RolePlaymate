@@ -107,7 +107,15 @@ import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
 import { AutomationRunner } from './chat/automationRunner';
 import { renderRunMarkdown } from './chat/automationExport';
 import { AutomationRunService } from './database/automationRunService';
-import type { AutomationExportFormat, AutomationProgress, AutomationStartRequest } from '../shared/types/automation';
+import { renderBenchmarkMarkdown, summariseModelRun } from './chat/benchmarkStats';
+import type {
+  AutomationExportFormat,
+  AutomationProgress,
+  AutomationStartRequest,
+  BenchmarkDetail,
+  BenchmarkProgress,
+  BenchmarkStartRequest,
+} from '../shared/types/automation';
 import { isGuestLine } from './chat/groupHistory';
 import { KvgeniusClient } from './chat/kvgeniusClient';
 import { ImageGenService } from './imageGen';
@@ -127,7 +135,7 @@ import { parseCharacterHtml, parseLorebookHtml, resolveLocalAvatarPath } from '.
 import { parseLorebookJson } from './lorebookJsonImport';
 import { CreateCharacterInput, UpdateCharacterInput } from '../shared/types/character';
 import { FIELD_TYPES } from '../shared/types/characterField';
-import { CreateConversationInput } from '../shared/types/conversation';
+import { Conversation, CreateConversationInput } from '../shared/types/conversation';
 import { CreateScenarioInput, UpdateScenarioInput } from '../shared/types/scenario';
 import { CreateGroupInput, UpdateGroupInput } from '../shared/types/group';
 import { ImageCropLocation, SetImageCropInput } from '../shared/types/imageCrop';
@@ -959,6 +967,7 @@ app.whenReady().then(async () => {
   );
   automationRunService = new AutomationRunService(db);
   automationRunService.markStaleRunsInterrupted();
+  automationRunService.markStaleBenchmarksInterrupted();
   automationRunner = new AutomationRunner(
     chatSessions,
     conversationService,
@@ -1957,30 +1966,7 @@ function registerIPCHandlers() {
 
   // Seeds the character's active greeting as the opening assistant message, so it lands in
   // the transcript and in the model's context rather than being a render-time flourish.
-  ipcMain.handle('conversations:create', (_, input: CreateConversationInput) => {
-    // Resolve the persona first: the greeting contains {{user}}, so building it without the
-    // persona would greet "User" by name in a conversation that has one selected. The greeting
-    // itself now comes from the selected scenario (if any) rather than the character -- no
-    // scenario selected means no greeting, same as no scenario means no [SCENARIO] section.
-    const persona = input.userPersonaId
-      ? conversationService.getPersona(input.userPersonaId)
-      : null;
-    const scenarioGreeting = input.scenarioId ? scenarioService.getActiveGreeting(input.scenarioId) : null;
-
-    // A group conversation's greeting is spoken by the group's first roster member (the
-    // scenario's `{{char}}` resolves to them), and the scenario has to belong to the group.
-    const greetingSpeakerId = input.groupId ? resolveGroupGreetingSpeaker(input.groupId) : undefined;
-    assertScenarioOwnedBy(input.scenarioId, input.characterId, input.groupId);
-    const characterId = input.characterId ?? greetingSpeakerId;
-    if (!characterId) throw new Error('A conversation needs a character or a group');
-
-    const built = promptBuilder.buildSystemPrompt(characterId, {
-      personaName: persona?.name ?? null,
-      personaBackground: persona?.background ?? null,
-      scenarioGreeting,
-    });
-    return conversationService.createConversation({ ...input, greeting: built.greeting, greetingSpeakerId });
-  });
+  ipcMain.handle('conversations:create', (_, input: CreateConversationInput) => createConversationWithGreeting(input));
 
   // "Duplicate as new chat": same character/persona/scenario/model/image picks, no transcript --
   // resolves a fresh greeting exactly like conversations:create above, since this is a brand new
@@ -2628,6 +2614,32 @@ function assertScenarioOwnedBy(
   if (!matches) throw new Error("That scenario doesn't belong to this conversation's character or group");
 }
 
+/** Creates a conversation with its opening greeting resolved the way the chat's start screen does. */
+function createConversationWithGreeting(input: CreateConversationInput): Conversation {
+  // Resolve the persona first: the greeting contains {{user}}, so building it without the
+  // persona would greet "User" by name in a conversation that has one selected. The greeting
+  // itself now comes from the selected scenario (if any) rather than the character -- no
+  // scenario selected means no greeting, same as no scenario means no [SCENARIO] section.
+  const persona = input.userPersonaId
+    ? conversationService.getPersona(input.userPersonaId)
+    : null;
+  const scenarioGreeting = input.scenarioId ? scenarioService.getActiveGreeting(input.scenarioId) : null;
+
+  // A group conversation's greeting is spoken by the group's first roster member (the
+  // scenario's `{{char}}` resolves to them), and the scenario has to belong to the group.
+  const greetingSpeakerId = input.groupId ? resolveGroupGreetingSpeaker(input.groupId) : undefined;
+  assertScenarioOwnedBy(input.scenarioId, input.characterId, input.groupId);
+  const characterId = input.characterId ?? greetingSpeakerId;
+  if (!characterId) throw new Error('A conversation needs a character or a group');
+
+  const built = promptBuilder.buildSystemPrompt(characterId, {
+    personaName: persona?.name ?? null,
+    personaBackground: persona?.background ?? null,
+    scenarioGreeting,
+  });
+  return conversationService.createConversation({ ...input, greeting: built.greeting, greetingSpeakerId });
+}
+
 /** An automated run owns its conversation until it ends; the chat can't also write to it. */
 function assertNotAutomating(conversationId: string): void {
   if (automationRunner.isAutomating(conversationId)) {
@@ -2642,6 +2654,77 @@ function registerAutomationHandlers() {
     }
   };
   automationRunner.onProgress = broadcast;
+  automationRunner.createConversation = createConversationWithGreeting;
+  automationRunner.onBenchmarkProgress = (progress: BenchmarkProgress) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('benchmark:progress', progress);
+    }
+  };
+
+  // --- Speed tests (Model Tuning page) ---
+  const benchmarkDetail = (id: string): BenchmarkDetail | null => {
+    const summary = automationRunService.getBenchmarkSummary(id);
+    if (!summary) return null;
+    const results = automationRunService
+      .getBenchmarkRuns(id)
+      .map(({ summary: run, turns }) => summariseModelRun(run.model, run.id, run.status, run.error, turns));
+    return { summary, results };
+  };
+  const benchmarkVisible = (id: string) =>
+    automationRunService.listBenchmarks(securityService.isUnlocked(), 1000).some((b) => b.id === id);
+
+  ipcMain.handle('benchmark:start', (_, request: BenchmarkStartRequest) => {
+    assertHiddenContentAccessible(request.characterId, request.personaId, request.scenarioId ?? null, null);
+    assertScenarioOwnedBy(request.scenarioId, request.characterId, null);
+    return automationRunner.startBenchmark(request);
+  });
+  ipcMain.handle('benchmark:stop', () => {
+    automationRunner.stopBenchmark();
+    return { success: true };
+  });
+  ipcMain.handle('benchmark:getActive', () => automationRunner.getActiveBenchmark());
+  ipcMain.handle('benchmark:list', () => automationRunService.listBenchmarks(securityService.isUnlocked()));
+  ipcMain.handle('benchmark:get', (_, id: string) => {
+    if (!benchmarkVisible(id)) throw new Error('Speed test not found.');
+    return benchmarkDetail(id);
+  });
+  ipcMain.handle('benchmark:delete', (_, id: string) => {
+    if (automationRunner.getActiveBenchmark()?.benchmark.id === id) throw new Error('Stop the test before deleting it.');
+    if (!benchmarkVisible(id)) throw new Error('Speed test not found.');
+    automationRunService.deleteBenchmark(id);
+    return { success: true };
+  });
+  ipcMain.handle('benchmark:export', async (event, id: string, format: AutomationExportFormat) => {
+    if (!benchmarkVisible(id)) throw new Error('Speed test not found.');
+    const detail = benchmarkDetail(id);
+    if (!detail) throw new Error('Speed test not found.');
+    const stamp = detail.summary.startedAt.slice(0, 19).replace(/[:T]/g, '-');
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: 'Export speed test',
+      defaultPath: `speed-test-${stamp}.${format}`,
+      filters: format === 'json' ? [{ name: 'JSON', extensions: ['json'] }] : [{ name: 'Markdown', extensions: ['md'] }],
+    };
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { saved: false as const };
+    // The JSON adds every reply's own figures, so a number in the table can be traced back to turns.
+    const perTurn = automationRunService.getBenchmarkRuns(id).map(({ summary: run, turns }) => ({
+      model: run.model,
+      turns: turns.map((turn) => ({
+        index: turn.index,
+        replyMs: turn.assistantMessage.generationMs,
+        inputTokens: turn.debug.inputTokens,
+        outputTokens: turn.debug.outputTokens,
+        timings: turn.debug.timings ?? null,
+      })),
+    }));
+    await fs.promises.writeFile(
+      result.filePath,
+      format === 'json' ? JSON.stringify({ ...detail, perTurn }, null, 2) : renderBenchmarkMarkdown(detail),
+      'utf-8'
+    );
+    return { saved: true as const, path: result.filePath };
+  });
 
   ipcMain.handle('automation:start', (_, request: AutomationStartRequest) => {
     guardDirections(request.directions);

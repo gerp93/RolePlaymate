@@ -295,6 +295,8 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   db.exec(LOREBOOK_DDL);
 
   ensureColumn(db, 'characters', 'description', 'TEXT');
+  // Which speed test (automation_benchmarks) a run belongs to; null for an ordinary automated run.
+  ensureColumn(db, 'automation_runs', 'benchmark_id', 'TEXT');
   // Made on the fly from a chat ("Respond as" -> Quick character). Kept out of the main Characters
   // list until promoted; otherwise an ordinary character.
   ensureColumn(db, 'characters', 'is_quick', 'INTEGER NOT NULL DEFAULT 0');

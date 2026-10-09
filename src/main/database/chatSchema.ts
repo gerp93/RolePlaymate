@@ -205,4 +205,26 @@ export const CHAT_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_automation_run_turns_run ON automation_run_turns(run_id, turn_index);
+
+  -- Speed tests (Model Tuning page): one benchmark runs the same short automated chat once per model.
+  -- Each model's run is an ordinary automation_runs row carrying this id in benchmark_id (a column added
+  -- by ensureColumn in schema.ts), kept out of the normal run lists. Like runs, the ids are plain text:
+  -- the results outlive the library items they used.
+  CREATE TABLE IF NOT EXISTS automation_benchmarks (
+    id TEXT PRIMARY KEY,
+    character_id TEXT,
+    character_name TEXT NOT NULL,
+    persona_id TEXT,
+    persona_name TEXT NOT NULL,
+    scenario_id TEXT,
+    scenario_name TEXT,
+    turns INTEGER NOT NULL,
+    scripted INTEGER NOT NULL,
+    keep_conversations INTEGER NOT NULL,
+    models TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
 `;

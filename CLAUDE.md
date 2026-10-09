@@ -420,6 +420,27 @@ a draft back to its last complete sentence and closes a dangling `*` or `"`. The
 "what the persona is steering toward" directions, added to the persona-drafting prompt only. The first turn's system
 prompt (the character card as given) is kept in the log and shown up front in the Markdown export.
 
+### Speed tests
+
+Model Tuning -> **Speed test** compares models on this PC without anyone chatting. `startBenchmark` runs the
+same short automated chat once per ticked model, sequentially, each in a **fresh conversation** (created through
+`createConversationWithGreeting`, the same function the chat's start screen uses, so the greeting and scenario
+resolve identically) so no model inherits another's context. After each model it deletes that conversation (unless
+"keep" is ticked) and asks Ollama to **unload the model**, so the next one is timed from a cold start with the GPU
+to itself. Each model's run is an ordinary `automation_runs` row carrying `benchmark_id`; those are kept out of
+`listRuns` (the Settings and Automate-tab lists), and the summary lives in `automation_benchmarks`.
+
+What makes the numbers usable: the user side is, by default, `SCRIPTED_LINES` -- generic lines that read
+sensibly after any reply, identical and in the same order for every model (speed depends on tokens in and out, not
+on the story, and a scene each model wrote itself would differ per model; it also skips the persona-drafting call).
+The repetition guard is **off** (a redo would double a reply's time). Figures come from Ollama's own counters,
+captured on every reply into `debug.timings` (`ReplyTimings`: total/load/prompt-eval/eval durations from the final
+chunk, plus first-token time measured in `OllamaClient.chat`): **tokens/s = output tokens / eval time**, prompt
+tok/s likewise, because wall time per reply mostly measures how long the reply happened to be. Only a turn with no
+counters falls back to tokens over wall time, and the result is flagged approximate. `summariseModelRun` reports
+**medians** (and p90) and drops the first reply as warm-up (its model load is shown separately as cold load),
+when there are at least 3 turns. Not measured yet: GPU/CPU split (Ollama's `/api/ps`) and text-to-speech.
+
 One run at a time app-wide. Groups are not supported (their round-robin
 speaker lives in the renderer).
 

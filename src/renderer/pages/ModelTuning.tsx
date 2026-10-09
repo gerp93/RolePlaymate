@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import SpeedTestPanel from '../components/SpeedTestPanel';
 import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
 import { HardwareSnapshot, ModelSpeedRating } from '../../shared/types/hardware';
@@ -102,7 +103,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   embed: 'Text embeddings',
 };
 
-type TuningTab = 'chat' | 'embedding';
+type TuningTab = 'chat' | 'embedding' | 'speed';
 
 export default function ModelTuning() {
   return (
@@ -478,7 +479,18 @@ function ModelTuningPage() {
         >
           Embedding models
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'speed'}
+          className={`model-tuning-tab${tab === 'speed' ? ' active' : ''}`}
+          onClick={() => setTab('speed')}
+        >
+          Speed test
+        </button>
       </div>
+
+      {tab === 'speed' && <SpeedTestPanel models={models.filter((m) => isEnabled(m.name)).map((m) => m.name)} />}
 
       {tab === 'chat' && (
         <>
