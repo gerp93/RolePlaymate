@@ -26,6 +26,7 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
   const [confirmClear, setConfirmClear] = useState(false);
   const [embeddingMissing, setEmbeddingMissing] = useState(false);
   const [embeddingModelName, setEmbeddingModelName] = useState('nomic-embed-text');
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const load = useCallback(async () => {
     setMemories(await window.electronAPI.memories.getAll(conversationId));
@@ -81,6 +82,20 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
     await afterChange();
   };
 
+  // Plain text, oldest first (the order they were stored in), one per line -- for pasting into a
+  // bug report or a conversation about why the model said something.
+  const copyAll = async () => {
+    const lines = memories.map((m) => `- ${m.source === 'manual' ? '(pinned) ' : ''}${m.content}`);
+    const text = [`Memories (${memories.length}), oldest first:`, ...lines].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+    window.setTimeout(() => setCopyState('idle'), 2000);
+  };
+
   const autoCount = memories.filter((m) => m.source === 'auto').length;
 
   return (
@@ -105,8 +120,12 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
             ? 'Nothing remembered yet'
             : `${memories.length - autoCount} pinned · ${autoCount} extracted`}
         </p>
-        {memories.length > 0 &&
-          (confirmClear ? (
+        {memories.length > 0 && (
+          <div className="memories-header-actions">
+            <button type="button" className="btn" onClick={() => void copyAll()}>
+              {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy all'}
+            </button>
+            {confirmClear ? (
             <div className="memories-clear-confirm">
               <span>Delete all {memories.length}?</span>
               <button
@@ -124,11 +143,13 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
                 Keep them
               </button>
             </div>
-          ) : (
-            <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)}>
-              Delete all memories
-            </button>
-          ))}
+            ) : (
+              <button type="button" className="btn btn-danger" onClick={() => setConfirmClear(true)}>
+                Delete all memories
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="memories-note text-muted">

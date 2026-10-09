@@ -3657,3 +3657,10 @@
   margin-bottom: 0;
   padding-bottom: 0;
 }
+
+.memories-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
