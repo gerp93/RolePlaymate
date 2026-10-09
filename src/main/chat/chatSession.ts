@@ -1656,7 +1656,19 @@ export class ChatSessionManager {
     try {
       const existing = this.conversations.listMemories(turn.conversationId);
       // An optional separate model for this job (Settings); otherwise the chat model, as before.
-      const facts = await extractMemories(this.ollama, getConfiguredMemoryExtractionModel() ?? turn.model, {
+      // A chosen model that is no longer installed (removed, or never pulled on this machine) falls
+      // back to the chat model: a failed request here would be swallowed below and memories would
+      // silently stop being recorded.
+      let extractionModel = turn.model;
+      const configured = getConfiguredMemoryExtractionModel();
+      if (configured) {
+        try {
+          if (await this.ollama.isModelAvailable(configured)) extractionModel = configured;
+        } catch {
+          // Ollama unreachable: the extraction call below fails the same way either model.
+        }
+      }
+      const facts = await extractMemories(this.ollama, extractionModel, {
         userMessage: turn.userMessage,
         aiResponse,
         existingMemories: existing.map((memory) => memory.content),

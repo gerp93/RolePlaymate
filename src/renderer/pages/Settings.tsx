@@ -9,6 +9,7 @@ import RetentionRulesPanel from '../components/RetentionRulesPanel';
 import VoicePreview from '../components/VoicePreview';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddingModel';
+import { SUGGESTED_EXTRACTION_MODEL } from '../../shared/extractionModel';
 import { CharacterTtsVoice, ChatterboxCloneVoice, ChatterboxPredefinedVoice } from '../../shared/types/tts';
 import { normalizeCloneVoices, stemFromVoiceName } from '../../shared/utils/ttsPreview';
 import { useVoicePreview, VoicePreviewState } from '../hooks/useVoicePreview';
@@ -282,6 +283,11 @@ export default function Settings() {
   const embeddingModelOptions = [
     ...new Set([activeEmbeddingModel, ...installedEmbeddingModels]),
   ].sort((a, b) => a.localeCompare(b));
+
+  // `llama3.2` and `llama3.2:latest` are the same model, so compare the way Ollama does.
+  const sameTag = (a: string, b: string) => (a.includes(':') ? a : `${a}:latest`) === (b.includes(':') ? b : `${b}:latest`);
+  const extractionInstalled = extractionModel ? installedChatModels.some((name) => sameTag(name, extractionModel)) : null;
+  const suggestedInstalled = installedChatModels.some((name) => sameTag(name, SUGGESTED_EXTRACTION_MODEL));
 
   async function handleExtractionModelChange(model: string) {
     const next = model || null;
@@ -810,6 +816,26 @@ export default function Settings() {
               second large model that doesn&apos;t fit in GPU memory next to the chat model makes Ollama unload and
               reload models every turn, which slows chat down badly.
             </p>
+            {extractionModel && extractionInstalled === false && (
+              <p style={{ color: 'var(--color-accent-red)', fontSize: 13, marginTop: 8, marginBottom: 0 }}>
+                {extractionModel} is not installed in Ollama, so memories are being extracted by the chat model
+                instead.
+              </p>
+            )}
+            {extractionModel && extractionInstalled && (
+              <p className="settings-embedding-status" data-installed="true">
+                The {extractionModel} model is installed and will be used for extraction.
+              </p>
+            )}
+            {!suggestedInstalled && (
+              <>
+                <p className="text-muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 4 }}>
+                  A good small choice is <code>{SUGGESTED_EXTRACTION_MODEL}</code>. Run this in a terminal to add
+                  it, then come back here and select it.
+                </p>
+                <CopyableTerminalCommand command={`ollama pull ${SUGGESTED_EXTRACTION_MODEL}`} />
+              </>
+            )}
           </div>
         </section>
 
