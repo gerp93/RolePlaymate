@@ -1137,6 +1137,8 @@ function registerIPCHandlers() {
     return characterService.updateCharacter(id, input);
   });
 
+  ipcMain.handle('characters:promoteQuick', (_, id: string) => characterService.promoteQuick(id));
+
   ipcMain.handle('characters:setHidden', (_, id: string, hidden: boolean) =>
     characterService.setHidden(id, hidden)
   );

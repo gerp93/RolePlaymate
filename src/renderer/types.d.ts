@@ -78,6 +78,8 @@ declare global {
         create: (input: CreateCharacterInput) => Promise<Character>;
         update: (id: string, input: UpdateCharacterInput) => Promise<Character>;
         setHidden: (id: string, hidden: boolean) => Promise<Character>;
+        /** Moves a quick character into the main Characters list. */
+        promoteQuick: (id: string) => Promise<Character>;
         clone: (id: string) => Promise<Character>;
         delete: (id: string) => Promise<{ success: boolean }>;
         importFromHtml: () => Promise<{ character: Character; warnings: string[] } | null>;

@@ -26,6 +26,7 @@ export class CharacterService {
       ttsVoice,
       messageCount: Number(row.messageCount ?? 0),
       isHidden: !!row.isHidden,
+      isQuick: !!row.isQuick,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
     };
@@ -39,6 +40,7 @@ export class CharacterService {
     tts_voice_id as ttsVoiceId,
     message_count as messageCount,
     is_hidden as isHidden,
+    is_quick as isQuick,
     created_at as createdAt,
     updated_at as updatedAt
   `;
@@ -62,9 +64,9 @@ export class CharacterService {
 
     this.db
       .prepare(
-        `INSERT INTO characters (id, name, image_url, description, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?)`
+        `INSERT INTO characters (id, name, image_url, description, is_quick, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.description ?? null, now, now);
+      .run(id, input.name, input.description ?? null, input.isQuick ? 1 : 0, now, now);
 
     return this.getCharacterById(id)!;
   }
@@ -94,6 +96,15 @@ export class CharacterService {
         id
       );
 
+    return this.getCharacterById(id)!;
+  }
+
+  /** Moves a quick character into the main Characters list. Nothing else about it changes. */
+  promoteQuick(id: string): Character {
+    if (!this.getCharacterById(id)) {
+      throw new Error(`Character with id ${id} not found`);
+    }
+    this.db.prepare(`UPDATE characters SET is_quick = 0, updated_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
     return this.getCharacterById(id)!;
   }
 

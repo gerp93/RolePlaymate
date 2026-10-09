@@ -300,7 +300,10 @@ A one-character conversation can hand a single reply to another library characte
 "Respond as" picker (not shown in a group, whose roster bar already does this) sets `characterId`
 on that one `chat:send`/`chat:continue`, then resets. "Quick character..." creates a real library
 character (name + one-line description) and selects it -- the description is all the other
-speakers see of them, since a speaker only gets their *own* full card.
+speakers see of them, since a speaker only gets their *own* full card. It is created with
+`is_quick = 1`, which changes one thing: the Characters page lists it in a collapsed "Quick
+characters" group instead of the main grid, with a Promote button (`characters:promoteQuick`) that
+clears the flag. Editing one does not promote it, and it stays pickable everywhere else.
 
 There is **no stored roster**. `ChatSessionManager.getGuestScene` derives an implicit scene from
 the transcript: the conversation's own character plus every distinct guest with an assistant line

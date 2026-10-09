@@ -295,6 +295,9 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   db.exec(LOREBOOK_DDL);
 
   ensureColumn(db, 'characters', 'description', 'TEXT');
+  // Made on the fly from a chat ("Respond as" -> Quick character). Kept out of the main Characters
+  // list until promoted; otherwise an ordinary character.
+  ensureColumn(db, 'characters', 'is_quick', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'characters', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'characters', 'tts_voice_mode', 'TEXT');
   ensureColumn(db, 'characters', 'tts_voice_id', 'TEXT');

@@ -105,6 +105,13 @@ export default function CharacterList() {
     await reload();
   }
 
+  async function handlePromote(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    await window.electronAPI.characters.promoteQuick(id);
+    await reload();
+  }
+
   async function handleToggleHidden(e: React.MouseEvent, id: string, hidden: boolean) {
     e.preventDefault();
     e.stopPropagation();
@@ -191,86 +198,117 @@ export default function CharacterList() {
             }
           />
           {(() => {
-            const visible = filterAndSortLibrary(
+            const matching = filterAndSortLibrary(
               characters.filter((character) => hiddenUnlocked || !character.isHidden),
               search,
               sort,
               (character) => character.name
             );
-            if (visible.length === 0) {
+            const main = matching.filter((character) => !character.isQuick);
+            const quick = matching.filter((character) => character.isQuick);
+            if (matching.length === 0) {
               return <div className="text-muted">No characters match "{search}".</div>;
             }
+            const renderCard = (character: Character) => {
+              const cover = coverImages[character.id]?.[0];
+              const characterIssues = issues[character.id];
+              return (
+                <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
+                  <div className="character-card-portrait">
+                    {cover ? (
+                      <CroppableImage
+                        src={toImageUrl(cover.path)}
+                        alt={character.name}
+                        imageId={cover.id}
+                        imageOwner="character"
+                        location="card"
+                        crop={crops[cover.id]?.card}
+                        onCropSaved={refreshCrops}
+                      />
+                    ) : (
+                      <span>?</span>
+                    )}
+                  </div>
+                  <div className="character-card-body">
+                    <p className="character-card-name">{character.name}</p>
+                    {character.isQuick && (
+                      <p className="text-muted persona-warning" title="Made from a chat. Promote it to move it into the main list.">
+                        Quick character
+                      </p>
+                    )}
+                    {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
+                    <div className="character-card-stats">
+                      <span>{formatCount(character.messageCount, 'message')}</span>
+                      {tokenEstimates[character.id] && (
+                        <span title="Estimated base-prompt tokens, across this character's scenarios">
+                          {formatTokenRange(tokenEstimates[character.id].low, tokenEstimates[character.id].high)} tokens
+                        </span>
+                      )}
+                    </div>
+                    {showIssues && characterIssues && characterIssues.length > 0 && (
+                      <div className="character-card-issues">
+                        {characterIssues.map((issue) => (
+                          <span key={issue} className="character-card-issue">
+                            {issue}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="character-card-actions">
+                      <button className="btn btn-primary" onClick={(e) => handleChatNow(e, character.id)}>
+                        Chat Now
+                      </button>
+                      <div className="character-card-actions-row">
+                        {character.isQuick && (
+                          <button className="btn" onClick={(e) => void handlePromote(e, character.id)}>
+                            Promote
+                          </button>
+                        )}
+                        {hiddenUnlocked && (
+                          <button
+                            className="btn"
+                            onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
+                          >
+                            {character.isHidden ? 'Unhide' : 'Hide'}
+                          </button>
+                        )}
+                        <button className="btn" onClick={(e) => handleClone(e, character.id)}>
+                          Clone
+                        </button>
+                      </div>
+                      <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </Link>
+              );
+            };
             return (
-              <div
-                className="character-grid"
-                style={{ '--tile-min-width': `${tileMinWidthFor(visible.length)}px` } as React.CSSProperties}
-              >
-                {visible.map((character) => {
-                  const cover = coverImages[character.id]?.[0];
-                  const characterIssues = issues[character.id];
-                  return (
-                    <Link key={character.id} to={`/characters/${character.id}`} className="card character-card">
-                      <div className="character-card-portrait">
-                        {cover ? (
-                          <CroppableImage
-                            src={toImageUrl(cover.path)}
-                            alt={character.name}
-                            imageId={cover.id}
-                            imageOwner="character"
-                            location="card"
-                            crop={crops[cover.id]?.card}
-                            onCropSaved={refreshCrops}
-                          />
-                        ) : (
-                          <span>?</span>
-                        )}
-                      </div>
-                      <div className="character-card-body">
-                        <p className="character-card-name">{character.name}</p>
-                        {character.isHidden && <p className="text-muted persona-warning">🔒 Hidden</p>}
-                        <div className="character-card-stats">
-                          <span>{formatCount(character.messageCount, 'message')}</span>
-                          {tokenEstimates[character.id] && (
-                            <span title="Estimated base-prompt tokens, across this character's scenarios">
-                              {formatTokenRange(tokenEstimates[character.id].low, tokenEstimates[character.id].high)} tokens
-                            </span>
-                          )}
-                        </div>
-                        {showIssues && characterIssues && characterIssues.length > 0 && (
-                          <div className="character-card-issues">
-                            {characterIssues.map((issue) => (
-                              <span key={issue} className="character-card-issue">
-                                {issue}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div className="character-card-actions">
-                          <button className="btn btn-primary" onClick={(e) => handleChatNow(e, character.id)}>
-                            Chat Now
-                          </button>
-                          <div className="character-card-actions-row">
-                            {hiddenUnlocked && (
-                              <button
-                                className="btn"
-                                onClick={(e) => void handleToggleHidden(e, character.id, character.isHidden)}
-                              >
-                                {character.isHidden ? 'Unhide' : 'Hide'}
-                              </button>
-                            )}
-                            <button className="btn" onClick={(e) => handleClone(e, character.id)}>
-                              Clone
-                            </button>
-                          </div>
-                          <button className="btn btn-danger" onClick={(e) => handleDelete(e, character.id)}>
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
+              <>
+                {main.length > 0 && (
+                  <div
+                    className="character-grid"
+                    style={{ '--tile-min-width': `${tileMinWidthFor(main.length)}px` } as React.CSSProperties}
+                  >
+                    {main.map(renderCard)}
+                  </div>
+                )}
+                {quick.length > 0 && (
+                  <details className="quick-characters" open={main.length === 0 || search.trim() !== ''}>
+                    <summary>
+                      Quick characters ({quick.length})
+                      <span className="text-muted"> -- made from a chat; promote one to move it up</span>
+                    </summary>
+                    <div
+                      className="character-grid"
+                      style={{ '--tile-min-width': `${tileMinWidthFor(quick.length)}px` } as React.CSSProperties}
+                    >
+                      {quick.map(renderCard)}
+                    </div>
+                  </details>
+                )}
+              </>
             );
           })()}
         </>

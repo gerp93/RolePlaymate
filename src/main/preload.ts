@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create: (input: CreateCharacterInput) => ipcRenderer.invoke('characters:create', input),
     update: (id: string, input: UpdateCharacterInput) => ipcRenderer.invoke('characters:update', id, input),
     setHidden: (id: string, hidden: boolean) => ipcRenderer.invoke('characters:setHidden', id, hidden),
+    promoteQuick: (id: string) => ipcRenderer.invoke('characters:promoteQuick', id),
     clone: (id: string) => ipcRenderer.invoke('characters:clone', id),
     delete: (id: string) => ipcRenderer.invoke('characters:delete', id),
     importFromHtml: () => ipcRenderer.invoke('characters:importFromHtml'),
