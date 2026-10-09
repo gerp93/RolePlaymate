@@ -5,6 +5,10 @@ import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
 import {
+  BenchmarkDetail,
+  BenchmarkProgress,
+  BenchmarkStartRequest,
+  BenchmarkSummary,
   AutomationExportFormat,
   AutomationProgress,
   AutomationRunSummary,
@@ -291,6 +295,19 @@ declare global {
         onMemoriesUpdated: (
           callback: (payload: { conversationId: string; added: ConversationMemory[] }) => void
         ) => () => void;
+      };
+      benchmark: {
+        start: (request: BenchmarkStartRequest) => Promise<BenchmarkSummary>;
+        stop: () => Promise<{ success: true }>;
+        getActive: () => Promise<BenchmarkProgress | null>;
+        list: () => Promise<BenchmarkSummary[]>;
+        get: (id: string) => Promise<BenchmarkDetail>;
+        delete: (id: string) => Promise<{ success: true }>;
+        export: (
+          id: string,
+          format: AutomationExportFormat
+        ) => Promise<{ saved: false } | { saved: true; path: string }>;
+        onProgress: (callback: (payload: BenchmarkProgress) => void) => () => void;
       };
       automation: {
         /** Starts a run in the background; progress arrives through onProgress. */

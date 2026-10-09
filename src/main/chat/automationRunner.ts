@@ -1,5 +1,6 @@
 import { ChatSessionManager } from './chatSession';
 import { ConversationService } from '../database/conversationService';
+import { Conversation, CreateConversationInput } from '../../shared/types/conversation';
 import { ScenarioService } from '../database/scenarioService';
 import { CharacterService } from '../database/characterService';
 import { AutomationRunService } from '../database/automationRunService';
@@ -7,6 +8,12 @@ import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { FIELD_LIMITS } from '../../shared/fieldLimits';
 import { ChatDebugInfo } from '../../shared/types/chat';
 import {
+  BenchmarkProgress,
+  BenchmarkStartRequest,
+  BenchmarkSummary,
+  MAX_BENCHMARK_MODELS,
+  MAX_BENCHMARK_TURNS,
+  MIN_BENCHMARK_TURNS,
   AutomationPhase,
   AutomationProgress,
   AutomationRunStatus,
@@ -22,6 +29,21 @@ import { DEFAULT_MEMORY_OPTIONS } from './memoryRetrieval';
 import { textSimilarity } from './memoryExtraction';
 import { DEFAULT_HISTORY_LIMIT } from './chatSession';
 import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
+
+interface ActiveBenchmark {
+  summary: BenchmarkSummary;
+  stopRequested: boolean;
+  model: string | null;
+}
+
+/** What only a speed test sets; an ordinary run leaves all of it off. */
+interface RunOptions {
+  benchmarkId?: string;
+  /** Send SCRIPTED_LINES instead of having the model write the persona's side. */
+  scripted?: boolean;
+  /** Redo near-repeats. Off for a speed test: a redo would double a reply's time. */
+  repeatGuard?: boolean;
+}
 
 interface ActiveRun {
   summary: AutomationRunSummary;
@@ -47,6 +69,39 @@ function slimDebug(debug: ChatDebugInfo, keepSystemPrompt: boolean): AutomationT
   if (!keepSystemPrompt) delete slim.systemPrompt;
   return slim as AutomationTurnDebug;
 }
+
+/**
+ * The user side of a speed test: generic lines that read sensibly after almost any reply, so the
+ * conversation stays coherent whatever each model says, while every model is sent exactly the same
+ * words in the same order. Speed depends on how many tokens go in and come out, not on the story,
+ * so this is what lets models be compared; a scene written by each model would differ per model.
+ */
+export const SCRIPTED_LINES = [
+  "Go on, I'm listening.",
+  'Tell me more about that.',
+  'Why do you say that?',
+  "That's interesting. What happens next?",
+  "I'm not sure I follow. Can you explain it a little more?",
+  'How did you come to know that?',
+  'And what would you do if you were in my place?',
+  "Is there something you aren't telling me?",
+  'Let us take a moment. What do you notice around us?',
+  'What do you want most right now?',
+  "That sounds risky. Are you sure about this?",
+  'Okay. Walk me through it, one step at a time.',
+  "I trust you. What's the plan?",
+  'Tell me something about your past. I would like to understand you better.',
+  'What are you most afraid of?',
+  'Let us try something different. What else could we do?',
+  'That surprises me. Say more.',
+  'How long have you known?',
+  'What do you think I should do next?',
+  'I need a moment to take that in. Give me your honest view.',
+  'Is it as bad as it sounds?',
+  'Who else knows about this?',
+  'Then we should decide what matters most. What is it for you?',
+  'Alright. Show me what you mean.',
+];
 
 /** How much of the recent transcript a new line is compared against, how alike counts as a
  * repeat (word-set overlap), and how many redrafts / consecutive failures are tolerated. */
@@ -78,6 +133,16 @@ function isRepeat(text: string, recent: string[]): boolean {
  */
 export class AutomationRunner {
   private active: ActiveRun | null = null;
+  /** Settles when the run now in `active` has fully finished -- what a speed test waits on. */
+  private runFinished: Promise<void> = Promise.resolve();
+  private benchmark: ActiveBenchmark | null = null;
+
+  /** Set by main.ts; pushes speed-test progress to every open window. */
+  onBenchmarkProgress: (progress: BenchmarkProgress) => void = () => {};
+  /** Set by main.ts: creates a conversation with its scenario greeting, like the chat's own start. */
+  createConversation: (input: CreateConversationInput) => Conversation = () => {
+    throw new Error('Conversation creation is not wired up');
+  };
 
   /** Set by main.ts; pushes progress to every open window. */
   onProgress: (progress: AutomationProgress) => void = () => {};
@@ -119,8 +184,9 @@ export class AutomationRunner {
    * Validates, records the run and starts it in the background. Returns as soon as the run row
    * exists; progress arrives through `onProgress`.
    */
-  start(request: AutomationStartRequest): AutomationRunSummary {
+  start(request: AutomationStartRequest, options: RunOptions = {}): AutomationRunSummary {
     if (this.active) throw new Error('An automated run is already in progress.');
+    if (this.benchmark && !options.benchmarkId) throw new Error('A speed test is in progress.');
     if (!Number.isInteger(request.turns) || request.turns < MIN_AUTOMATION_TURNS || request.turns > MAX_AUTOMATION_TURNS) {
       throw new Error(`Turns must be a whole number from ${MIN_AUTOMATION_TURNS} to ${MAX_AUTOMATION_TURNS}.`);
     }
@@ -152,12 +218,15 @@ export class AutomationRunner {
       scenarioName: scenario?.name ?? null,
       model: request.model,
       requestedTurns: request.turns,
+      benchmarkId: options.benchmarkId ?? null,
       settings: {
         appVersion: this.appVersion,
         model: request.model,
         samplers: request.samplers ?? null,
         directionsEachTurn: request.directions?.trim() || null,
         personaDirections: request.personaDirections?.trim() || null,
+        scriptedPersonaLines: Boolean(options.scripted),
+        repeatGuard: options.repeatGuard !== false,
         historyLimit: DEFAULT_HISTORY_LIMIT,
         memoryRetrieval: { ...DEFAULT_MEMORY_OPTIONS, embeddingModel: getConfiguredMemoryEmbeddingModel() },
         conciseReplies: getConciseReplies(),
@@ -169,7 +238,7 @@ export class AutomationRunner {
     });
 
     this.active = { summary, conversationId: conversation.id, stopRequested: false, phase: 'idle' };
-    void this.run(request, characterId, persona.name, persona.background ?? null);
+    this.runFinished = this.run(request, characterId, persona.name, persona.background ?? null, options);
     return summary;
   }
 
@@ -180,17 +249,150 @@ export class AutomationRunner {
     this.chat.cancel(this.active.conversationId);
   }
 
+  // --- Speed tests ---------------------------------------------------------------------------
+
+  getActiveBenchmark(): BenchmarkProgress | null {
+    if (!this.benchmark) return null;
+    return {
+      benchmark: this.benchmark.summary,
+      model: this.benchmark.model,
+      completedTurns: this.active?.summary.completedTurns ?? 0,
+      requestedTurns: this.benchmark.summary.turns,
+    };
+  }
+
+  /**
+   * Starts a speed test: the same short automated chat, once per model, one after another. Each
+   * model gets a fresh conversation (so it never inherits another model's context) and is unloaded
+   * from Ollama afterwards, so the next one is timed from a cold start with the GPU to itself. The
+   * test conversations are deleted as each run finishes unless asked to keep them; the run logs
+   * and the results stay either way.
+   */
+  startBenchmark(request: BenchmarkStartRequest): BenchmarkSummary {
+    if (this.active || this.benchmark) throw new Error('An automated run or speed test is already in progress.');
+    if (!Number.isInteger(request.turns) || request.turns < MIN_BENCHMARK_TURNS || request.turns > MAX_BENCHMARK_TURNS) {
+      throw new Error(`Turns must be a whole number from ${MIN_BENCHMARK_TURNS} to ${MAX_BENCHMARK_TURNS}.`);
+    }
+    const models = [...new Set(request.models.map((model) => model.trim()).filter(Boolean))];
+    if (models.length === 0) throw new Error('Pick at least one model to test.');
+    if (models.length > MAX_BENCHMARK_MODELS) throw new Error(`Pick at most ${MAX_BENCHMARK_MODELS} models.`);
+
+    const character = this.characters.getCharacterById(request.characterId);
+    if (!character) throw new Error('Pick a character first.');
+    const persona = this.conversations.getPersona(request.personaId);
+    if (!persona) throw new Error('Pick a persona first.');
+    const scenario = request.scenarioId ? this.scenarios.getScenario(request.scenarioId) : null;
+
+    const summary = this.runs.createBenchmark({
+      characterId: character.id,
+      characterName: character.name,
+      personaId: persona.id,
+      personaName: persona.name,
+      scenarioId: scenario?.id ?? null,
+      scenarioName: scenario?.name ?? null,
+      turns: request.turns,
+      scripted: request.scripted,
+      keepConversations: request.keepConversations,
+      models,
+    });
+    this.benchmark = { summary, stopRequested: false, model: null };
+    void this.runBenchmark(request, models, character.id, persona.id, scenario?.id ?? null);
+    return summary;
+  }
+
+  /** Ends the test after the reply in flight; models not yet reached are not run. */
+  stopBenchmark(): void {
+    if (!this.benchmark) return;
+    this.benchmark.stopRequested = true;
+    this.stop();
+  }
+
+  private emitBenchmark(): void {
+    const progress = this.getActiveBenchmark();
+    if (progress) this.onBenchmarkProgress(progress);
+  }
+
+  private async runBenchmark(
+    request: BenchmarkStartRequest,
+    models: string[],
+    characterId: string,
+    personaId: string,
+    scenarioId: string | null
+  ): Promise<void> {
+    const benchmark = this.benchmark!;
+    let status: BenchmarkSummary['status'] = 'completed';
+    let error: string | null = null;
+
+    try {
+      for (const model of models) {
+        if (benchmark.stopRequested) {
+          status = 'stopped';
+          break;
+        }
+        benchmark.model = model;
+        let conversationId: string | null = null;
+        try {
+          const conversation = this.createConversation({
+            characterId,
+            userPersonaId: personaId,
+            scenarioId: scenarioId ?? undefined,
+            model,
+            title: `Speed test: ${model}`,
+          });
+          conversationId = conversation.id;
+          this.start(
+            {
+              conversationId,
+              characterId,
+              personaId,
+              model,
+              turns: request.turns,
+              samplers: request.samplers,
+            },
+            { benchmarkId: benchmark.summary.id, scripted: request.scripted, repeatGuard: false }
+          );
+          this.emitBenchmark();
+          await this.runFinished;
+        } finally {
+          // The run row is final by now. Drop the test conversation unless asked to keep it.
+          if (conversationId && !request.keepConversations) {
+            try {
+              this.chat.dropSession(conversationId);
+              this.conversations.deleteConversation(conversationId);
+            } catch (cleanupError) {
+              console.error('Could not delete a speed-test conversation:', cleanupError);
+            }
+          }
+          // Free the GPU so the next model is timed from a cold start.
+          await this.chat.unloadModel(model);
+          benchmark.summary = this.runs.getBenchmarkSummary(benchmark.summary.id) ?? benchmark.summary;
+        }
+      }
+    } catch (caught) {
+      status = benchmark.stopRequested ? 'stopped' : 'failed';
+      error = benchmark.stopRequested ? null : (caught as Error).message;
+    }
+
+    benchmark.model = null;
+    const finished = this.runs.finishBenchmark(benchmark.summary.id, status, error);
+    benchmark.summary = finished;
+    this.onBenchmarkProgress({ benchmark: finished, model: null, completedTurns: 0, requestedTurns: finished.turns });
+    this.benchmark = null;
+  }
+
   private emit(phase: AutomationPhase, transcriptChanged: boolean): void {
     if (!this.active) return;
     this.active.phase = phase;
     this.onProgress({ run: this.active.summary, phase, transcriptChanged });
+    this.emitBenchmark();
   }
 
   private async run(
     request: AutomationStartRequest,
     characterId: string,
     personaName: string,
-    personaBackground: string | null
+    personaBackground: string | null,
+    options: RunOptions
   ): Promise<void> {
     const active = this.active!;
     const conversationId = active.conversationId;
@@ -214,9 +416,14 @@ export class AutomationRunner {
         // The persona's line. A draft that is nearly a copy of something recent is redrafted, with
         // a note saying so; if it still is, it is sent anyway and counted as a strike below.
         let rawSuggestion: string | null = null;
+        let scriptedLine: string | null = null;
         const retries = { persona: 0, character: 0 };
         let repeated = false;
-        if (!waiting) {
+        const guard = options.repeatGuard !== false;
+        if (!waiting && options.scripted) {
+          // Speed test: the same words for every model, in the same order. No model call for it.
+          scriptedLine = SCRIPTED_LINES[(index - 1) % SCRIPTED_LINES.length];
+        } else if (!waiting) {
           const recentLines = this.conversations
             .getMessages(conversationId)
             .slice(-REPEAT_WINDOW)
@@ -236,6 +443,7 @@ export class AutomationRunner {
           };
           rawSuggestion = await draft(false);
           while (
+            guard &&
             !active.stopRequested &&
             isRepeat(cleanSuggestion(rawSuggestion, personaName), recentLines) &&
             retries.persona < MAX_REPEAT_RETRIES
@@ -250,7 +458,7 @@ export class AutomationRunner {
           if (!cleanSuggestion(rawSuggestion, personaName)) {
             throw new Error(`The model returned an empty line for ${personaName} on turn ${index}.`);
           }
-          repeated = isRepeat(cleanSuggestion(rawSuggestion, personaName), recentLines);
+          repeated = guard && isRepeat(cleanSuggestion(rawSuggestion, personaName), recentLines);
         }
 
         this.emit('character', false);
@@ -261,7 +469,7 @@ export class AutomationRunner {
             personaId: request.personaId,
             personaName,
             personaBackground,
-            userMessage: waiting ? waiting.content : cleanSuggestion(rawSuggestion!, personaName),
+            userMessage: waiting ? waiting.content : (scriptedLine ?? cleanSuggestion(rawSuggestion!, personaName)),
             replyToMessageId: waiting?.id,
             model: request.model,
             directions: request.directions?.trim() || undefined,
@@ -279,6 +487,7 @@ export class AutomationRunner {
           .slice(-REPEAT_WINDOW)
           .map((message) => message.content);
         while (
+          guard &&
           !active.stopRequested &&
           isRepeat(result.message.content, earlierReplies) &&
           retries.character < MAX_REPEAT_RETRIES
@@ -298,7 +507,7 @@ export class AutomationRunner {
             userMessage: result.userMessage,
           };
         }
-        repeated = repeated || isRepeat(result.message.content, earlierReplies);
+        repeated = repeated || (guard && isRepeat(result.message.content, earlierReplies));
 
         const user = result.userMessage ?? waiting!;
         const turn: AutomationTurnLog = {

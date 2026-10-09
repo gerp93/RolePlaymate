@@ -117,3 +117,81 @@ export interface AutomationRunLog {
 }
 
 export type AutomationExportFormat = 'json' | 'md';
+
+// --- Speed tests (benchmarks) --------------------------------------------------------------------
+
+export const MIN_BENCHMARK_TURNS = 3;
+export const MAX_BENCHMARK_TURNS = 50;
+export const MAX_BENCHMARK_MODELS = 30;
+
+export interface BenchmarkStartRequest {
+  characterId: string;
+  personaId: string;
+  /** One of the character's scenarios, or none. */
+  scenarioId?: string | null;
+  /** Every model gets its own fresh conversation and run, one after another. */
+  models: string[];
+  turns: number;
+  /** Send the same generic lines to every model instead of letting each write its own persona side. */
+  scripted: boolean;
+  /** Keep each model's test conversation. Off deletes it once its run finishes; the results stay. */
+  keepConversations: boolean;
+  samplers?: Partial<SamplerParams>;
+}
+
+export type BenchmarkStatus = 'running' | 'completed' | 'stopped' | 'failed' | 'interrupted';
+
+export interface BenchmarkSummary {
+  id: string;
+  characterName: string;
+  personaName: string;
+  scenarioName: string | null;
+  turns: number;
+  scripted: boolean;
+  keepConversations: boolean;
+  models: string[];
+  /** How many of `models` have finished (successfully or not). */
+  finishedModels: number;
+  status: BenchmarkStatus;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** One model's figures. Medians, because one slow reply (a background app, a thermal blip) should not
+ * decide a comparison. Timings exclude the first reply, which carries the cost of loading the model. */
+export interface BenchmarkModelResult {
+  model: string;
+  runId: string;
+  status: AutomationRunStatus;
+  error: string | null;
+  /** Replies the figures are based on (the first is left out as a warm-up when there are enough). */
+  repliesMeasured: number;
+  medianReplyMs: number | null;
+  p90ReplyMs: number | null;
+  /** Reply-writing speed, from Ollama's own counters where reported. */
+  medianTokensPerSec: number | null;
+  /** Prompt-reading speed. */
+  medianPromptTokensPerSec: number | null;
+  /** Request sent to first words back. */
+  medianFirstTokenMs: number | null;
+  avgReplyTokens: number | null;
+  /** Time Ollama spent loading the model for the first reply; null if it was already loaded or unreported. */
+  coldLoadMs: number | null;
+  /** True when the speed figures fell back to wall time (Ollama reported no counters). */
+  approximate: boolean;
+}
+
+export interface BenchmarkDetail {
+  summary: BenchmarkSummary;
+  results: BenchmarkModelResult[];
+}
+
+/** Pushed on `benchmark:progress` after every step. */
+export interface BenchmarkProgress {
+  benchmark: BenchmarkSummary;
+  /** The model being run now, and how far through its turns. Null between models and at the end. */
+  model: string | null;
+  completedTurns: number;
+  requestedTurns: number;
+}

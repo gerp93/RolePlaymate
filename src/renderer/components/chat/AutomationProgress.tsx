@@ -3,6 +3,8 @@ interface Props {
   requestedTurns: number;
   /** A second line under the bar, such as which step the run is on. */
   detail?: string;
+  /** Replaces "Turn N of M" -- for progress that is not counted in turns of one run. */
+  label?: string;
 }
 
 /** Percent of turns finished, 0-100. */
@@ -16,16 +18,14 @@ export function automationPercent(completedTurns: number, requestedTurns: number
  * person asks), and a bar with the percent finished. Used on the Automate tab and on the panel
  * that covers the locked composer.
  */
-export default function AutomationProgress({ completedTurns, requestedTurns, detail }: Props) {
+export default function AutomationProgress({ completedTurns, requestedTurns, detail, label }: Props) {
   const percent = automationPercent(completedTurns, requestedTurns);
   const turn = Math.min(completedTurns + 1, requestedTurns);
 
   return (
     <div className="automation-progress-block" role="status">
       <div className="automation-progress-head">
-        <strong>
-          Turn {turn} of {requestedTurns}
-        </strong>
+        <strong>{label ?? `Turn ${turn} of ${requestedTurns}`}</strong>
         <span>{percent}%</span>
       </div>
       <div
