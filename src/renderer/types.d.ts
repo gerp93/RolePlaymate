@@ -4,6 +4,12 @@ import { GroupWithMembers, CreateGroupInput, UpdateGroupInput } from '../shared/
 import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
+import {
+  AutomationExportFormat,
+  AutomationProgress,
+  AutomationRunSummary,
+  AutomationStartRequest,
+} from '../shared/types/automation';
 import { EmbeddingModelStatus } from '../shared/embeddingModel';
 import { PersonaImage } from '../shared/types/personaImage';
 import { ImageGenAspect, ImageGenResult, ImageGenSaveTarget, ImageGenStatus } from '../shared/types/imageGen';
@@ -278,6 +284,20 @@ declare global {
         onMemoriesUpdated: (
           callback: (payload: { conversationId: string; added: ConversationMemory[] }) => void
         ) => () => void;
+      };
+      automation: {
+        /** Starts a run in the background; progress arrives through onProgress. */
+        start: (request: AutomationStartRequest) => Promise<AutomationRunSummary>;
+        stop: () => Promise<{ success: true }>;
+        getActive: () => Promise<AutomationRunSummary | null>;
+        list: () => Promise<AutomationRunSummary[]>;
+        delete: (runId: string) => Promise<{ success: true }>;
+        /** Opens a save dialog; `saved` is false when it was cancelled. */
+        export: (
+          runId: string,
+          format: AutomationExportFormat
+        ) => Promise<{ saved: false } | { saved: true; path: string }>;
+        onProgress: (callback: (payload: AutomationProgress) => void) => () => void;
       };
       memories: {
         getAll: (conversationId: string) => Promise<ConversationMemory[]>;

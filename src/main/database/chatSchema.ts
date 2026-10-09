@@ -167,4 +167,42 @@ export const CHAT_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_generation_stats_model ON generation_stats(model);
+
+  -- Automated runs (the chat sidebar's Automate tab): one row per run, one per turn. Kept in the
+  -- database rather than as loose files so they are covered by app encryption and travel with
+  -- the data folder. conversation_id is deliberately NOT a foreign key: the log should outlive
+  -- the conversation it was run in (retention or a manual delete). Character/persona/scenario
+  -- ids are likewise plain text, used only to hide runs of hidden items while the PIN is locked.
+  CREATE TABLE IF NOT EXISTS automation_runs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT,
+    conversation_title TEXT NOT NULL,
+    character_id TEXT,
+    character_name TEXT NOT NULL,
+    persona_id TEXT,
+    persona_name TEXT NOT NULL,
+    scenario_id TEXT,
+    scenario_name TEXT,
+    model TEXT NOT NULL,
+    requested_turns INTEGER NOT NULL,
+    completed_turns INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    error TEXT,
+    settings TEXT NOT NULL,
+    memory_events TEXT NOT NULL DEFAULT '[]',
+    transcript TEXT,
+    final_memories TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS automation_run_turns (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES automation_runs(id) ON DELETE CASCADE,
+    turn_index INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_automation_run_turns_run ON automation_run_turns(run_id, turn_index);
 `;

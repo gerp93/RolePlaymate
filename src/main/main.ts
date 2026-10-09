@@ -102,6 +102,10 @@ import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudi
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { isHardpointReachable, openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
+import { AutomationRunner } from './chat/automationRunner';
+import { renderRunMarkdown } from './chat/automationExport';
+import { AutomationRunService } from './database/automationRunService';
+import type { AutomationExportFormat, AutomationProgress, AutomationStartRequest } from '../shared/types/automation';
 import { isGuestLine } from './chat/groupHistory';
 import { KvgeniusClient } from './chat/kvgeniusClient';
 import { ImageGenService } from './imageGen';
@@ -427,6 +431,8 @@ let promptFieldVersionService: PromptFieldVersionService;
 let ollamaClient: OllamaClient;
 let chatterboxClient: ChatterboxClient;
 let chatSessions: ChatSessionManager;
+let automationRunService: AutomationRunService;
+let automationRunner: AutomationRunner;
 let imageGen: ImageGenService;
 let lorebookService: LorebookService;
 let securityService: SecurityService;
@@ -948,6 +954,16 @@ app.whenReady().then(async () => {
     scenarioService,
     groupService,
     characterService
+  );
+  automationRunService = new AutomationRunService(db);
+  automationRunService.markStaleRunsInterrupted();
+  automationRunner = new AutomationRunner(
+    chatSessions,
+    conversationService,
+    scenarioService,
+    characterService,
+    automationRunService,
+    app.getVersion()
   );
 
   registerIPCHandlers();
@@ -2139,6 +2155,7 @@ function registerIPCHandlers() {
 
   registerLorebookHandlers();
   registerChatHandlers();
+  registerAutomationHandlers();
 
   // App / update handlers
   ipcMain.handle('app:getVersion', () => app.getVersion());
@@ -2601,8 +2618,83 @@ function assertScenarioOwnedBy(
   if (!matches) throw new Error("That scenario doesn't belong to this conversation's character or group");
 }
 
+/** An automated run owns its conversation until it ends; the chat can't also write to it. */
+function assertNotAutomating(conversationId: string): void {
+  if (automationRunner.isAutomating(conversationId)) {
+    throw new Error('An automated run is using this conversation. Stop it first.');
+  }
+}
+
+function registerAutomationHandlers() {
+  const broadcast = (progress: AutomationProgress) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('automation:progress', progress);
+    }
+  };
+  automationRunner.onProgress = broadcast;
+
+  ipcMain.handle('automation:start', (_, request: AutomationStartRequest) => {
+    guardDirections(request.directions);
+    const conversation = conversationService.getConversation(request.conversationId);
+    assertHiddenContentAccessible(
+      conversation?.characterId ?? null,
+      request.personaId,
+      conversation?.scenarioId,
+      conversation?.groupId,
+      request.conversationId
+    );
+    const run = automationRunner.start(request);
+    broadcast({ run, phase: 'idle', transcriptChanged: false });
+    return run;
+  });
+
+  ipcMain.handle('automation:stop', () => {
+    automationRunner.stop();
+    return { success: true };
+  });
+
+  ipcMain.handle('automation:getActive', () => automationRunner.getActive());
+
+  ipcMain.handle('automation:list', () => automationRunService.listRuns(securityService.isUnlocked()));
+
+  ipcMain.handle('automation:delete', (_, runId: string) => {
+    if (automationRunner.getActive()?.id === runId) throw new Error('Stop the run before deleting its log.');
+    if (!automationRunService.isVisible(runId, securityService.isUnlocked())) throw new Error('Run not found.');
+    automationRunService.deleteRun(runId);
+    return { success: true };
+  });
+
+  // Saves the log wherever the user picks. The database copy is encrypted with the rest of the app
+  // when app encryption is on; what this writes is a plain file, because that is the point of it.
+  ipcMain.handle('automation:export', async (event, runId: string, format: AutomationExportFormat) => {
+    if (!automationRunService.isVisible(runId, securityService.isUnlocked())) throw new Error('Run not found.');
+    const log = automationRunService.getLog(runId);
+    if (!log) throw new Error('Run not found.');
+    const stamp = log.run.startedAt.slice(0, 19).replace(/[:T]/g, '-');
+    const safeName = `${log.run.characterName}-${stamp}`.replace(/[^\w.-]+/g, '_');
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: 'Export automated run',
+      defaultPath: `automated-run-${safeName}.${format}`,
+      filters:
+        format === 'json'
+          ? [{ name: 'JSON', extensions: ['json'] }]
+          : [{ name: 'Markdown', extensions: ['md'] }],
+    };
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { saved: false as const };
+    await fs.promises.writeFile(
+      result.filePath,
+      format === 'json' ? JSON.stringify(log, null, 2) : renderRunMarkdown(log),
+      'utf-8'
+    );
+    return { saved: true as const, path: result.filePath };
+  });
+}
+
 function registerChatHandlers() {
   ipcMain.handle('chat:send', (event, request: ChatSendRequest & { characterId: string; personaId?: string; model: string }) => {
+    assertNotAutomating(request.conversationId);
     guardChatMessage(request.message);
     guardDirections(request.directions);
     const streamId = randomUUID();
@@ -2652,6 +2744,7 @@ function registerChatHandlers() {
   // Redo: same streaming shape as chat:send, but the terminal event is 'variantDone' so the
   // renderer replaces the pending message in place instead of appending a new one.
   ipcMain.handle('chat:regenerate', (event, request: ChatRegenerateRequest) => {
+    assertNotAutomating(request.conversationId);
     const streamId = randomUUID();
     const sender = event.sender;
 
@@ -2697,6 +2790,7 @@ function registerChatHandlers() {
       event,
       request: ChatEditPriorMessageRequest & { characterId: string; personaId?: string; model: string }
     ) => {
+      assertNotAutomating(request.conversationId);
       guardChatMessage(request.message);
       guardDirections(request.directions);
       const streamId = randomUUID();
@@ -2747,6 +2841,7 @@ function registerChatHandlers() {
   ipcMain.handle(
     'chat:continue',
     (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; recordDirections?: boolean; samplers?: Partial<SamplerParams> }) => {
+      assertNotAutomating(request.conversationId);
       guardDirections(request.directions);
       const streamId = randomUUID();
       const sender = event.sender;
@@ -2795,6 +2890,7 @@ function registerChatHandlers() {
   ipcMain.handle(
     'chat:replyToLast',
     (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
+      assertNotAutomating(request.conversationId);
       guardDirections(request.directions);
       const streamId = randomUUID();
       const sender = event.sender;
@@ -2847,6 +2943,7 @@ function registerChatHandlers() {
   ipcMain.handle(
     'chat:editUnansweredUser',
     (_, conversationId: string, messageId: string, content: string, directions?: string) => {
+      assertNotAutomating(conversationId);
       guardChatMessage(content);
       guardDirections(directions);
       return chatSessions.editUnansweredUserMessage(conversationId, messageId, content, directions);
@@ -2947,8 +3044,10 @@ function registerChatHandlers() {
 
   ipcMain.handle(
     'chat:selectVariant',
-    (_, conversationId: string, messageId: string, variantId: string) =>
-      chatSessions.chooseVariant(conversationId, messageId, variantId)
+    (_, conversationId: string, messageId: string, variantId: string) => {
+      assertNotAutomating(conversationId);
+      return chatSessions.chooseVariant(conversationId, messageId, variantId);
+    }
   );
 
   // Bookmarking a redo candidate is a pure flag flip with no effect on generation state, so it
@@ -2961,6 +3060,7 @@ function registerChatHandlers() {
   // Hand-edits the last (pending) assistant message -- see ChatSessionManager.editMessage for
   // why this creates a new variant rather than mutating the shown one in place.
   ipcMain.handle('chat:editMessage', (_, conversationId: string, messageId: string, content: string) => {
+  assertNotAutomating(conversationId);
     guardChatMessage(content);
     return chatSessions.editMessage(conversationId, messageId, content);
   });
@@ -2968,6 +3068,7 @@ function registerChatHandlers() {
   // Extraction outlives the request that triggered it, so its result is pushed rather than
   // returned. Broadcast to every window: two windows can have the same conversation open.
   chatSessions.onMemoriesExtracted = (conversationId, added) => {
+    automationRunner.noteMemoriesAdded(conversationId, added);
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send('chat:memories-updated', { conversationId, added });
@@ -3010,6 +3111,7 @@ function registerChatHandlers() {
   });
 
   ipcMain.handle('chat:deleteMessage', (_, conversationId: string, messageId: string) => {
+  assertNotAutomating(conversationId);
     chatSessions.deleteMessage(conversationId, messageId);
     return { success: true };
   });

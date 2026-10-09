@@ -3,7 +3,7 @@ import { ChatDebugHistoryEntry, ChatDebugInfo } from '../../../shared/types/chat
 import PromptDebugHistory from './PromptDebugHistory';
 import MemoriesPanel from './MemoriesPanel';
 
-export type RightSidebarTab = 'settings' | 'memories' | 'debug';
+export type RightSidebarTab = 'settings' | 'memories' | 'debug' | 'automate';
 
 interface Props {
   tab: RightSidebarTab;
@@ -19,9 +19,12 @@ interface Props {
   isGenerating: boolean;
   onMemoriesChanged: () => void;
   settingsPanel: ReactNode;
+  automationPanel: ReactNode;
+  /** A run is in progress -- the tab shows it so a run is not forgotten behind another tab. */
+  automationRunning: boolean;
 }
 
-/** Right-hand sidebar: Chat Settings, Memories, and Prompt Debug share one column. */
+/** Right-hand sidebar: Chat Settings, Memories, Prompt Debug, and Automate share one column. */
 export default function ChatRightSidebar({
   tab,
   onTabChange,
@@ -36,6 +39,8 @@ export default function ChatRightSidebar({
   isGenerating,
   onMemoriesChanged,
   settingsPanel,
+  automationPanel,
+  automationRunning,
 }: Props) {
   return (
     <aside className="chat-right-sidebar" aria-label="Conversation tools">
@@ -74,6 +79,18 @@ export default function ChatRightSidebar({
             onClick={() => onTabChange('debug')}
           >
             🐛 Debug
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="chat-right-tab-automate"
+            aria-selected={tab === 'automate'}
+            aria-controls="chat-right-panel-automate"
+            className={`chat-right-sidebar-tab${tab === 'automate' ? ' active' : ''}`}
+            onClick={() => onTabChange('automate')}
+          >
+            🤖 Automate
+            {automationRunning && <span className="chat-memory-badge" aria-label="Run in progress">●</span>}
           </button>
         </div>
         <button
@@ -123,6 +140,16 @@ export default function ChatRightSidebar({
               liveCreatedAt={liveCreatedAt}
               isGenerating={isGenerating}
             />
+          </div>
+        )}
+        {tab === 'automate' && (
+          <div
+            role="tabpanel"
+            id="chat-right-panel-automate"
+            aria-labelledby="chat-right-tab-automate"
+            className="chat-right-sidebar-panel"
+          >
+            {automationPanel}
           </div>
         )}
       </div>
