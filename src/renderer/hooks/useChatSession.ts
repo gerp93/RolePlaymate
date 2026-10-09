@@ -72,6 +72,9 @@ export interface UseChatSession {
   cancel: () => Promise<void>;
   dismissError: () => void;
   reload: () => Promise<void>;
+  /** Re-reads everything from the database -- transcript, prompt history, memory count. For when
+   * something other than this hook wrote to the conversation (an automated run). */
+  syncFromStore: () => Promise<void>;
 }
 
 export interface SendInput {
@@ -550,6 +553,12 @@ export function useChatSession(
 
   const dismissError = useCallback(() => setError(null), []);
 
+  const syncFromStore = useCallback(async () => {
+    await reload();
+    void refreshDebugHistory();
+    void refreshMemoryCount();
+  }, [reload, refreshDebugHistory, refreshMemoryCount]);
+
   const patchTtsAudio = useCallback((messageId: string, path: string | null, variantId?: string | null) => {
     setMessages((current) =>
       current.map((m) => {
@@ -591,5 +600,6 @@ export function useChatSession(
     cancel,
     dismissError,
     reload,
+    syncFromStore,
   };
 }

@@ -20,6 +20,8 @@ import MessagePromptDialog from '../components/chat/MessagePromptDialog';
 import ImageGenDialog from '../components/chat/ImageGenDialog';
 import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightSidebar';
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
+import AutomationPanel from '../components/chat/AutomationPanel';
+import { useAutomation } from '../hooks/useAutomation';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
 import GroupRosterBar from '../components/chat/GroupRosterBar';
@@ -324,6 +326,9 @@ export default function Chat() {
   useEffect(() => {
     tts.setOnAudioSaved((messageId, path, variantId) => session.patchTtsAudio(messageId, path, variantId));
   }, [session.patchTtsAudio, tts.setOnAudioSaved]);
+
+  // Automated runs live in the main process; this only mirrors them and reloads what a run wrote.
+  const automation = useAutomation(conversationId ?? null, () => void session.syncFromStore());
 
   const latestAssistantMessage = useMemo(() => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -1081,7 +1086,8 @@ export default function Chat() {
   // In a group the speaker must be on the roster: right after opening one, `characterId` can still
   // hold the previous conversation's character until the speaker effect has run.
   const speakerOnRoster = !groupId || rosterCharacters.some((c) => c.id === characterId);
-  const canChat = Boolean(conversationId && characterId && model && speakerOnRoster);
+  // A run owns the conversation until it ends -- the main process refuses writes to it as well.
+  const canChat = Boolean(conversationId && characterId && model && speakerOnRoster) && !automation.automatingHere;
 
   const handleShowPortraitsChange = useCallback((value: boolean) => {
     setShowPortraits(value);
@@ -1426,7 +1432,7 @@ export default function Chat() {
               <MessageList
                   messages={session.messages}
                   streamingText={session.streamingText}
-                  isGenerating={session.isGenerating}
+                  isGenerating={session.isGenerating || automation.automatingHere}
                   isRegenerating={session.isRegenerating}
                   variants={session.variants}
                   onRegenerate={handleRegenerate}
@@ -1683,6 +1689,21 @@ export default function Chat() {
           liveCreatedAt={latestAssistantMessage?.createdAt ?? null}
           isGenerating={session.isGenerating}
           onMemoriesChanged={() => void session.refreshMemoryCount()}
+          automationRunning={automation.active !== null}
+          automationPanel={
+            <AutomationPanel
+              automation={automation}
+              conversationId={conversationId}
+              characterId={characterId}
+              characterName={character?.name ?? ''}
+              personaId={personaId}
+              personaName={personas.find((p) => p.id === personaId)?.name ?? ''}
+              model={model}
+              samplers={samplers}
+              isGroup={Boolean(groupId)}
+              chatBusy={session.isGenerating}
+            />
+          }
           settingsPanel={
             <ChatSettingsPanel
               fontSize={fontSize}

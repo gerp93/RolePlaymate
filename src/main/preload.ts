@@ -216,6 +216,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Automated runs (chat sidebar -> Automate). Progress is pushed, so onProgress returns an
+  // unsubscribe closure like the chat stream does.
+  automation: {
+    start: (request: unknown) => ipcRenderer.invoke('automation:start', request),
+    stop: () => ipcRenderer.invoke('automation:stop'),
+    getActive: () => ipcRenderer.invoke('automation:getActive'),
+    list: () => ipcRenderer.invoke('automation:list'),
+    delete: (runId: string) => ipcRenderer.invoke('automation:delete', runId),
+    export: (runId: string, format: string) => ipcRenderer.invoke('automation:export', runId, format),
+    onProgress: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('automation:progress', handler);
+      return () => ipcRenderer.removeListener('automation:progress', handler);
+    },
+  },
+
   memories: {
     getAll: (conversationId: string) => ipcRenderer.invoke('memories:getAll', conversationId),
     count: (conversationId: string) => ipcRenderer.invoke('memories:count', conversationId),

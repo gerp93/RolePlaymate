@@ -376,6 +376,44 @@ filtered by Jaccard similarity against stored memories, against each other (the 
 checked the former, so one extraction could insert two phrasings of the same event), by
 overlap with the system prompt, and by a generic-phrase blocklist.
 
+Memories compete with the live transcript for a small model's attention, so three things keep a
+stale one from dragging a scene back: retrieval embeds the last few lines plus the outgoing message
+(`buildMemoryQuery`), not the message alone (a bare "*nods*" matches whatever is vaguely similar,
+from any earlier scene); `topK` is 6; and whenever memories are in the prompt the code-built
+style reminder at the very end says the recent conversation is the present and memories are past
+events (`hasMemories` in `buildStyleReminder`). That last rule is code, not a prompt template, for the
+same reason the other reply guidance is: templates are versioned in the database and an existing
+install never picks up a changed default. The extractor is told to skip momentary state (positions,
+what someone is doing or waiting for, sounds, scenery), which is true for one beat and wrong after.
+
+## Automated runs
+
+The chat sidebar's **Automate** tab plays both sides of the open one-character conversation for N
+turns (1-100) and keeps a diagnostic log. A turn is the persona's line, drafted by
+`ChatSessionManager.suggestReply` (the composer's "Suggest reply"), then sent through
+`ChatSessionManager.generate` (what `chat:send` calls). `chat/automationRunner.ts` adds nothing to
+those paths -- it only calls them from the main process, so the conversation is an ordinary one:
+memories extract and retrieve, lore fires, redo/edit/delete work on it afterwards, and a Stop leaves
+at worst a persona line with no reply (the chat's existing "Reply as ..." covers that; the next run
+also answers it first). One run at a time app-wide. Groups are not supported (their round-robin
+speaker lives in the renderer).
+
+While a run owns a conversation the renderer locks it (`canChat`) and the main process refuses
+writes to it (`assertNotAutomating` in the chat handlers), so a typed message cannot interleave.
+The run lives in the main process and survives leaving the chat page; `useAutomation` re-attaches on
+mount via `automation:getActive` and `automation:progress`, and `useChatSession.syncFromStore`
+reloads whatever a run wrote.
+
+Logs are rows in `automation_runs` / `automation_run_turns`, not files, so they are covered by app
+encryption and move with the data folder. Each finished turn is appended immediately (a crash keeps
+everything before it; `markStaleRunsInterrupted` labels the leftover on next launch). `conversation_id`
+is deliberately not a foreign key: the log outlives the conversation. Per turn it records the persona
+line, the reply, and the debug payload (the exact prompt, retrieval scores for injected *and*
+rejected memories, lore, tokens), with the bulky duplicates dropped. A run also records when each
+memory was extracted and the memory list at the end. Runs of a hidden character, persona or scenario
+are hidden from the list while the PIN is locked. **Export** (JSON or Markdown) writes a plain file
+via a save dialog -- the one deliberate decrypted copy.
+
 ## Lorebooks
 
 Reference material injected only when the conversation is about it, so a

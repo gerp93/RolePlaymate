@@ -3519,3 +3519,98 @@
 .imagegen-error {
   color: var(--color-danger, #e5484d);
 }
+
+/* --- Automate tab ------------------------------------------------------------------------ */
+
+.automation-help {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.automation-blocker {
+  color: var(--color-text);
+}
+
+.automation-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.automation-progress span {
+  color: var(--color-text-muted);
+}
+
+.automation-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.automation-run {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.automation-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.automation-run-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-run-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.automation-run-error {
+  font-size: 12px;
+  color: var(--color-danger, #c0392b);
+}
+
+.automation-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.automation-status-completed {
+  color: var(--color-text);
+}
+
+.automation-status-failed,
+.automation-status-interrupted {
+  color: var(--color-danger, #c0392b);
+}
