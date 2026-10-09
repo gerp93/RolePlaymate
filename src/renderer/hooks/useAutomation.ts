@@ -55,6 +55,13 @@ export function useAutomation(conversationId: string | null, onTranscriptChanged
       const stillRunning = progress.run.status === 'running';
       setActive(stillRunning ? progress.run : null);
       setPhase(progress.phase);
+      // Keep the list's row for this run in step with the live counter instead of waiting for the
+      // next fetch (which only happens on mount and when a run ends).
+      setRuns((current) =>
+        current.some((run) => run.id === progress.run.id)
+          ? current.map((run) => (run.id === progress.run.id ? progress.run : run))
+          : [progress.run, ...current]
+      );
       if (!stillRunning) void refreshRuns();
       if (progress.transcriptChanged && progress.run.conversationId === conversationIdRef.current) {
         onChangedRef.current();
