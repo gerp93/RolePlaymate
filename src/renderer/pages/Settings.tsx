@@ -13,6 +13,7 @@ import { CharacterTtsVoice, ChatterboxCloneVoice, ChatterboxPredefinedVoice } fr
 import { normalizeCloneVoices, stemFromVoiceName } from '../../shared/utils/ttsPreview';
 import { useVoicePreview, VoicePreviewState } from '../hooks/useVoicePreview';
 import EncryptionPanel from '../components/EncryptionPanel';
+import AutomatedRunsPanel from '../components/AutomatedRunsPanel';
 
 /** Formats a byte count in whichever of KB/MB/GB fits its magnitude, e.g. `842 KB`, `4.1 MB`,
  * `1.3 GB` -- see KVG_Standards' db-location-versioning.md. */
@@ -79,17 +80,18 @@ function SettingsVoiceTable({
   );
 }
 
-type SettingsTab = 'general' | 'servers' | 'data' | 'security';
+type SettingsTab = 'general' | 'servers' | 'data' | 'security' | 'automation';
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'servers', label: 'Chat Dependencies' },
   { id: 'data', label: 'Data' },
   { id: 'security', label: 'Security' },
+  { id: 'automation', label: 'Automated Runs' },
 ];
 
 function parseSettingsTab(raw: string | null): SettingsTab {
-  if (raw === 'servers' || raw === 'data' || raw === 'security') return raw;
+  if (raw === 'servers' || raw === 'data' || raw === 'security' || raw === 'automation') return raw;
   return 'general';
 }
 
@@ -705,6 +707,16 @@ export default function Settings() {
         </p>
         <RetentionRulesPanel onUnsavedDraftChange={setRetentionDraftUnsaved} />
       </div>
+          </div>
+        )}
+
+        {tab === 'automation' && (
+          <div
+            role="tabpanel"
+            id="settings-panel-automation"
+            aria-labelledby="settings-tab-automation"
+          >
+            <AutomatedRunsPanel />
           </div>
         )}
 
