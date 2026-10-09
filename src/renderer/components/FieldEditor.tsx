@@ -154,7 +154,7 @@ export default function FieldEditor({ field, placeholder }: Props) {
       </div>
 
       {mode === 'edit' ? (
-        <LimitedTextarea
+        <LimitedTextarea copyable
           ref={textareaRef}
           className="content-textarea"
           autoGrow

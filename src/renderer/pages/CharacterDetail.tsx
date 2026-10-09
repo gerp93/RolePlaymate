@@ -157,7 +157,7 @@ export default function CharacterDetail() {
     <div className="character-detail-page">
       <div className="character-detail-fields">
         <div className="page-header">
-          <LimitedInput
+          <LimitedInput copyable
             value={nameDraft}
             limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -170,7 +170,7 @@ export default function CharacterDetail() {
               padding: '4px 0',
             }}
           />
-          <LimitedInput
+          <LimitedInput copyable
             value={descriptionDraft}
             limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}

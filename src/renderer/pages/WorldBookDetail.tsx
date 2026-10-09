@@ -149,7 +149,7 @@ export default function WorldBookDetail() {
         </Link>
 
         <div className="page-header">
-          <LimitedInput
+          <LimitedInput copyable
             value={nameDraft}
             limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -162,7 +162,7 @@ export default function WorldBookDetail() {
               padding: '4px 0',
             }}
           />
-          <LimitedInput
+          <LimitedInput copyable
             value={descriptionDraft}
             limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}

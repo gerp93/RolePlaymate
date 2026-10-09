@@ -78,7 +78,7 @@ export default function GroupDetail() {
     <div className="character-detail-page">
       <div className="character-detail-fields">
         <div className="page-header">
-          <LimitedInput
+          <LimitedInput copyable
             value={nameDraft}
             limit={FIELD_LIMITS.name}
             onChange={(e) => setNameDraft(e.target.value)}
@@ -89,7 +89,7 @@ export default function GroupDetail() {
             }}
             style={{ fontSize: 22, fontWeight: 700, border: 'none', background: 'transparent', padding: '4px 0' }}
           />
-          <LimitedInput
+          <LimitedInput copyable
             value={descriptionDraft}
             limit={FIELD_LIMITS.short}
             onChange={(e) => setDescriptionDraft(e.target.value)}
@@ -123,7 +123,7 @@ export default function GroupDetail() {
             Extra rules for the whole scene, shown to every character in this group -- for example
             how they should take turns, or the tone of the group as a whole.
           </p>
-          <LimitedTextarea
+          <LimitedTextarea copyable
             value={instructionsDraft}
             limit={FIELD_LIMITS.proseContent}
             rows={5}

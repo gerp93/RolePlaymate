@@ -553,3 +553,42 @@ textarea {
 .quick-characters > summary .text-muted {
   font-weight: 400;
 }
+
+/* Copy button inside a text field (opt-in via the `copyable` prop on LimitedInput/LimitedTextarea). */
+.limited-field-copyable {
+  position: relative;
+}
+
+.limited-field-copyable input,
+.limited-field-copyable textarea {
+  padding-right: 58px;
+}
+
+.limited-copy-btn {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+/* A textarea's scrollbar is at its right edge; keep the button clear of it. */
+.limited-copy-btn-multiline {
+  right: 22px;
+}
+
+.limited-copy-btn:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-bg-hover);
+}
+
+.limited-copy-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
