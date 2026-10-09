@@ -10,6 +10,7 @@ import { MatchedLoreEntry } from '../../shared/types/lorebook';
 import { OllamaClient, OllamaChatMessage, OllamaOptions } from './ollamaClient';
 import {
   retrieveMemories,
+  buildMemoryQuery,
   blobToVector,
   vectorToBlob,
   MemoryRetrievalOptions,
@@ -26,6 +27,7 @@ import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
 import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
 import { buildContinuationCue, buildStyleReminder } from './styleReminder';
+import { TEMPLATE_TAGS } from './promptTemplates';
 
 /**
  * A generated reply that hasn't been folded into the model's context or mined for memories
@@ -188,7 +190,8 @@ export function withStyleReminder(
   charName: string,
   personaName: string | null | undefined,
   otherCharacters: string[] = [],
-  directions?: string
+  directions?: string,
+  hasMemories = false
 ): OllamaChatMessage[] {
   const reminder = buildStyleReminder({
     charName,
@@ -197,6 +200,7 @@ export function withStyleReminder(
     pov: getNarrationPov(),
     otherCharacters,
     directions,
+    hasMemories,
   });
 
   const last = messages[messages.length - 1];
@@ -629,11 +633,11 @@ export class ChatSessionManager {
         )
       : session.history.slice(-historyLimit);
 
-    // Retrieval runs against the message being sent, not the whole transcript: what matters
-    // is which stored facts bear on what the user just said.
+    // Retrieval runs against the message being sent *and* the last few lines, so the query
+    // describes the scene as it is now (see buildMemoryQuery).
     const retrieval = await this.retrieve(
       request.conversationId,
-      userText,
+      buildMemoryQuery(historyTurns, userText),
       request.memories,
       request.memoryOptions
     );
@@ -693,7 +697,8 @@ export class ChatSessionManager {
       built.characterName,
       request.personaName,
       groupTurn?.otherNames,
-      request.directions
+      request.directions,
+      memoryTexts.length > 0
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -858,7 +863,8 @@ export class ChatSessionManager {
       pending.characterName,
       pending.personaName,
       pending.otherCharacters,
-      pending.directions
+      pending.directions,
+      pending.systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`)
     );
 
     const controller = new AbortController();
@@ -1012,7 +1018,7 @@ export class ChatSessionManager {
 
     const retrieval = await this.retrieve(
       request.conversationId,
-      trimmed,
+      buildMemoryQuery(historyTurns, trimmed),
       request.memories,
       request.memoryOptions
     );
@@ -1059,7 +1065,8 @@ export class ChatSessionManager {
       built.characterName,
       request.personaName,
       groupTurn?.otherNames,
-      request.directions
+      request.directions,
+      memoryTexts.length > 0
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1189,13 +1196,14 @@ export class ChatSessionManager {
     if (historyTurns.length === 0 && !groupTurn) {
       throw new Error('Nothing to continue -- send a message first.');
     }
-    // No new user message to scan against -- the most recent line already in the scene is the
-    // closest thing to "what's relevant right now".
+    // No new user message to scan against -- the most recent lines already in the scene are the
+    // closest thing to "what's relevant right now". (Lore keeps scanning the last one alone.)
     const scanQuery = historyTurns.at(-1)?.content ?? '';
+    const memoryQuery = buildMemoryQuery(historyTurns, '');
 
     const retrieval = await this.retrieve(
       request.conversationId,
-      scanQuery,
+      memoryQuery,
       request.memories,
       request.memoryOptions
     );
@@ -1255,7 +1263,8 @@ export class ChatSessionManager {
       built.characterName,
       request.personaName,
       groupTurn?.otherNames,
-      directions
+      directions,
+      memoryTexts.length > 0
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);

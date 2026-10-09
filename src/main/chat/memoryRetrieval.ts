@@ -30,11 +30,34 @@ export interface MemoryRetrievalOptions {
 export const DEFAULT_MEMORY_OPTIONS: Required<Omit<MemoryRetrievalOptions, 'embeddingModel'>> & {
   embeddingModel: string;
 } = {
-  topK: 10,
+  // Fewer than it used to be: memories compete with the live transcript for the model's
+  // attention, and a long tail of weakly-related ones is what pulls a scene somewhere else.
+  topK: 6,
   minScore: 0.25,
   tokenBudget: 400,
   embeddingModel: DEFAULT_EMBEDDING_MODEL,
 };
+
+/** How many recent lines (and how many characters of them) describe "the scene right now". */
+const QUERY_RECENT_TURNS = 4;
+const QUERY_MAX_CHARS = 1500;
+
+/**
+ * What retrieval embeds. The outgoing message alone is often a few words ("*nods*", "Yes."),
+ * which says nothing about where the scene is -- so it matched whatever stored memory happened to
+ * be vaguely similar, from any earlier scene. Folding in the last few lines ties the query to
+ * the current setting, so memories about it outrank memories about somewhere the story left.
+ * Newest text goes last and survives the cap.
+ */
+export function buildMemoryQuery(
+  recentTurns: { content: string }[],
+  currentMessage: string
+): string {
+  const lines = [...recentTurns.slice(-QUERY_RECENT_TURNS).map((turn) => turn.content), currentMessage]
+    .map((line) => line.replace(/\*/g, '').trim())
+    .filter(Boolean);
+  return lines.join('\n').slice(-QUERY_MAX_CHARS);
+}
 
 /** Same ~4-chars-per-token estimate the lore budget uses. */
 export function estimateTokens(text: string): number {

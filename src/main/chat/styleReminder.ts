@@ -9,6 +9,8 @@ export interface StyleReminderInput {
    * the copy in the system prompt sits above the whole transcript and a 12B model largely ignores
    * it there. */
   directions?: string;
+  /** True when the system prompt carries a memory section this turn. */
+  hasMemories?: boolean;
 }
 
 /**
@@ -27,6 +29,7 @@ export function buildStyleReminder({
   pov,
   otherCharacters = [],
   directions,
+  hasMemories = false,
 }: StyleReminderInput): string {
   const lines: string[] = [];
 
@@ -35,6 +38,14 @@ export function buildStyleReminder({
   const direction = directions?.trim();
   if (direction) {
     lines.push(`Direction for this reply (the user wants this to happen -- do it): ${direction}`);
+  }
+
+  // Memories are retrieved by similarity, so some come from scenes the story has since left. A
+  // rule up in the system prompt loses to the transcript; here, at the end, it holds.
+  if (hasMemories) {
+    lines.push(
+      `Scene continuity: the memories in the system prompt are past events, some from other places or moments. The recent conversation above is the present -- stay in the location, situation and activity it shows, react to what was just said and done, and never jump back to a memory's setting or repeat it. Use a memory only if it fits the scene right now.`
+    );
   }
 
   lines.push(
