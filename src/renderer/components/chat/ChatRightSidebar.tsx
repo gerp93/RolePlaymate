@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { ChatDebugHistoryEntry, ChatDebugInfo } from '../../../shared/types/chat';
 import PromptDebugHistory from './PromptDebugHistory';
 import MemoriesPanel from './MemoriesPanel';
+import { automationPercent } from './AutomationProgress';
 
 export type RightSidebarTab = 'settings' | 'memories' | 'debug' | 'automate';
 
@@ -21,7 +22,7 @@ interface Props {
   settingsPanel: ReactNode;
   automationPanel: ReactNode;
   /** The run in progress, if any -- the tab shows its turn count so progress is visible from any tab. */
-  automationRun: { turn: number; total: number } | null;
+  automationRun: { completed: number; total: number } | null;
 }
 
 /** Right-hand sidebar: Chat Settings, Memories, Prompt Debug, and Automate share one column. */
@@ -91,8 +92,13 @@ export default function ChatRightSidebar({
           >
             🤖 Automate
             {automationRun && (
-              <span className="chat-memory-badge" aria-label={`Run in progress: turn ${automationRun.turn} of ${automationRun.total}`}>
-                {automationRun.turn}/{automationRun.total}
+              // A percent, not a fraction: it stays two or three characters wide however long the run is,
+              // and the exact turn is one click away on the tab itself.
+              <span
+                className="chat-memory-badge"
+                aria-label={`Run in progress: ${automationPercent(automationRun.completed, automationRun.total)} percent`}
+              >
+                {automationPercent(automationRun.completed, automationRun.total)}%
               </span>
             )}
           </button>

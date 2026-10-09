@@ -3664,3 +3664,42 @@
   align-items: center;
   gap: 6px;
 }
+
+/* Run progress: "Turn N of M", the percent finished, and a bar. */
+.automation-progress-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 320px;
+  font-size: 13px;
+}
+
+.automation-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.automation-progress-head span {
+  color: var(--color-text-muted);
+}
+
+.automation-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.automation-progress-fill {
+  height: 100%;
+  background: var(--color-accent-blue);
+  transition: width 0.4s ease;
+}
+
+.automation-progress-detail {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
