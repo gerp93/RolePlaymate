@@ -6,6 +6,7 @@ import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 import { UseAutomation } from '../../hooks/useAutomation';
 import LimitedTextarea from '../LimitedTextarea';
 import AutomationRunList from '../AutomationRunList';
+import AutomationProgress from './AutomationProgress';
 
 interface Props {
   automation: UseAutomation;
@@ -94,12 +95,11 @@ export default function AutomationPanel({
 
         {automatingHere && active ? (
           <>
-            <div className="automation-progress" role="status">
-              <strong>
-                Turn {Math.min(active.completedTurns + 1, active.requestedTurns)} of {active.requestedTurns}
-              </strong>
-              <span>{phaseText}</span>
-            </div>
+            <AutomationProgress
+              completedTurns={active.completedTurns}
+              requestedTurns={active.requestedTurns}
+              detail={phaseText}
+            />
             <button type="button" className="btn btn-danger" onClick={() => void automation.stop()}>
               Stop
             </button>

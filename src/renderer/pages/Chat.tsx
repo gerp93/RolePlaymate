@@ -22,6 +22,7 @@ import ChatRightSidebar, { RightSidebarTab } from '../components/chat/ChatRightS
 import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import AutomationPanel from '../components/chat/AutomationPanel';
 import AutomationLock from '../components/chat/AutomationLock';
+import AutomationProgress from '../components/chat/AutomationProgress';
 import { useAutomation } from '../hooks/useAutomation';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
@@ -1529,6 +1530,12 @@ export default function Chat() {
                 message={
                   <>
                     <strong>Automated run in progress</strong>
+                    {automation.active && (
+                      <AutomationProgress
+                        completedTurns={automation.active.completedTurns}
+                        requestedTurns={automation.active.requestedTurns}
+                      />
+                    )}
                     <span>The chat is locked until it finishes or you stop it.</span>
                     <button type="button" className="btn btn-danger" onClick={() => void automation.stop()}>
                       Stop
@@ -1707,11 +1714,7 @@ export default function Chat() {
           onMemoriesChanged={() => void session.refreshMemoryCount()}
           automationRun={
             automation.active
-              ? {
-                  // Same number the Automate tab's "Turn N of M" shows: the turn being worked on.
-                  turn: Math.min(automation.active.completedTurns + 1, automation.active.requestedTurns),
-                  total: automation.active.requestedTurns,
-                }
+              ? { completed: automation.active.completedTurns, total: automation.active.requestedTurns }
               : null
           }
           automationPanel={
