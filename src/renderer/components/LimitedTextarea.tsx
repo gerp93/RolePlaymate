@@ -41,8 +41,12 @@ const LimitedTextarea = forwardRef<HTMLTextAreaElement, Props>(function LimitedT
     const lineHeight = Number.parseFloat(style.lineHeight) || 21;
     const padding =
       Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-    const maxHeight = lineHeight * maxRows + padding;
-    const contentHeight = el.scrollHeight;
+    const border =
+      Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+    const maxHeight = lineHeight * maxRows + padding + border;
+    // scrollHeight leaves the border out; the box is border-box, so add it back
+    // or the last line is clipped.
+    const contentHeight = el.scrollHeight + border;
     if (contentHeight > maxHeight) {
       el.style.height = `${maxHeight}px`;
       el.style.overflowY = 'auto';

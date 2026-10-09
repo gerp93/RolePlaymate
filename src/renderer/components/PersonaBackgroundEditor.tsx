@@ -164,6 +164,8 @@ export default function PersonaBackgroundEditor({ personaId }: Props) {
         <LimitedTextarea
           ref={textareaRef}
           className="content-textarea"
+          autoGrow
+          maxRows={Infinity}
           limit={FIELD_LIMITS.proseContent}
           value={draftContent}
           onChange={(e) => isEditable && handleContentChange(e.target.value)}
