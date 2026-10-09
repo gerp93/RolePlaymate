@@ -538,3 +538,18 @@ textarea {
   font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   font-size: 0.92em;
 }
+
+/* Characters page: the collapsed group of characters made on the fly from a chat. */
+.quick-characters {
+  margin-top: 24px;
+}
+
+.quick-characters > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.quick-characters > summary .text-muted {
+  font-weight: 400;
+}

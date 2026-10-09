@@ -892,6 +892,7 @@ export default function Chat() {
     const created = await window.electronAPI.characters.create({
       name,
       description: description || undefined,
+      isQuick: true,
     });
     setCharacters((current) => [...current, created]);
     return created;

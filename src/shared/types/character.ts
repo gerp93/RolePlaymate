@@ -11,6 +11,10 @@ export interface Character {
    * doesn't erase it. See conversationService.appendMessage. */
   messageCount: number;
   isHidden: boolean;
+  /** Created in a hurry from a chat's "Respond as" picker (name and a line of description only).
+   * Behaves exactly like any character; the only difference is the Characters page lists it in a
+   * separate "Quick characters" group until it is promoted. */
+  isQuick: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -18,6 +22,7 @@ export interface Character {
 export interface CreateCharacterInput {
   name: string;
   description?: string;
+  isQuick?: boolean;
 }
 
 export interface UpdateCharacterInput {
