@@ -1,6 +1,7 @@
 import { AboutStep } from '../components/AboutStepper';
 import { AboutTrack } from '../components/AboutStepper';
 import { DEFAULT_EMBEDDING_MODEL } from '../../shared/embeddingModel';
+import { SUGGESTED_EXTRACTION_MODEL } from '../../shared/extractionModel';
 import CopyableTerminalCommand from '../components/CopyableTerminalCommand';
 import { AboutCallout, AboutLead, AboutList, AboutSubheading } from '../pages/aboutContent';
 
@@ -144,6 +145,14 @@ export const OLLAMA_SETUP_STEPS: AboutStep[] = [
           — the model is more likely to forget earlier events.
         </AboutLead>
         <CopyableTerminalCommand command={EMBEDDING_PULL_COMMAND} />
+        <AboutLead>
+          Also optional: the notes themselves are written by a model after each reply, by default the chat model.
+          If you chat with a roleplay-tuned model, which tends to narrate the scene instead of recording facts, you
+          can choose a small general-purpose model for just this job in{' '}
+          <strong>Settings &rarr; Chat Dependencies</strong>. <code>{SUGGESTED_EXTRACTION_MODEL}</code> is a good
+          fit, and is the same model as the <code>llama3.2</code> example above.
+        </AboutLead>
+        <CopyableTerminalCommand command={`ollama pull ${SUGGESTED_EXTRACTION_MODEL}`} />
       </>
     ),
     extraLinks: [
