@@ -1705,7 +1705,15 @@ export default function Chat() {
           liveCreatedAt={latestAssistantMessage?.createdAt ?? null}
           isGenerating={session.isGenerating}
           onMemoriesChanged={() => void session.refreshMemoryCount()}
-          automationRunning={automation.active !== null}
+          automationRun={
+            automation.active
+              ? {
+                  // Same number the Automate tab's "Turn N of M" shows: the turn being worked on.
+                  turn: Math.min(automation.active.completedTurns + 1, automation.active.requestedTurns),
+                  total: automation.active.requestedTurns,
+                }
+              : null
+          }
           automationPanel={
             <AutomationPanel
               automation={automation}

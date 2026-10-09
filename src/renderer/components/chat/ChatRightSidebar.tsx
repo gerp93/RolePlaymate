@@ -20,8 +20,8 @@ interface Props {
   onMemoriesChanged: () => void;
   settingsPanel: ReactNode;
   automationPanel: ReactNode;
-  /** A run is in progress -- the tab shows it so a run is not forgotten behind another tab. */
-  automationRunning: boolean;
+  /** The run in progress, if any -- the tab shows its turn count so progress is visible from any tab. */
+  automationRun: { turn: number; total: number } | null;
 }
 
 /** Right-hand sidebar: Chat Settings, Memories, Prompt Debug, and Automate share one column. */
@@ -40,7 +40,7 @@ export default function ChatRightSidebar({
   onMemoriesChanged,
   settingsPanel,
   automationPanel,
-  automationRunning,
+  automationRun,
 }: Props) {
   return (
     <aside className="chat-right-sidebar" aria-label="Conversation tools">
@@ -90,7 +90,11 @@ export default function ChatRightSidebar({
             onClick={() => onTabChange('automate')}
           >
             🤖 Automate
-            {automationRunning && <span className="chat-memory-badge" aria-label="Run in progress">●</span>}
+            {automationRun && (
+              <span className="chat-memory-badge" aria-label={`Run in progress: turn ${automationRun.turn} of ${automationRun.total}`}>
+                {automationRun.turn}/{automationRun.total}
+              </span>
+            )}
           </button>
         </div>
         <button
