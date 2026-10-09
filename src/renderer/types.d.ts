@@ -200,6 +200,11 @@ declare global {
         getSuppressed: () => Promise<{ suppressed: boolean }>;
         setSuppressed: (suppressed: boolean) => Promise<{ success: boolean }>;
       };
+      memoryExtractionModel: {
+        get: () => Promise<{ model: string | null }>;
+        /** Null or empty goes back to using the chat model. */
+        set: (model: string | null) => Promise<{ success: true }>;
+      };
       memoryEmbeddingModel: {
         get: () => Promise<{ model: string; isDefault: boolean; defaultModel: string }>;
         set: (model: string) => Promise<{ success: true }>;

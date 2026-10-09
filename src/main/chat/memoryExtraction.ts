@@ -1,4 +1,5 @@
 import { OllamaClient } from './ollamaClient';
+import { dot, l2Normalize } from './memoryRetrieval';
 
 /**
  * Pulls durable facts out of a completed exchange, so a long conversation keeps continuity
@@ -47,7 +48,23 @@ export const GENERIC_PHRASES = [
   'is known for',
   'character traits',
   'appearance includes',
+  // Mood and play-by-play narration rather than facts. A 12B roleplay model asked for "notable
+  // events" will happily write "The atmosphere is charged with tension" every turn, and those
+  // then rank as the most relevant memories to the very scene that produced them.
+  'the atmosphere is',
+  'the atmosphere has',
+  'the conversation is',
+  'the conversation has',
+  'the tension',
+  'is palpable',
+  'the mood',
+  'the scene is',
 ];
+
+/** A new memory whose meaning is this close (cosine, via the embedding model) to one already
+ * stored -- or to another candidate from the same exchange -- is dropped. Word overlap alone
+ * (REDUNDANCY_THRESHOLD) misses paraphrases, which is how one scene became dozens of memories. */
+export const SEMANTIC_DUPLICATE_THRESHOLD = 0.85;
 
 /** Word-set overlap. Cheap, order-insensitive, and good enough to catch restatements. */
 export function textSimilarity(a: string, b: string): number {
@@ -107,12 +124,40 @@ function buildExtractionPrompt(
 export function parseExtractedFacts(response: string): string[] {
   if (response.toUpperCase().includes('NONE') && response.trim().length < 20) return [];
 
-  return response
+  const facts = response
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2).trim())
     .filter((fact) => fact.length > MIN_FACT_LENGTH && fact.length < MAX_FACT_LENGTH);
+
+  // The reply is capped at EXTRACTION_OPTIONS.num_predict tokens, so when it was cut off the last
+  // bullet stops mid-sentence ("... with both characters clearly"). Storing that is worse than
+  // dropping it: it is injected into prompts verbatim.
+  if (facts.length > 0 && !/[.!?"')\]]\s*$/.test(response.trim())) facts.pop();
+  return facts;
+}
+
+/**
+ * Which candidates are not already covered, by meaning, by a stored memory or an earlier candidate.
+ * `candidateVectors[i]` is the embedding of the i-th candidate; `existingVectors` are the cached
+ * embeddings of stored memories (any without one are simply not compared against). Returns the
+ * indices to keep, in order.
+ */
+export function pickSemanticallyNew(
+  candidateVectors: number[][],
+  existingVectors: number[][],
+  threshold: number = SEMANTIC_DUPLICATE_THRESHOLD
+): number[] {
+  const known = existingVectors.map(l2Normalize);
+  const keep: number[] = [];
+  candidateVectors.forEach((raw, index) => {
+    const vector = l2Normalize(raw);
+    if (known.some((other) => dot(vector, other) >= threshold)) return;
+    known.push(vector);
+    keep.push(index);
+  });
+  return keep;
 }
 
 /**

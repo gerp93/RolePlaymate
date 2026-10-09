@@ -22,6 +22,8 @@ export interface AutomationStartRequest {
   turns: number;
   /** Optional standing per-turn directions, applied to every character reply in the run. */
   directions?: string;
+  /** Optional: what the persona is steering toward in every line the model writes for them. */
+  personaDirections?: string;
   samplers?: Partial<SamplerParams>;
 }
 
@@ -58,7 +60,10 @@ export interface AutomationProgress {
 export type AutomationTurnDebug = Omit<
   ChatDebugInfo,
   'historyTurns' | 'baseSystemPrompt' | 'characterInstructions' | 'systemPrompt'
->;
+> & {
+  /** Kept on the first turn only (see slimDebug in automationRunner.ts). */
+  systemPrompt?: string;
+};
 
 export interface AutomationTurnLog {
   index: number;
@@ -70,6 +75,11 @@ export interface AutomationTurnLog {
   /** The persona's line as sent. */
   userMessage: { id: string; content: string };
   assistantMessage: { id: string; content: string; model: string | null; generationMs: number | null };
+  /** How many times the persona's line / the character's reply was redone because it nearly
+   * repeated something recent. Absent in logs from before the repetition guard. */
+  repeatRetries?: { persona: number; character: number };
+  /** True when it still repeated after the retries. */
+  stillRepeating?: boolean;
   debug: AutomationTurnDebug;
 }
 

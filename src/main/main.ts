@@ -45,6 +45,8 @@ import {
   isEmbeddingModelPromptSuppressed,
   setEmbeddingModelPromptSuppressed,
   getConfiguredMemoryEmbeddingModel,
+  getConfiguredMemoryExtractionModel,
+  setConfiguredMemoryExtractionModel,
   isUsingDefaultMemoryEmbeddingModel,
   setConfiguredMemoryEmbeddingModel,
   resetMemoryEmbeddingModel,
@@ -2117,6 +2119,12 @@ function registerIPCHandlers() {
     setConfiguredMemoryEmbeddingModel(trimmed);
     return { success: true as const };
   });
+  // Optional separate model for memory extraction; null means "use the chat model".
+  ipcMain.handle('memoryExtractionModel:get', () => ({ model: getConfiguredMemoryExtractionModel() }));
+  ipcMain.handle('memoryExtractionModel:set', (_, model: string | null) => {
+    setConfiguredMemoryExtractionModel(String(model ?? ''));
+    return { success: true as const };
+  });
   ipcMain.handle('memoryEmbeddingModel:resetToDefault', () => {
     resetMemoryEmbeddingModel();
     return { success: true as const };
@@ -2637,6 +2645,7 @@ function registerAutomationHandlers() {
 
   ipcMain.handle('automation:start', (_, request: AutomationStartRequest) => {
     guardDirections(request.directions);
+    guardDirections(request.personaDirections);
     const conversation = conversationService.getConversation(request.conversationId);
     assertHiddenContentAccessible(
       conversation?.characterId ?? null,

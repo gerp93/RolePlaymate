@@ -389,6 +389,18 @@ same reason the other reply guidance is: templates are versioned in the database
 install never picks up a changed default. The extractor is told to skip momentary state (positions,
 what someone is doing or waiting for, sounds, scenery), which is true for one beat and wrong after.
 
+Extraction quality has four layers, added after a 100-turn automated run produced 234 memories that were
+mostly paraphrases of the scene's mood ("The atmosphere is one of tender, loving intimacy"), which
+retrieval then ranked as the most relevant memories to that same scene: the prompt rules above; text filters
+(`GENERIC_PHRASES` now rejects mood/play-by-play openers, and a last bullet cut off by the token cap is dropped
+rather than stored mid-sentence); a **semantic** duplicate check at write time (`pickSemanticallyNew`: a candidate
+within cosine 0.85 of a stored memory or an earlier candidate is dropped -- word overlap misses paraphrases; skipped,
+keeping everything, when embedding is unavailable); and an optional **extraction model** (Settings -> Chat
+Dependencies; `memoryExtractionModel` in `app-config.json`, default = the chat model). A roleplay tune is a poor
+extractor, but a second model that does not fit in VRAM beside the chat model makes Ollama reload models every turn,
+so it is opt-in with that warning. Not done yet: retrieval still ranks by similarity alone, so near-paraphrases can
+fill all `topK` slots (a diversity step like MMR would fix that).
+
 ## Automated runs
 
 The chat sidebar's **Automate** tab plays both sides of the open one-character conversation for N
@@ -398,7 +410,17 @@ turns (1-100) and keeps a diagnostic log. A turn is the persona's line, drafted 
 those paths -- it only calls them from the main process, so the conversation is an ordinary one:
 memories extract and retrieve, lore fires, redo/edit/delete work on it afterwards, and a Stop leaves
 at worst a persona line with no reply (the chat's existing "Reply as ..." covers that; the next run
-also answers it first). One run at a time app-wide. Groups are not supported (their round-robin
+also answers it first). Two things guard a long run. **Repetition:** a persona line or a reply whose word-set overlap with
+the last 6 messages is >= 0.8 (and >= 6 words) is redone up to twice -- the persona line with a "you repeated
+something, write something different" note and a higher repeat penalty, the reply through the normal redo path run
+hotter; three consecutive turns still repeating end the run ("stopped", with the reason in the log). It is
+automation-only, not applied to normal chat. **Truncation:** the persona-drafting call is capped at 150 tokens and
+used to send the fragment as the persona's line; `trimToCompleteSentence` (plain string handling, no model) now cuts
+a draft back to its last complete sentence and closes a dangling `*` or `"`. The Automate tab also takes optional
+"what the persona is steering toward" directions, added to the persona-drafting prompt only. The first turn's system
+prompt (the character card as given) is kept in the log and shown up front in the Markdown export.
+
+One run at a time app-wide. Groups are not supported (their round-robin
 speaker lives in the renderer).
 
 While a run owns a conversation the renderer locks it (`canChat`) and the main process refuses
