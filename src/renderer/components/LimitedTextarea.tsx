@@ -1,5 +1,6 @@
 import { forwardRef, useLayoutEffect, useRef } from 'react';
 import CharCount from './CharCount';
+import CopyFieldButton from './CopyFieldButton';
 
 interface Props extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'maxLength'> {
   limit: number;
@@ -9,6 +10,8 @@ interface Props extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 
   /** Grow with the text so the full value is visible; scroll only after maxRows. */
   autoGrow?: boolean;
   maxRows?: number;
+  /** Adds a Copy button in the corner of the field. */
+  copyable?: boolean;
 }
 
 const LimitedTextarea = forwardRef<HTMLTextAreaElement, Props>(function LimitedTextarea(
@@ -21,12 +24,15 @@ const LimitedTextarea = forwardRef<HTMLTextAreaElement, Props>(function LimitedT
     className,
     autoGrow = false,
     maxRows = 12,
+    copyable = false,
     ...rest
   },
   ref
 ) {
   const len = typeof value === 'string' ? value.length : 0;
-  const fieldClass = ['limited-field', fieldClassName].filter(Boolean).join(' ');
+  const fieldClass = ['limited-field', copyable ? 'limited-field-copyable' : '', fieldClassName]
+    .filter(Boolean)
+    .join(' ');
   const innerRef = useRef<HTMLTextAreaElement | null>(
     null
   ) as React.MutableRefObject<HTMLTextAreaElement | null>;
@@ -69,6 +75,7 @@ const LimitedTextarea = forwardRef<HTMLTextAreaElement, Props>(function LimitedT
         spellCheck
         {...rest}
       />
+      {copyable && <CopyFieldButton text={typeof value === 'string' ? value : ''} multiline />}
       {showCount && <CharCount current={len} limit={limit} compact={compactCount} />}
     </div>
   );

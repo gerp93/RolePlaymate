@@ -161,7 +161,7 @@ export default function PersonaBackgroundEditor({ personaId }: Props) {
       </div>
 
       {mode === 'edit' ? (
-        <LimitedTextarea
+        <LimitedTextarea copyable
           ref={textareaRef}
           className="content-textarea"
           autoGrow

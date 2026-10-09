@@ -187,7 +187,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
         <div className="lore-entry-body">
           <div className="field">
             <label htmlFor={`scenario-name-${scenario.id}`}>Name</label>
-            <LimitedInput
+            <LimitedInput copyable
               id={`scenario-name-${scenario.id}`}
               limit={FIELD_LIMITS.name}
               value={name}
@@ -201,7 +201,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
               Short description{' '}
               <span className="text-muted">— shown in pickers only, not sent to the model</span>
             </label>
-            <LimitedInput
+            <LimitedInput copyable
               id={`scenario-description-${scenario.id}`}
               limit={FIELD_LIMITS.short}
               value={description}
@@ -276,7 +276,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
                 setDraft(version?.content ?? '');
               }}
             />
-            <LimitedTextarea
+            <LimitedTextarea copyable
               id={`scenario-content-${scenario.id}`}
               className="content-textarea"
               limit={FIELD_LIMITS.scenarioContent}
@@ -325,7 +325,7 @@ export default function ScenarioEditor({ scenario, hiddenUnlocked, onChanged, on
                 setGreetingDraft(version?.content ?? '');
               }}
             />
-            <LimitedTextarea
+            <LimitedTextarea copyable
               id={`scenario-greeting-${scenario.id}`}
               className="content-textarea"
               limit={FIELD_LIMITS.greeting}

@@ -159,7 +159,7 @@ export default function LoreEntryEditor({
         <div className="lore-entry-body">
           <div className="field">
             <label htmlFor={`title-${entry.id}`}>Title</label>
-            <LimitedInput
+            <LimitedInput copyable
               id={`title-${entry.id}`}
               limit={FIELD_LIMITS.name}
               value={title}
@@ -172,7 +172,7 @@ export default function LoreEntryEditor({
             <label htmlFor={`keys-${entry.id}`}>
               Trigger keys <span className="text-muted">— comma separated, whole-word match</span>
             </label>
-            <LimitedInput
+            <LimitedInput copyable
               id={`keys-${entry.id}`}
               limit={FIELD_LIMITS.loreKeys}
               value={keys}
@@ -232,7 +232,7 @@ export default function LoreEntryEditor({
                 </span>
               )}
             </label>
-            <LimitedTextarea
+            <LimitedTextarea copyable
               id={`content-${entry.id}`}
               limit={FIELD_LIMITS.loreText}
               rows={4}
