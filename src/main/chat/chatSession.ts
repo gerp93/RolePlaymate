@@ -16,16 +16,21 @@ import {
   MemoryRetrievalOptions,
   MemoryWithEmbedding,
 } from './memoryRetrieval';
-import { extractMemories } from './memoryExtraction';
+import { extractMemories, pickSemanticallyNew } from './memoryExtraction';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
-import { suggestPersonaReply } from './suggestReply';
+import { suggestPersonaReply, SuggestionExtras } from './suggestReply';
 import { composeImagePrompt, IMAGE_PROMPT_HISTORY_LINES } from './imagePrompt';
 import { Message, isDirectionsOnly } from '../../shared/types/message';
 import { Conversation } from '../../shared/types/conversation';
 import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
-import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
+import {
+  getConciseReplies,
+  getConfiguredMemoryEmbeddingModel,
+  getConfiguredMemoryExtractionModel,
+  getNarrationPov,
+} from '../dbLocation';
 import { buildContinuationCue, buildStyleReminder } from './styleReminder';
 import { TEMPLATE_TAGS } from './promptTemplates';
 
@@ -1449,7 +1454,8 @@ export class ChatSessionManager {
     personaName: string | null,
     personaBackground: string | null,
     model: string,
-    historyLimit: number = DEFAULT_HISTORY_LIMIT
+    historyLimit: number = DEFAULT_HISTORY_LIMIT,
+    extras?: SuggestionExtras
   ): Promise<string> {
     const { built, recentTurns } = this.buildSceneContext(
       conversationId,
@@ -1465,6 +1471,7 @@ export class ChatSessionManager {
       historyTurns: recentTurns,
       characterName: built.characterName,
       personaName: personaName?.trim() || 'You',
+      extras,
     });
   }
 
@@ -1648,21 +1655,54 @@ export class ChatSessionManager {
   ): Promise<ConversationMemory[]> {
     try {
       const existing = this.conversations.listMemories(turn.conversationId);
-      const facts = await extractMemories(this.ollama, turn.model, {
+      // An optional separate model for this job (Settings); otherwise the chat model, as before.
+      const facts = await extractMemories(this.ollama, getConfiguredMemoryExtractionModel() ?? turn.model, {
         userMessage: turn.userMessage,
         aiResponse,
         existingMemories: existing.map((memory) => memory.content),
         systemPrompt: characterSheet,
       });
+      if (facts.length === 0) return [];
 
-      const added = facts.map((content) =>
-        this.conversations.addMemory({
+      // Word overlap (inside extractMemories) misses paraphrases, so also compare by meaning
+      // against what is already stored. If embedding is unavailable this is skipped and the
+      // memories are kept -- a duplicate is a smaller loss than losing extraction altogether.
+      let vectors: number[][] | null = null;
+      let keep = facts.map((_, index) => index);
+      try {
+        const embeddingModel = getConfiguredMemoryEmbeddingModel();
+        const embedded = await this.ollama.embed(embeddingModel, facts);
+        if (embedded.length === facts.length) {
+          vectors = embedded;
+          const storedVectors = this.conversations
+            .listMemoriesWithEmbeddings(turn.conversationId)
+            .filter((row) => row.embedding && row.embeddingModel === embeddingModel)
+            .map((row) => blobToVector(row.embedding!));
+          keep = pickSemanticallyNew(embedded, storedVectors);
+        }
+      } catch {
+        // fall through with every candidate kept
+      }
+
+      const added = keep.map((index) => {
+        const memory = this.conversations.addMemory({
           conversationId: turn.conversationId,
-          content,
+          content: facts[index],
           source: 'auto',
           messageId: turn.messageId,
-        })
-      );
+        });
+        if (vectors) {
+          // Already computed: caching it now saves retrieval embedding it again next turn.
+          this.conversations.setMemoryEmbeddings([
+            {
+              memoryId: memory.id,
+              embedding: vectorToBlob(vectors[index]),
+              embeddingModel: getConfiguredMemoryEmbeddingModel(),
+            },
+          ]);
+        }
+        return memory;
+      });
 
       if (added.length > 0) this.onMemoriesExtracted?.(turn.conversationId, added);
       return added;

@@ -41,6 +41,7 @@ export default function AutomationPanel({
 }: Props) {
   const [turns, setTurns] = useState(10);
   const [directions, setDirections] = useState('');
+  const [personaDirections, setPersonaDirections] = useState('');
 
   const { active, phase, automatingHere } = automation;
   const thisChatRuns = automation.runs.filter((run) => run.conversationId === conversationId);
@@ -69,6 +70,7 @@ export default function AutomationPanel({
       model,
       turns,
       directions: directions.trim() || undefined,
+      personaDirections: personaDirections.trim() || undefined,
       samplers,
     });
   };
@@ -116,13 +118,25 @@ export default function AutomationPanel({
               />
             </label>
             <label className="chat-settings-field">
-              <span className="chat-settings-field-label">Directions for every reply (optional)</span>
+              <span className="chat-settings-field-label">Directions for the character's replies (optional)</span>
               <LimitedTextarea
                 value={directions}
                 onChange={(e) => setDirections(e.target.value)}
                 limit={FIELD_LIMITS.directions}
                 rows={3}
                 placeholder="e.g. Keep the scene on the ship."
+              />
+            </label>
+            <label className="chat-settings-field">
+              <span className="chat-settings-field-label">
+                What {personaName || 'the persona'} is steering toward (optional)
+              </span>
+              <LimitedTextarea
+                value={personaDirections}
+                onChange={(e) => setPersonaDirections(e.target.value)}
+                limit={FIELD_LIMITS.directions}
+                rows={3}
+                placeholder="e.g. Wrap this scene up and move on to the next lead."
               />
             </label>
             <button

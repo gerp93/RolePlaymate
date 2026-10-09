@@ -33,6 +33,8 @@ interface AppConfig {
   suppressEmbeddingModelPrompt?: boolean;
   /** Ollama model name used for semantic memory retrieval. Falls back to the app default when unset. */
   memoryEmbeddingModel?: string;
+  /** Optional Ollama model used only to extract memories after a reply. Unset means the chat model. */
+  memoryExtractionModel?: string;
   /** 0–N chat deletion rules. Missing or empty means keep forever. */
   chatRetentionRules?: unknown;
   chatRetentionLastRunAt?: string;
@@ -373,6 +375,22 @@ export function setEmbeddingModelPromptSuppressed(suppressed: boolean): void {
   } else {
     delete config.suppressEmbeddingModelPrompt;
   }
+  const configPath = getConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  writeConfig(config);
+}
+
+/** The model chosen for memory extraction, or null to use whichever model the chat is using. */
+export function getConfiguredMemoryExtractionModel(): string | null {
+  return readConfig().memoryExtractionModel?.trim() || null;
+}
+
+/** Empty or whitespace clears it (back to the chat model). */
+export function setConfiguredMemoryExtractionModel(model: string): void {
+  const config = readConfig();
+  const trimmed = model.trim();
+  if (trimmed) config.memoryExtractionModel = trimmed;
+  else delete config.memoryExtractionModel;
   const configPath = getConfigPath();
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   writeConfig(config);

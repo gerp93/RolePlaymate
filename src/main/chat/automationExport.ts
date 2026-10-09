@@ -1,5 +1,15 @@
 import { AutomationRunLog } from '../../shared/types/automation';
 
+/** The first turn's system prompt. Logs made before it was kept separately still have it as the
+ * leading [SYSTEM] block of that turn's full prompt. */
+function firstTurnSystemPrompt(log: AutomationRunLog): string | null {
+  const first = log.turns[0]?.debug;
+  if (!first) return null;
+  if (first.systemPrompt) return first.systemPrompt;
+  const match = /^\[SYSTEM\]\n([\s\S]*?)\n\n\[(?:USER|ASSISTANT)\]\n/.exec(first.fullPrompt ?? '');
+  return match ? match[1] : null;
+}
+
 /**
  * The readable form of a run log: the transcript, then for every turn which memories the model
  * was given (with scores) and what was left out, then the memories stored by the end. The full
@@ -24,6 +34,18 @@ export function renderRunMarkdown(log: AutomationRunLog): string {
   out.push(JSON.stringify(log.settings, null, 2));
   out.push('```');
 
+  const firstPrompt = firstTurnSystemPrompt(log);
+  if (firstPrompt) {
+    out.push('');
+    out.push('## Prompt setup (turn 1 system prompt)');
+    out.push('');
+    out.push('The character card, scenario, persona and rules exactly as the model was given them before any memories existed.');
+    out.push('');
+    out.push('~~~~');
+    out.push(firstPrompt);
+    out.push('~~~~');
+  }
+
   out.push('');
   out.push('## Transcript');
   for (const line of log.transcript) {
@@ -39,6 +61,13 @@ export function renderRunMarkdown(log: AutomationRunLog): string {
     out.push('');
     out.push(`### Turn ${turn.index}`);
     out.push('');
+    if (turn.repeatRetries && (turn.repeatRetries.persona > 0 || turn.repeatRetries.character > 0)) {
+      out.push(
+        `Redone because of repetition: persona line x${turn.repeatRetries.persona}, reply x${turn.repeatRetries.character}` +
+          (turn.stillRepeating ? ' -- still repeating afterwards.' : '.')
+      );
+      out.push('');
+    }
     out.push(`Retrieval query: ${JSON.stringify(turn.debug.retrieval?.query ?? '')}`);
     const retrieval = turn.debug.retrieval;
     if (!retrieval) {

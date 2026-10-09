@@ -149,6 +149,8 @@ export default function Settings() {
   const [embeddingModelIsDefault, setEmbeddingModelIsDefault] = useState(true);
   const [installedEmbeddingModels, setInstalledEmbeddingModels] = useState<string[]>([]);
   const [embeddingModelBusy, setEmbeddingModelBusy] = useState(false);
+  const [extractionModel, setExtractionModel] = useState<string | null>(null);
+  const [installedChatModels, setInstalledChatModels] = useState<string[]>([]);
   const [remindWhenEmbeddingMissing, setRemindWhenEmbeddingMissing] = useState(true);
   const [embeddingChecking, setEmbeddingChecking] = useState(false);
   const [embeddingNotice, setEmbeddingNotice] = useState<string | null>(null);
@@ -252,12 +254,14 @@ export default function Settings() {
   }, []);
 
   async function refreshEmbeddingSettings() {
-    const [status, prompt, config, modelsResult] = await Promise.all([
+    const [status, prompt, config, modelsResult, extraction] = await Promise.all([
       window.electronAPI.ollama.getEmbeddingModelStatus(),
       window.electronAPI.embeddingModelPrompt.getSuppressed(),
       window.electronAPI.memoryEmbeddingModel.get(),
       window.electronAPI.ollama.listModelsDetailed(),
+      window.electronAPI.memoryExtractionModel.get(),
     ]);
+    setExtractionModel(extraction.model);
     setConfiguredEmbeddingModel(config.model);
     setEmbeddingModelIsDefault(config.isDefault);
     setEmbeddingInstalled(status.ollamaReachable && status.installed);
@@ -266,8 +270,10 @@ export default function Settings() {
       setInstalledEmbeddingModels(
         modelsResult.models.filter((m) => isEmbeddingModel(m)).map((m) => m.name)
       );
+      setInstalledChatModels(modelsResult.models.filter((m) => !isEmbeddingModel(m)).map((m) => m.name));
     } else {
       setInstalledEmbeddingModels([]);
+      setInstalledChatModels([]);
     }
   }
 
@@ -276,6 +282,12 @@ export default function Settings() {
   const embeddingModelOptions = [
     ...new Set([activeEmbeddingModel, ...installedEmbeddingModels]),
   ].sort((a, b) => a.localeCompare(b));
+
+  async function handleExtractionModelChange(model: string) {
+    const next = model || null;
+    setExtractionModel(next);
+    await window.electronAPI.memoryExtractionModel.set(next);
+  }
 
   async function handleEmbeddingModelChange(model: string) {
     if (model === activeEmbeddingModel) return;
@@ -770,6 +782,36 @@ export default function Settings() {
             )}
           </>
         )}
+
+        <section className="settings-subsection">
+          <h3 className="settings-subsection-title">Memory extraction model</h3>
+          <p className="text-muted settings-subsection-lead">
+            After each reply, a model reads the exchange and writes down what is worth remembering. By default
+            that is the chat model itself. A roleplay-tuned model is often poor at this -- it tends to narrate
+            the scene&apos;s mood instead of recording facts -- so you can pick a different, general-purpose model for
+            just this job.
+          </p>
+          <div className="field">
+            <label>Model</label>
+            <select
+              value={extractionModel ?? ''}
+              onChange={(e) => void handleExtractionModelChange(e.target.value)}
+              style={{ maxWidth: 360, fontFamily: 'monospace', fontSize: 12 }}
+            >
+              <option value="">Same as the chat model (default)</option>
+              {[...new Set([...(extractionModel ? [extractionModel] : []), ...installedChatModels])].map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 0 }}>
+              Choose a small model (about 3-4B). Extraction runs while the next reply is being prepared, so a
+              second large model that doesn&apos;t fit in GPU memory next to the chat model makes Ollama unload and
+              reload models every turn, which slows chat down badly.
+            </p>
+          </div>
+        </section>
 
         <section className="settings-subsection">
           <h3 className="settings-subsection-title">Memory embedding model</h3>
