@@ -41,7 +41,12 @@ export const DEFAULT_TEMPLATES: PromptTemplates = {
 
   directions: '{directions}',
 
-  memory: ['Key memories from this conversation -- use these to maintain continuity:', '{memories}'].join('\n'),
+  memory: [
+    'Background from earlier in this conversation. These are PAST events, some from other places or',
+    'moments than the current scene. The most recent messages define where and what the scene is now;',
+    'if a memory conflicts with them, follow the messages. Use a memory only when it fits.',
+    '{memories}',
+  ].join('\n'),
 
   // Framed as common knowledge -- anyone in the setting could know these, so the model is
   // free to have other characters reference them.
