@@ -2655,7 +2655,7 @@ function registerAutomationHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('automation:getActive', () => automationRunner.getActive());
+  ipcMain.handle('automation:getActive', () => automationRunner.getActiveProgress());
 
   ipcMain.handle('automation:list', () => automationRunService.listRuns(securityService.isUnlocked()));
 

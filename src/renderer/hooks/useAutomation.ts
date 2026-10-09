@@ -43,7 +43,10 @@ export function useAutomation(conversationId: string | null, onTranscriptChanged
   }, []);
 
   useEffect(() => {
-    void window.electronAPI.automation.getActive().then(setActive);
+    void window.electronAPI.automation.getActive().then((progress) => {
+      setActive(progress?.run ?? null);
+      setPhase(progress?.phase ?? 'idle');
+    });
     void refreshRuns();
   }, [refreshRuns]);
 

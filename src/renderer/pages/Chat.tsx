@@ -1434,6 +1434,7 @@ export default function Chat() {
                   messages={session.messages}
                   streamingText={session.streamingText}
                   isGenerating={session.isGenerating || automation.automatingHere}
+                  typingAs={automation.automatingHere && automation.phase !== 'character' ? 'persona' : 'character'}
                   isRegenerating={session.isRegenerating}
                   variants={session.variants}
                   onRegenerate={handleRegenerate}
