@@ -23,6 +23,7 @@ import ChatSettingsPanel from '../components/chat/ChatSettingsPanel';
 import AutomationPanel from '../components/chat/AutomationPanel';
 import AutomationLock from '../components/chat/AutomationLock';
 import AutomationProgress from '../components/chat/AutomationProgress';
+import SceneSuggestionBanner from '../components/chat/SceneSuggestionBanner';
 import { useAutomation } from '../hooks/useAutomation';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
@@ -198,6 +199,15 @@ export default function Chat() {
   const [directions, setDirections] = useState('');
   const [directionsOpen, setDirectionsOpen] = useState(false);
   const [keepForever, setKeepForever] = useState(false);
+  // Where the story is now (shown to the model every turn), and a proposed replacement the latest
+  // reply suggested -- see chatSession.checkScene.
+  const [sceneNote, setSceneNote] = useState('');
+  const [sceneSuggestion, setSceneSuggestion] = useState<{
+    conversationId: string;
+    messageId: string;
+    suggestion: string;
+  } | null>(null);
+  const [sceneSuggestionsOn, setSceneSuggestionsOnState] = useState(true);
 
   // Reloads the composer's Temperature/Max Tokens sliders to whatever this model's tuned
   // defaults are (Model Tuning settings page) every time the selected model changes -- same
@@ -506,11 +516,14 @@ export default function Chat() {
       setPersonaImageMode(conversation.personaImageMode);
       setPersonaImageId(conversation.personaImageId);
       setKeepForever(conversation.keepForever);
+      setSceneNote(conversation.sceneNote ?? '');
     })();
   }, [conversationId, navigate]);
 
   useEffect(() => {
     setKeepForever(false);
+    setSceneNote('');
+    setSceneSuggestion(null);
     void window.electronAPI.retention.setActiveConversation(conversationId ?? null);
     return () => {
       void window.electronAPI.retention.setActiveConversation(null);
@@ -958,6 +971,31 @@ export default function Chat() {
     },
     [conversationId, navigate, refreshConversations]
   );
+
+  useEffect(() => {
+    void window.electronAPI.chatStyle.getSceneSuggestions().then(setSceneSuggestionsOnState);
+    const unsubscribe = window.electronAPI.chat.onSceneSuggestion(setSceneSuggestion);
+    return unsubscribe;
+  }, []);
+
+  const handleSceneNoteSave = useCallback(
+    async (note: string) => {
+      if (!conversationId) return;
+      try {
+        const updated = await window.electronAPI.conversations.setSceneNote(conversationId, note);
+        setSceneNote(updated.sceneNote ?? '');
+      } finally {
+        setSceneSuggestion(null);
+      }
+    },
+    [conversationId]
+  );
+
+  const handleSceneSuggestionsChange = useCallback((value: boolean) => {
+    setSceneSuggestionsOnState(value);
+    if (!value) setSceneSuggestion(null);
+    void window.electronAPI.chatStyle.setSceneSuggestions(value);
+  }, []);
 
   const handleKeepForeverChange = useCallback(
     async (keep: boolean) => {
@@ -1512,6 +1550,19 @@ export default function Chat() {
               {/* Under the "Continue as ..." links and above the composer's divider line, so the
                   speaker is picked right where a reply or a Continue is about to be asked for. A
                   group's roster bar already does this job, so it isn't shown there. */}
+              {sceneSuggestion &&
+                sceneSuggestion.conversationId === conversationId &&
+                sceneSuggestion.messageId === latestAssistantMessage?.id &&
+                !session.isGenerating &&
+                canChat && (
+                  <SceneSuggestionBanner
+                    suggestion={sceneSuggestion.suggestion}
+                    hasNote={Boolean(sceneNote.trim())}
+                    onApply={(text) => void handleSceneNoteSave(text)}
+                    onDismiss={() => setSceneSuggestion(null)}
+                  />
+                )}
+
               {canChat && !groupId && character && (
                 <div className="chat-respond-as-bar">
                   <RespondAsPicker
@@ -1770,6 +1821,10 @@ export default function Chat() {
               narrationPov={narrationPov}
               onNarrationPovChange={handleNarrationPovChange}
               automationLocked={automation.active !== null}
+              sceneNote={sceneNote}
+              onSceneNoteSave={(note) => void handleSceneNoteSave(note)}
+              sceneSuggestions={sceneSuggestionsOn}
+              onSceneSuggestionsChange={handleSceneSuggestionsChange}
             />
           }
         />

@@ -474,6 +474,8 @@ export class AutomationRunner {
             model: request.model,
             directions: request.directions?.trim() || undefined,
             samplers: request.samplers,
+            // No one is there to answer a "scene changed?" prompt, and it would add a model call.
+            suggestScene: false,
           },
           () => {}
         );
@@ -502,7 +504,8 @@ export class AutomationRunner {
                 temperature: Math.min((request.samplers?.temperature ?? 0.85) + 0.15 * retries.character, 1.3),
                 repetitionPenalty: 1.2,
               },
-              request.model
+              request.model,
+              false
             )),
             userMessage: result.userMessage,
           };

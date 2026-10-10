@@ -35,6 +35,8 @@ interface AppConfig {
   memoryEmbeddingModel?: string;
   /** Optional Ollama model used only to extract memories after a reply. Unset means the chat model. */
   memoryExtractionModel?: string;
+  /** False turns off the after-reply check that offers to update a chat's scene note. Unset means on. */
+  sceneSuggestions?: boolean;
   /** 0–N chat deletion rules. Missing or empty means keep forever. */
   chatRetentionRules?: unknown;
   chatRetentionLastRunAt?: string;
@@ -496,6 +498,17 @@ export function setNarratorVoice(voice: CharacterTtsVoice | null): void {
   } else {
     config.narratorVoice = { mode: voice.mode, id: voice.id };
   }
+  writeConfig(config);
+}
+
+export function getSceneSuggestionsEnabled(): boolean {
+  return readConfig().sceneSuggestions !== false;
+}
+
+export function setSceneSuggestionsEnabled(value: boolean): void {
+  const config = readConfig();
+  if (value) delete config.sceneSuggestions;
+  else config.sceneSuggestions = false;
   writeConfig(config);
 }
 

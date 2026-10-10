@@ -1,7 +1,9 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { CharacterTtsVoice } from '../../../shared/types/tts';
 import { TtsOverlapMode, TtsReadingMode, TtsTrackMode } from '../../../shared/utils/ttsSegments';
 import { CHAT_FONT_SIZES, ChatFontSize } from '../../utils/chatFontSize';
+import { FIELD_LIMITS } from '../../../shared/fieldLimits';
+import LimitedTextarea from '../LimitedTextarea';
 import AutomationLock from './AutomationLock';
 import StartScreenPicker, { StartPickerOption } from './StartScreenPicker';
 
@@ -50,6 +52,12 @@ interface Props {
   /** An automated run is going: the sections that change how the chat behaves are covered. The
    * ones that only change how it looks or sounds stay editable. */
   automationLocked?: boolean;
+  /** This chat's scene note and a way to save it (empty clears it). */
+  sceneNote: string;
+  onSceneNoteSave: (note: string) => void;
+  /** Whether replies are checked for a change of scene (an app-wide setting). */
+  sceneSuggestions: boolean;
+  onSceneSuggestionsChange: (value: boolean) => void;
 }
 
 /** Hover/focus card — Electron's native `title` tooltips look dated and often don't show. */
@@ -117,7 +125,15 @@ export default function ChatSettingsPanel({
   narrationPov,
   onNarrationPovChange,
   automationLocked = false,
+  sceneNote,
+  onSceneNoteSave,
+  sceneSuggestions,
+  onSceneSuggestionsChange,
 }: Props) {
+  // Edited locally and saved when the field loses focus, so typing is not a save per keystroke.
+  const [sceneDraft, setSceneDraft] = useState(sceneNote);
+  useEffect(() => setSceneDraft(sceneNote), [sceneNote]);
+
   const speechAvailable = characterSpeechAvailable || personaSpeechAvailable;
   const speechActive =
     (characterSpeechAvailable && characterTrack !== 'off') ||
@@ -150,6 +166,49 @@ export default function ChatSettingsPanel({
         </section>
       )}
       </AutomationLock>
+
+      {conversationId && (
+        <AutomationLock
+          locked={automationLocked}
+          message={
+            <>
+              <strong>Locked during an automated run</strong>
+              <span>The scene note is part of what the run is testing.</span>
+            </>
+          }
+        >
+          <section className="chat-settings-section">
+            <h3 className="chat-settings-section-title">
+              Scene
+              <SettingsInfoTip ariaLabel="About the scene note">
+                Where the story is right now, in a sentence or two. It is shown to the model on every turn until you
+                change it, so it keeps the story in place when the characters move on from the scenario&apos;s
+                starting setup. Leave it empty if the setting doesn&apos;t matter.
+              </SettingsInfoTip>
+            </h3>
+            <LimitedTextarea
+              value={sceneDraft}
+              onChange={(e) => setSceneDraft(e.target.value)}
+              onBlur={() => {
+                if (sceneDraft.trim() !== sceneNote.trim()) onSceneNoteSave(sceneDraft);
+              }}
+              limit={FIELD_LIMITS.sceneNote}
+              rows={3}
+              compactCount
+              copyable
+              placeholder="e.g. Deep in the sandstone tunnels under the Prism Spire, hiding from searchers."
+            />
+            <label className="chat-settings-checkbox">
+              <input
+                type="checkbox"
+                checked={sceneSuggestions}
+                onChange={(e) => onSceneSuggestionsChange(e.target.checked)}
+              />
+              Offer to update it when the scene changes
+            </label>
+          </section>
+        </AutomationLock>
+      )}
 
       <section className="chat-settings-section">
         <h3 className="chat-settings-section-title">Display</h3>

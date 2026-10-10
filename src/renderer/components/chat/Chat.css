@@ -3703,3 +3703,21 @@
   color: var(--color-text-muted);
   font-size: 12px;
 }
+
+/* Offer to update the chat's scene note when the story seems to have moved. */
+.scene-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-accent-blue);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font-size: 13px;
+}
+
+.scene-suggestion-actions {
+  display: flex;
+  gap: 8px;
+}

@@ -28,6 +28,8 @@ export const FIELD_LIMITS = {
   loreText: 2_000,
   chatMessage: 8_000,
   directions: 2_000,
+  /** A chat's scene note: a sentence or two, shown to the model on every turn. */
+  sceneNote: 600,
   memory: 2_000,
   stopPhrases: 4_000,
   url: 2_048, // Ollama / Chatterbox host strings

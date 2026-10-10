@@ -34,6 +34,7 @@ const CONVERSATION_COLUMNS = `
   persona_image_mode as personaImageMode,
   persona_image_id as personaImageId,
   keep_forever as keepForever,
+  scene_note as sceneNote,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -52,6 +53,7 @@ const CONVERSATION_COLUMNS_FROM_C = `
   c.persona_image_mode as personaImageMode,
   c.persona_image_id as personaImageId,
   c.keep_forever as keepForever,
+  c.scene_note as sceneNote,
   c.created_at as createdAt,
   c.updated_at as updatedAt
 `;
@@ -140,6 +142,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     personaImageMode: row.personaImageMode as ImageMode,
     personaImageId: (row.personaImageId as string | null) ?? null,
     keepForever: !!row.keepForever,
+    sceneNote: (row.sceneNote as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -462,8 +465,8 @@ export class ConversationService {
           `INSERT INTO conversations
              (id, title, model, character_id, group_id, user_persona_id, scenario_id,
               character_image_mode, character_image_id, scenario_image_id,
-              persona_image_mode, persona_image_id, keep_forever, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              persona_image_mode, persona_image_id, keep_forever, scene_note, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           newId,
@@ -479,6 +482,8 @@ export class ConversationService {
           source.personaImageMode,
           source.personaImageId,
           0,
+          // A branch keeps the whole transcript, so the scene it is in carries over too.
+          source.sceneNote,
           now,
           now
         );
@@ -646,6 +651,14 @@ export class ConversationService {
          WHERE id = ?`
       )
       .run(scenarioId, defaultImage.mode, defaultImage.characterImageId, defaultImage.scenarioImageId, id);
+    return this.getConversation(id)!;
+  }
+
+  /** Sets or clears (empty or whitespace) the chat's scene note. Not activity, so `updated_at` is left alone. */
+  setSceneNote(id: string, note: string | null): Conversation {
+    if (!this.getConversation(id)) throw new Error(`Conversation with id ${id} not found`);
+    const trimmed = note?.trim() || null;
+    this.db.prepare(`UPDATE conversations SET scene_note = ? WHERE id = ?`).run(trimmed, id);
     return this.getConversation(id)!;
   }
 

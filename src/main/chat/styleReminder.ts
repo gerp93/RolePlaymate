@@ -15,6 +15,8 @@ export interface StyleReminderInput {
   hasMemories?: boolean;
   /** Wording this character has been leaning on in their recent replies (see phraseGuard). */
   avoid?: OverusedPhrases;
+  /** The chat's scene note: where the story is now, until the user changes it. */
+  sceneNote?: string | null;
 }
 
 /**
@@ -35,6 +37,7 @@ export function buildStyleReminder({
   directions,
   hasMemories = false,
   avoid,
+  sceneNote,
 }: StyleReminderInput): string {
   const lines: string[] = [];
 
@@ -43,6 +46,14 @@ export function buildStyleReminder({
   const direction = directions?.trim();
   if (direction) {
     lines.push(`Direction for this reply (the user wants this to happen -- do it): ${direction}`);
+  }
+
+  // Where the story is right now, as the user last set it. The scenario text in the system prompt
+  // is the starting setup and cannot follow the story around; this can, and it sits at the end
+  // where it outweighs the habit of the transcript.
+  const scene = sceneNote?.trim();
+  if (scene) {
+    lines.push(`Current scene (in effect until the story moves on -- stay in it): ${scene}`);
   }
 
   // Memories are retrieved by similarity, so some come from scenes the story has since left. A

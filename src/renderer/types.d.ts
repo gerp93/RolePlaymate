@@ -188,6 +188,8 @@ declare global {
       chatStyle: {
         getConcise: () => Promise<boolean>;
         setConcise: (value: boolean) => Promise<{ success: boolean }>;
+        getSceneSuggestions: () => Promise<boolean>;
+        setSceneSuggestions: (value: boolean) => Promise<{ success: boolean }>;
         getPov: () => Promise<'first' | 'third' | null>;
         setPov: (value: 'first' | 'third' | null) => Promise<{ success: boolean }>;
       };
@@ -293,6 +295,10 @@ declare global {
         /** Returns an unsubscribe function -- call it on effect teardown. */
         onStream: (callback: (payload: ChatStreamEvent) => void) => () => void;
         /** Post-turn extraction result. Also returns an unsubscribe function. */
+        /** A proposed new scene note after a reply that looks like the story moved. Unsubscribe on teardown. */
+        onSceneSuggestion: (
+          callback: (payload: { conversationId: string; messageId: string; suggestion: string }) => void
+        ) => () => void;
         onMemoriesUpdated: (
           callback: (payload: { conversationId: string; added: ConversationMemory[] }) => void
         ) => () => void;
@@ -391,6 +397,8 @@ declare global {
         setPersona: (id: string, userPersonaId: string | null) => Promise<Conversation>;
         setScenario: (id: string, scenarioId: string | null) => Promise<Conversation>;
         setKeepForever: (id: string, keepForever: boolean) => Promise<Conversation>;
+        /** Where the story is now; shown to the model every turn. Empty or null clears it. */
+        setSceneNote: (id: string, note: string | null) => Promise<Conversation>;
         setImageMode: (
           id: string,
           input: {
