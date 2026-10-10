@@ -100,10 +100,32 @@ export interface MemoryWithEmbedding {
   embeddingModel: string | null;
 }
 
+/** What `selectMemories` needs beyond the scores to choose well. All optional: without it, selection is
+ * by score alone. */
+export interface SelectionContext {
+  /** For each memory, in how many of the last few turns it was injected. A memory that has been put in
+   * front of the model turn after turn stops adding anything and becomes a rut. */
+  recentUses?: ReadonlyMap<string, number>;
+  /** Each memory's embedding (unit length), so the chosen ones can be told apart from each other. */
+  vectors?: ReadonlyMap<string, number[]>;
+}
+
+/** Score taken off per recent use, up to RECENT_USE_CAP uses. Scores of the memories that make the cut
+ * sit within a few hundredths of each other, so this is enough to rotate in another. */
+const RECENT_USE_PENALTY = 0.025;
+const RECENT_USE_CAP = 8;
+/** Share of the slots held for the founding memories (rounded down), and which count as founding: the
+ * oldest 15% of the store, at least 8 of them, but never more than the older half. */
+const ANCHOR_SHARE = 1 / 3;
+const ANCHOR_POOL_SHARE = 0.15;
+const ANCHOR_POOL_MIN = 8;
+/** Weight of relevance against difference from what is already chosen (1 = relevance only). */
+const MMR_RELEVANCE = 0.75;
+
 /**
- * Ranks and selects memories, mirroring the source's selection loop exactly.
+ * Ranks and selects memories.
  *
- * Three behaviours are deliberately preserved because they are intentional, not accidents:
+ * What is kept from the source's selection loop:
  *
  *  1. Pinned ('manual') memories are always selected -- they bypass both the score
  *     threshold and the token budget, which the budget may go negative for. The user asked
@@ -112,46 +134,104 @@ export interface MemoryWithEmbedding {
  *     retrieved ones. That is a real bound on prompt bloat, not a bug.
  *  3. A candidate over the remaining budget is rejected but the walk continues, so a later,
  *     shorter memory can still fit.
+ *
+ * What changed, because ranking by similarity alone favours the scene happening right now:
+ *
+ *  - **Held slots for the founding memories.** The query is the last few lines, so it matches memories
+ *    made a few lines ago and the founding facts of the story (who is after whom, what is at stake) lose to
+ *    them on every turn and drop out of the prompt for good. A third of the slots go to the best-matching
+ *    of the oldest memories, so the beginning stays in play.
+ *  - **A cooldown.** A memory already injected in several recent turns is marked down, so one fact does
+ *    not sit in the prompt for dozens of turns and get echoed back (a stale mood memory was injected in
+ *    38 of 100 turns in one run, and its wording turned up in the replies).
+ *  - **Variety.** The rest of the slots are filled one at a time, each chosen for relevance but also for
+ *    being unlike the memories already chosen, instead of the top few near-copies of one moment.
  */
 export function selectMemories(
   query: string,
   scored: ScoredMemory[],
-  options: MemoryRetrievalOptions = {}
+  options: MemoryRetrievalOptions = {},
+  context: SelectionContext = {}
 ): MemoryRetrievalResult {
   const { topK, minScore, tokenBudget } = { ...DEFAULT_MEMORY_OPTIONS, ...options };
-
-  // Pinned first, then by descending score.
-  const ordered = [...scored].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.score - a.score;
-  });
+  const uses = context.recentUses;
+  const vectors = context.vectors;
 
   const selected: ScoredMemory[] = [];
   const rejected: ScoredMemory[] = [];
   let remaining = tokenBudget;
 
-  for (const candidate of ordered) {
+  // Pinned first: always in.
+  const candidates: ScoredMemory[] = [];
+  for (const candidate of scored) {
     if (candidate.pinned) {
       selected.push(candidate);
       remaining -= estimateTokens(candidate.memory.content);
-      continue;
-    }
-    if (candidate.score < minScore) {
+    } else if (candidate.score < minScore) {
       rejected.push(candidate);
-      continue;
+    } else {
+      candidates.push(candidate);
     }
-    if (selected.length >= topK) {
-      rejected.push(candidate);
-      continue;
-    }
+  }
+  selected.sort((a, b) => b.score - a.score);
+
+  const adjusted = new Map<string, number>();
+  for (const c of candidates) {
+    const used = Math.min(uses?.get(c.memory.id) ?? 0, RECENT_USE_CAP);
+    adjusted.set(c.memory.id, c.score - RECENT_USE_PENALTY * used);
+  }
+  const adj = (c: ScoredMemory) => adjusted.get(c.memory.id) ?? c.score;
+
+  const room = () => selected.length < topK;
+  const take = (candidate: ScoredMemory): boolean => {
     const cost = estimateTokens(candidate.memory.content);
-    if (cost > remaining) {
-      rejected.push(candidate);
-      continue;
-    }
+    if (cost > remaining) return false; // over budget: skipped, a later and shorter one may still fit
     selected.push(candidate);
     remaining -= cost;
+    return true;
+  };
+  const left = new Set(candidates);
+
+  // Held slots: the best matches among the founding (oldest) memories.
+  const byAge = [...candidates].sort((a, b) => a.memory.createdAt.localeCompare(b.memory.createdAt));
+  const poolSize = Math.min(Math.ceil(byAge.length / 2), Math.max(ANCHOR_POOL_MIN, Math.ceil(byAge.length * ANCHOR_POOL_SHARE)));
+  const older = new Set(byAge.slice(0, poolSize).map((c) => c.memory.id));
+  let anchorsToTake = Math.floor(Math.max(0, topK - selected.length) * ANCHOR_SHARE);
+  for (const candidate of [...candidates].filter((c) => older.has(c.memory.id)).sort((a, b) => adj(b) - adj(a))) {
+    if (anchorsToTake <= 0 || !room()) break;
+    if (take(candidate)) {
+      left.delete(candidate);
+      anchorsToTake -= 1;
+    }
   }
+
+  // The rest: relevance, discounted by similarity to what is already chosen.
+  const similarityToChosen = (candidate: ScoredMemory): number => {
+    const v = vectors?.get(candidate.memory.id);
+    if (!v) return 0;
+    let highest = 0;
+    for (const other of selected) {
+      const w = vectors?.get(other.memory.id);
+      if (w) highest = Math.max(highest, dot(v, w));
+    }
+    return highest;
+  };
+  while (room() && left.size > 0) {
+    let best: ScoredMemory | null = null;
+    let bestValue = -Infinity;
+    for (const candidate of left) {
+      const value = MMR_RELEVANCE * adj(candidate) - (1 - MMR_RELEVANCE) * similarityToChosen(candidate);
+      if (value > bestValue) {
+        bestValue = value;
+        best = candidate;
+      }
+    }
+    if (!best) break;
+    left.delete(best);
+    if (!take(best)) rejected.push(best);
+  }
+  for (const candidate of left) rejected.push(candidate);
+  rejected.sort((a, b) => b.score - a.score);
 
   return {
     query,
@@ -186,7 +266,9 @@ export async function retrieveMemories(
   ollama: OllamaClient,
   query: string,
   memories: MemoryWithEmbedding[],
-  options: MemoryRetrievalOptions = {}
+  options: MemoryRetrievalOptions = {},
+  /** In how many recent turns each memory was injected (see SelectionContext). */
+  recentUses?: ReadonlyMap<string, number>
 ): Promise<RetrievalOutcome> {
   const { embeddingModel } = { ...DEFAULT_MEMORY_OPTIONS, ...options };
 
@@ -241,5 +323,5 @@ export async function retrieveMemories(
     return { memory: entry.memory, score, pinned };
   });
 
-  return { result: selectMemories(query, scored, options), computed, degradedReason };
+  return { result: selectMemories(query, scored, options, { recentUses, vectors }), computed, degradedReason };
 }

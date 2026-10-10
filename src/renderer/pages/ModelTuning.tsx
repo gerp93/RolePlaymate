@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import SpeedTestPanel from '../components/SpeedTestPanel';
 import { Link } from 'react-router-dom';
-import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
+import { ModelSamplerDefaults, SamplerParams, TunableSamplerKey } from '../../shared/types/chat';
 import { HardwareSnapshot, ModelSpeedRating } from '../../shared/types/hardware';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../../shared/embeddingModel';
@@ -18,7 +18,7 @@ import { formatResponseTime } from '../utils/formatResponseTime';
 import OllamaRequiredGate from '../components/chat/OllamaRequiredGate';
 
 interface FieldSpec {
-  key: keyof SamplerParams;
+  key: TunableSamplerKey;
   label: string;
   min: number;
   max: number;
@@ -257,7 +257,7 @@ function ModelTuningPage() {
   const [customRows, setCustomRows] = useState<Record<string, ModelSamplerDefaults>>({});
   const [avgResponseByModel, setAvgResponseByModel] = useState<Record<string, { avgMs: number; count: number }>>({});
   const [recommended, setRecommended] = useState<Record<string, SamplerParams>>({});
-  const [drafts, setDrafts] = useState<Record<string, Partial<Record<keyof SamplerParams, string>>>>({});
+  const [drafts, setDrafts] = useState<Record<string, Partial<Record<TunableSamplerKey, string>>>>({});
   const [busyModel, setBusyModel] = useState<string | null>(null);
 
   async function load() {

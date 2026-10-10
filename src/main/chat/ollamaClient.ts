@@ -37,6 +37,16 @@ export interface OllamaOptions {
   top_p?: number;
   top_k?: number;
   repeat_penalty?: number;
+  /** How many of the most recent tokens the repeat penalty looks back over (Ollama's default is 64,
+   * far less than a turn or two of a long reply; -1 is the whole context). */
+  repeat_last_n?: number;
+  /** Drops tokens much less likely than the best one, which trims odd word choices without the
+   * flatness top_p/top_k can cause. */
+  min_p?: number;
+  /** Penalize a token in proportion to how often it has already appeared / simply for having appeared,
+   * which discourages falling back on the same words and phrases. */
+  frequency_penalty?: number;
+  presence_penalty?: number;
   num_predict?: number;
   stop?: string[];
 }
