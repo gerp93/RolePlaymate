@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSecurity } from '../context/SecurityContext';
 import PinModal from './PinModal';
+import RunProgressFooter from './RunProgressFooter';
 import './Layout.css';
 
 interface NavItem {
@@ -120,6 +121,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       >
         {children}
       </main>
+      <RunProgressFooter />
       {pinModalOpen && <PinModal onClose={() => setPinModalOpen(false)} />}
     </div>
   );

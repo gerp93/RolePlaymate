@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import SpeedTestPanel from '../components/SpeedTestPanel';
 import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams, TunableSamplerKey } from '../../shared/types/chat';
@@ -247,7 +248,15 @@ function SpeedCell({
 }
 
 function ModelTuningPage() {
-  const [tab, setTab] = useState<TuningTab>('chat');
+  const [searchParams] = useSearchParams();
+  const linkedTab = searchParams.get('tab');
+  const [tab, setTab] = useState<TuningTab>(
+    linkedTab === 'speed' || linkedTab === 'embedding' ? linkedTab : 'chat'
+  );
+  // Following a link while already on this page (the footer's View) switches to the tab it names.
+  useEffect(() => {
+    if (linkedTab === 'speed' || linkedTab === 'embedding') setTab(linkedTab);
+  }, [linkedTab]);
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
   const [embeddingModels, setEmbeddingModels] = useState<OllamaModelInfo[]>([]);
   const [activeEmbeddingModel, setActiveEmbeddingModel] = useState(DEFAULT_EMBEDDING_MODEL);
