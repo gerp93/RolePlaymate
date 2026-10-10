@@ -99,10 +99,6 @@ export default function GroupList() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Groups</h1>
-      </div>
-
       <div className="card" style={{ marginBottom: 20 }}>
         <p className="text-muted" style={{ marginTop: 0 }}>
           A group is a set of characters that chat together, with its own scenarios and instructions.

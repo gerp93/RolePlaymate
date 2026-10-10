@@ -493,10 +493,6 @@ export default function Settings() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Settings</h1>
-      </div>
-
       <div className="settings-tabs" role="tablist" aria-label="Settings sections">
         {SETTINGS_TABS.map((item) => (
           <button

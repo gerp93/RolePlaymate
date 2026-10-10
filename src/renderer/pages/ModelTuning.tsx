@@ -110,9 +110,6 @@ type TuningTab = 'chat' | 'embedding' | 'speed';
 export default function ModelTuning() {
   return (
     <div>
-      <div className="page-header">
-        <h1>Model Tuning</h1>
-      </div>
       <HardwareSummary />
       <OllamaRequiredGate>
         <ModelTuningPage />

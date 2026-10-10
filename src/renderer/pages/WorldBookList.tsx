@@ -120,10 +120,6 @@ export default function WorldBookList() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>World Books</h1>
-      </div>
-
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="lore-new-book lore-new-book-stacked">
           <LimitedInput

@@ -99,10 +99,6 @@ export default function PersonaList() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Personas</h1>
-      </div>
-
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <LimitedInput

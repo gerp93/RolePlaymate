@@ -141,16 +141,6 @@ export default function CharacterList() {
 
   return (
     <div>
-      <div className="page-header page-header-hero">
-        <img
-          src={`${import.meta.env.BASE_URL}logo.png`}
-          alt="RolePlaymate"
-          className="hero-logo"
-          onError={(e) => (e.currentTarget.style.display = 'none')}
-        />
-        <h1>Characters</h1>
-      </div>
-
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <LimitedInput
