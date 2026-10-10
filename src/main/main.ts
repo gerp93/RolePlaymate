@@ -2702,7 +2702,8 @@ function registerAutomationHandlers() {
           run.status,
           run.error,
           turns,
-          run.finishedAt ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime() : null
+          run.finishedAt ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime() : null,
+          run.requestedTurns
         )
       );
     return { summary, results };
@@ -2719,6 +2720,7 @@ function registerAutomationHandlers() {
     automationRunner.stopBenchmark();
     return { success: true };
   });
+  ipcMain.handle('benchmark:skip', () => ({ skipped: automationRunner.skipCurrentModel() }));
   ipcMain.handle('benchmark:getActive', () => automationRunner.getActiveBenchmark());
   ipcMain.handle('benchmark:list', () => automationRunService.listBenchmarks(securityService.isUnlocked()));
   ipcMain.handle('benchmark:get', (_, id: string) => {

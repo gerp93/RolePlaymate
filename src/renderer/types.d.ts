@@ -306,6 +306,8 @@ declare global {
       benchmark: {
         start: (request: BenchmarkStartRequest) => Promise<BenchmarkSummary>;
         stop: () => Promise<{ success: true }>;
+        /** Move on from the model being tested; what it completed is kept. */
+        skip: () => Promise<{ skipped: boolean }>;
         getActive: () => Promise<BenchmarkProgress | null>;
         list: () => Promise<BenchmarkSummary[]>;
         get: (id: string) => Promise<BenchmarkDetail>;

@@ -7,7 +7,8 @@ import { ChatDebugInfo, SamplerParams } from './chat';
  * main/chat/automationRunner.ts.
  */
 
-export type AutomationRunStatus = 'running' | 'completed' | 'stopped' | 'failed' | 'interrupted';
+/** 'skipped': a speed-test model the user moved past before it finished; what it had completed is kept. */
+export type AutomationRunStatus = 'running' | 'completed' | 'stopped' | 'skipped' | 'failed' | 'interrupted';
 
 export const MIN_AUTOMATION_TURNS = 1;
 export const MAX_AUTOMATION_TURNS = 100;
@@ -177,6 +178,10 @@ export interface BenchmarkModelResult {
   runId: string;
   status: AutomationRunStatus;
   error: string | null;
+  /** How many of this model's turns were completed, out of how many it was asked for -- per model, because a
+   * skipped or stopped model has fewer than the test's setting. */
+  turnsCompleted: number;
+  turnsRequested: number | null;
   /** Replies the figures are based on (the first is left out as a warm-up when there are enough). */
   repliesMeasured: number;
   medianReplyMs: number | null;

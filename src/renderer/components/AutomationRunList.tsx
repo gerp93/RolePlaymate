@@ -6,6 +6,7 @@ const STATUS_LABEL: Record<AutomationRunSummary['status'], string> = {
   running: 'Running',
   completed: 'Completed',
   stopped: 'Stopped',
+  skipped: 'Skipped',
   failed: 'Failed',
   interrupted: 'Interrupted',
 };

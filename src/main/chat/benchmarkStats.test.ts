@@ -59,3 +59,39 @@ test('the Markdown report gives the total time and a run-time column', () => {
   assert.match(md, /\| Run time \| Status \|/);
   assert.match(md, /\| 12m 31s \| completed \|/);
 });
+
+test('each model reports how many turns it completed out of how many it was asked for', () => {
+  const partial = summariseModelRun('slow', 'r1', 'skipped', null, [turn(1, 1000), turn(2, 1000)], 90_000, 35);
+  assert.equal(partial.turnsCompleted, 2);
+  assert.equal(partial.turnsRequested, 35);
+  const unknown = summariseModelRun('x', 'r2', 'completed', null, [turn(1, 1000)]);
+  assert.equal(unknown.turnsRequested, null, 'requested turns are only known when the caller says');
+});
+
+test('the Markdown report shows turns per model, and marks a skipped one', () => {
+  const summary: BenchmarkSummary = {
+    id: 'b',
+    characterName: 'Mara',
+    personaName: 'Tom',
+    scenarioName: null,
+    turns: 35,
+    scripted: true,
+    keepConversations: false,
+    models: ['slow', 'quick'],
+    finishedModels: 2,
+    status: 'completed',
+    error: null,
+    startedAt: '2026-10-10T05:00:00.000Z',
+    finishedAt: '2026-10-10T05:30:00.000Z',
+  };
+  const all = [turn(1, 1000), turn(2, 1000), turn(3, 1000)];
+  const results = [
+    summariseModelRun('slow', 'r1', 'skipped', null, all.slice(0, 2), 60_000, 35),
+    summariseModelRun('quick', 'r2', 'completed', null, all, 120_000, 35),
+  ];
+  const md = renderBenchmarkMarkdown({ summary, results });
+  assert.match(md, /\| Model \| Turns \| Replies timed \|/);
+  assert.match(md, /\| slow \| 2 of 35 \|/);
+  assert.match(md, /\| quick \| 3 of 35 \|/);
+  assert.match(md, /\| skipped \|/);
+});

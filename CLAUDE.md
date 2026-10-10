@@ -487,6 +487,12 @@ a draft back to its last complete sentence and closes a dangling `*` or `"`. The
 "what the persona is steering toward" directions, added to the persona-drafting prompt only. The first turn's system
 prompt (the character card as given) is kept in the log and shown up front in the Markdown export.
 
+**Skipping a model.** `skipCurrentModel` (Speed test panel's "Skip this model", `benchmark:skip`) cancels the reply in flight and
+ends that model's run the way a stop does, but `run()` records it as `skipped`: what it completed is kept and measured, the
+test carries on with the next model (the conversation is still deleted and the model unloaded), and a stop of the whole test is
+still a stop. Because a skipped or stopped model has fewer turns than the test's setting, each result row carries its own
+`turnsCompleted` of `turnsRequested` (a "Turns" column, and in the Markdown export), and the running row shows live progress.
+
 **Progress footer.** `RunProgressFooter` (rendered by `Layout` under `<main>`) is a flex item, not an overlay, so the page above
 gets shorter: while a speed test (`useSpeedTestRunning`) or an automated run (`useAutomation`) is going it shows the label,
 "turn N of M" / "model N of M (name)", a bar and percent, and a View link (`/model-tuning?tab=speed`, which Model Tuning reads

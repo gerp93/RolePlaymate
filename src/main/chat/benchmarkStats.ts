@@ -45,7 +45,8 @@ export function summariseModelRun(
   status: AutomationRunStatus,
   error: string | null,
   turns: AutomationTurnLog[],
-  runMs: number | null = null
+  runMs: number | null = null,
+  requestedTurns: number | null = null
 ): BenchmarkModelResult {
   const measured = turns.length >= MIN_TURNS_TO_DROP_WARMUP ? turns.slice(1) : turns;
 
@@ -85,6 +86,8 @@ export function summariseModelRun(
     runId,
     status,
     error,
+    turnsCompleted: turns.length,
+    turnsRequested: requestedTurns,
     repliesMeasured: measured.length,
     medianReplyMs: median(replyMs),
     p90ReplyMs: percentile(replyMs, 0.9),
@@ -125,12 +128,12 @@ export function renderBenchmarkMarkdown(detail: BenchmarkDetail): string {
     'Medians over replies after the first (which carries the model load). Tokens/s is reply-writing speed, prompt tok/s is prompt-reading speed.'
   );
   out.push('');
-  out.push('| Model | Replies | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Reply length (tokens) | Cold load | Run time | Status |');
-  out.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
+  out.push('| Model | Turns | Replies timed | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Reply length (tokens) | Cold load | Run time | Status |');
+  out.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
   const ordered = [...results].sort((a, b) => (b.medianTokensPerSec ?? -1) - (a.medianTokensPerSec ?? -1));
   for (const r of ordered) {
     out.push(
-      `| ${r.model} | ${r.repliesMeasured} | ${seconds(r.medianReplyMs)} | ${seconds(r.p90ReplyMs)} | ` +
+      `| ${r.model} | ${r.turnsCompleted}${r.turnsRequested === null ? '' : ` of ${r.turnsRequested}`} | ${r.repliesMeasured} | ${seconds(r.medianReplyMs)} | ${seconds(r.p90ReplyMs)} | ` +
         `${fixed(r.medianTokensPerSec, 1)}${r.approximate ? '*' : ''} | ${fixed(r.medianPromptTokensPerSec, 0)} | ` +
         `${seconds(r.medianFirstTokenMs)} | ${fixed(r.avgReplyTokens, 0)} | ${seconds(r.coldLoadMs)} | ` +
         `${r.runMs === null ? '-' : formatDuration(r.runMs)} | ` +
