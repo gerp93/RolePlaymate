@@ -5,13 +5,13 @@
   min-height: 420px;
 }
 
-.hardpoint-page-header {
+.hardpoint-page-footer {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-top: 12px;
 }
 
 .hardpoint-page-actions {
@@ -23,7 +23,7 @@
 .hardpoint-frame {
   flex: 1;
   width: 100%;
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
-  border-radius: 8px;
-  background: var(--color-bg, #111);
+  border: 0;
+  background: transparent;
+  min-height: 0;
 }
