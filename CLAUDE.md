@@ -487,6 +487,14 @@ a draft back to its last complete sentence and closes a dangling `*` or `"`. The
 "what the persona is steering toward" directions, added to the persona-drafting prompt only. The first turn's system
 prompt (the character card as given) is kept in the log and shown up front in the Markdown export.
 
+**Per-model history on Model Tuning.** Each model's `BenchmarkModelResult` is saved on its run row (`benchmark_result`) as the run
+finishes, so `getModelSpeedHistory` can list a model's results across all tests (newest first, 10 per model, hidden-item filtered)
+without re-reading megabytes of turn logs; a run from before that is worked out once from its turn log and stored. The Chat models
+table shows the latest as "measured: N tok/s" under the heuristic "On this PC" rating, coloured by `measuredSpeedTier`
+(>= 30 tokens/s Fast, >= 8 OK, else Slow -- chosen from a real test where GPU-resident models measured 70-137 and CPU-spilled ones
+2-13), with a warning when the estimate promised better than the test measured (`estimateWasTooOptimistic`), and a row expander for
+the latest result in full plus earlier tests, each linking to `/model-tuning?tab=speed&test=<id>`.
+
 **Skipping a model.** `skipCurrentModel` (Speed test panel's "Skip this model", `benchmark:skip`) cancels the reply in flight and
 ends that model's run the way a stop does, but `run()` records it as `skipped`: what it completed is kept and measured, the
 test carries on with the next model (the conversation is still deleted and the model unloaded), and a stop of the whole test is

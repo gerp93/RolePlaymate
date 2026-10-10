@@ -297,6 +297,9 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   ensureColumn(db, 'characters', 'description', 'TEXT');
   // Which speed test (automation_benchmarks) a run belongs to; null for an ordinary automated run.
   ensureColumn(db, 'automation_runs', 'benchmark_id', 'TEXT');
+  // The speed-test figures for that model's run (a BenchmarkModelResult as JSON), saved when the run finishes so a
+  // model's history can be listed without re-reading every turn log. Filled in lazily for runs from before it.
+  ensureColumn(db, 'automation_runs', 'benchmark_result', 'TEXT');
   // Made on the fly from a chat ("Respond as" -> Quick character). Kept out of the main Characters
   // list until promoted; otherwise an ordinary character.
   ensureColumn(db, 'characters', 'is_quick', 'INTEGER NOT NULL DEFAULT 0');

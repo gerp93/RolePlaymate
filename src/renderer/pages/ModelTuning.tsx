@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SpeedTestPanel from '../components/SpeedTestPanel';
+import ModelSpeedDetails, { MeasuredSpeedLine } from '../components/ModelSpeedDetails';
+import { ModelSpeedHistory } from '../../shared/types/automation';
+import { estimateWasTooOptimistic, measuredSpeedTier } from '../../shared/utils/measuredSpeed';
 import { useSpeedTestRunning } from '../hooks/useSpeedTestRunning';
 import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams, TunableSamplerKey } from '../../shared/types/chat';
@@ -249,6 +252,21 @@ function ModelTuningPage() {
   const [searchParams] = useSearchParams();
   // So the tab can say a test is going even while another tab is open.
   const speedTest = useSpeedTestRunning();
+  // Each model's speed-test results (newest first), and which rows are expanded to show them.
+  const [speedHistory, setSpeedHistory] = useState<ModelSpeedHistory>({});
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+  // Loaded on mount and again whenever a test ends, so a finished test shows up without a reload.
+  useEffect(() => {
+    if (speedTest.running) return;
+    void window.electronAPI.benchmark.modelHistory().then(setSpeedHistory);
+  }, [speedTest.running]);
+  const toggleExpanded = (model: string) =>
+    setExpandedModels((current) => {
+      const next = new Set(current);
+      if (next.has(model)) next.delete(model);
+      else next.add(model);
+      return next;
+    });
   const linkedTab = searchParams.get('tab');
   const [tab, setTab] = useState<TuningTab>(
     linkedTab === 'speed' || linkedTab === 'embedding' ? linkedTab : 'chat'
@@ -592,9 +610,28 @@ function ModelTuningPage() {
                   speed &&
                   (speed.tier === 'Fast' || speed.tier === 'OK') &&
                   (tier === 'Best' || tier === 'Better');
+                const history = speedHistory[info.name] ?? [];
+                const latestSpeed = history[0];
+                const measuredTokens = latestSpeed?.result.medianTokensPerSec ?? null;
+                const tooOptimistic =
+                  !!speed && measuredTokens !== null && estimateWasTooOptimistic(speed.tier, measuredSpeedTier(measuredTokens));
+                const expanded = expandedModels.has(info.name);
                 return (
-                <tr key={info.name} style={rowStyle}>
+                <Fragment key={info.name}>
+                <tr style={rowStyle}>
                   <td style={{ padding: '8px 10px 8px 0', whiteSpace: 'nowrap' }}>
+                    {history.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ float: 'left', marginRight: 8, padding: '0 6px', lineHeight: 1.4 }}
+                        aria-expanded={expanded}
+                        title={expanded ? 'Hide speed tests' : `Show speed tests (${history.length})`}
+                        onClick={() => toggleExpanded(info.name)}
+                      >
+                        {expanded ? '▾' : '▸'}
+                      </button>
+                    )}
                     {info.family && (
                       <div style={{ fontWeight: 600 }}>{displayModelName(info)}</div>
                     )}
@@ -611,6 +648,7 @@ function ModelTuningPage() {
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                     <SpeedCell speed={speed} sweetSpot={!!sweetSpot} hardware={hardware} />
+                    {latestSpeed && <MeasuredSpeedLine entry={latestSpeed} tooOptimistic={tooOptimistic} />}
                   </td>
                   <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
                     {avgResponseByModel[info.name] ? (
@@ -694,6 +732,14 @@ function ModelTuningPage() {
                     />
                   </td>
                 </tr>
+                {expanded && history.length > 0 && (
+                  <tr style={{ opacity: enabled ? 1 : 0.45 }}>
+                    <td colSpan={17} style={{ padding: '4px 10px 10px 34px' }}>
+                      <ModelSpeedDetails entries={history} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
                 );
               })}
             </tbody>
