@@ -27,6 +27,7 @@ import {
 } from '../../shared/types/automation';
 import { DEFAULT_MEMORY_OPTIONS } from './memoryRetrieval';
 import { textSimilarity } from './memoryExtraction';
+import { findOverusedPhrases, overusedHits, repeatedSequenceShare } from './phraseGuard';
 import { DEFAULT_HISTORY_LIMIT } from './chatSession';
 import { getConciseReplies, getConfiguredMemoryEmbeddingModel, getNarrationPov } from '../dbLocation';
 
@@ -111,10 +112,18 @@ const MAX_REPEAT_RETRIES = 2;
 const MAX_REPEAT_STRIKES = 3;
 /** Very short lines ("Okay.") overlap trivially and are not worth redrafting over. */
 const REPEAT_MIN_WORDS = 6;
+/** A reply this much of which (by 5-word sequences) was already said in the recent replies counts as a
+ * repeat even when no single earlier reply is close by word overlap: a paraphrase loop says the same
+ * things in new words, in the same order. Calibrated on a 100-turn run (20 of 99 replies >= 0.5, and the
+ * visibly looping ones 0.43 to 0.89). */
+const REPEAT_SEQUENCE_SHARE = 0.4;
 
 function isRepeat(text: string, recent: string[]): boolean {
   if (text.split(/\s+/).filter(Boolean).length < REPEAT_MIN_WORDS) return false;
-  return recent.some((earlier) => textSimilarity(text, earlier) >= REPEAT_SIMILARITY);
+  return (
+    recent.some((earlier) => textSimilarity(text, earlier) >= REPEAT_SIMILARITY) ||
+    repeatedSequenceShare(text, recent) >= REPEAT_SEQUENCE_SHARE
+  );
 }
 
 /**
@@ -225,7 +234,8 @@ export class AutomationRunner {
         samplers: request.samplers ?? null,
         directionsEachTurn: request.directions?.trim() || null,
         personaDirections: request.personaDirections?.trim() || null,
-        scriptedPersonaLines: Boolean(options.scripted),
+        scriptedPersonaLines: Boolean(options.scripted ?? request.scriptedPersona),
+        personaModel: request.personaModel?.trim() || null,
         repeatGuard: options.repeatGuard !== false,
         historyLimit: DEFAULT_HISTORY_LIMIT,
         memoryRetrieval: { ...DEFAULT_MEMORY_OPTIONS, embeddingModel: getConfiguredMemoryEmbeddingModel() },
@@ -399,6 +409,9 @@ export class AutomationRunner {
     let status: AutomationRunStatus = 'completed';
     let error: string | null = null;
     let repeatStrikes = 0;
+    // The generic scripted lines (a speed test, or chosen on the Automate tab) and who writes the persona's side.
+    const scripted = Boolean(options.scripted ?? request.scriptedPersona);
+    const personaModel = request.personaModel?.trim() || request.model;
 
     try {
       for (let index = 1; index <= request.turns; index += 1) {
@@ -420,7 +433,7 @@ export class AutomationRunner {
         const retries = { persona: 0, character: 0 };
         let repeated = false;
         const guard = options.repeatGuard !== false;
-        if (!waiting && options.scripted) {
+        if (!waiting && scripted) {
           // Speed test: the same words for every model, in the same order. No model call for it.
           scriptedLine = SCRIPTED_LINES[(index - 1) % SCRIPTED_LINES.length];
         } else if (!waiting) {
@@ -436,7 +449,7 @@ export class AutomationRunner {
               request.personaId,
               personaName,
               personaBackground,
-              request.model,
+              personaModel,
               DEFAULT_HISTORY_LIMIT,
               { directions: request.personaDirections?.trim() || undefined, avoidRepeats }
             );
@@ -483,18 +496,31 @@ export class AutomationRunner {
         // The character's reply, held to the same standard against her own earlier replies. A redo
         // is the app's normal way of getting another version of a reply (the repeat stays reachable
         // as a variant), run a little hotter and with a firmer repeat penalty.
-        const earlierReplies = this.conversations
-          .getMessages(conversationId)
+        const everything = this.conversations.getMessages(conversationId);
+        const earlierReplies = everything
           .filter((message) => message.role === 'assistant' && message.id !== result.message.id)
           .slice(-REPEAT_WINDOW)
           .map((message) => message.content);
+        // The wording this character has worn out -- the same habits the end-of-prompt reminder quotes back to
+        // her. Asking is only a request and a roleplay model ignores it often enough, so a reply that uses
+        // them anyway is redone as well.
+        const avoidNow = guard
+          ? findOverusedPhrases(
+              everything.filter((m) => m.role === 'assistant' && m.id !== result.message.id).map((m) => m.content),
+              {},
+              everything.filter((m) => m.role === 'user').map((m) => m.content)
+            )
+          : undefined;
+        let stockHits = guard ? overusedHits(result.message.content, avoidNow) : [];
+        let stockRetries = 0;
         while (
           guard &&
           !active.stopRequested &&
-          isRepeat(result.message.content, earlierReplies) &&
+          (isRepeat(result.message.content, earlierReplies) || stockHits.length > 0) &&
           retries.character < MAX_REPEAT_RETRIES
         ) {
           retries.character += 1;
+          if (stockHits.length > 0) stockRetries += 1;
           result = {
             ...(await this.chat.regenerate(
               conversationId,
@@ -502,14 +528,21 @@ export class AutomationRunner {
               {
                 ...request.samplers,
                 temperature: Math.min((request.samplers?.temperature ?? 0.85) + 0.15 * retries.character, 1.3),
-                repetitionPenalty: 1.2,
+                repetitionPenalty: 1.25,
+                // Reach back over the whole of recent replies, not just the last few dozen tokens.
+                repeatLastN: 512,
+                frequencyPenalty: 0.4,
               },
               request.model,
-              false
+              false,
+              stockHits.length > 0 ? stockHits : undefined
             )),
             userMessage: result.userMessage,
           };
+          stockHits = overusedHits(result.message.content, avoidNow);
         }
+        // Only a near-copy counts toward ending the run: a stock phrase the model keeps using after two
+        // redos would otherwise stop most runs, and is logged (stockPhraseHits) instead.
         repeated = repeated || (guard && isRepeat(result.message.content, earlierReplies));
 
         const user = result.userMessage ?? waiting!;
@@ -526,6 +559,8 @@ export class AutomationRunner {
             generationMs: result.message.generationMs,
           },
           repeatRetries: retries,
+          stockPhraseRetries: stockRetries,
+          stockPhraseHits: stockHits,
           stillRepeating: repeated,
           debug: slimDebug(result.debug, index === 1),
         };

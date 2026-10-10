@@ -411,6 +411,14 @@ same reason the other reply guidance is: templates are versioned in the database
 install never picks up a changed default. The extractor is told to skip momentary state (positions,
 what someone is doing or waiting for, sounds, scenery), which is true for one beat and wrong after.
 
+Two more memory guards, from a run where "Cormac is taking a closer look at the evidence" was injected on 40 of 100 turns and
+"fear and urgency are evident in her demeanor" on 25: `whyUnfit` now rejects what someone is in the middle of doing (only
+when the person is the sentence's subject at its start -- "She believes someone at the Bureau is watching her" is a fact)
+and "evident / demeanor / body language" commentary; and `selectMemories` leaves out any memory already injected in
+`RECENT_USE_LIMIT` (5) of the last 10 turns, founding memories included, because the gentle score penalty cannot stop a fact
+that matches everything. Memories stored before the filters were this strict stay in the list but are not injected
+(`retrieve` skips auto memories that `whyUnfit` rejects).
+
 Extraction quality has four layers, added after a 100-turn automated run produced 234 memories that were
 mostly paraphrases of the scene's mood ("The atmosphere is one of tender, loving intimacy"), which
 retrieval then ranked as the most relevant memories to that same scene: the prompt rules above; text filters
@@ -505,6 +513,26 @@ tok/s likewise, because wall time per reply mostly measures how long the reply h
 counters falls back to tokens over wall time, and the result is flagged approximate. `summariseModelRun` reports
 **medians** (and p90) and drops the first reply as warm-up (its model load is shown separately as cold load),
 when there are at least 3 turns. Not measured yet: GPU/CPU split (Ollama's `/api/ps`) and text-to-speech.
+
+**Enforcing, not just asking (automation).** Quoting a character's worn-out phrases back to her (`describeOverused`) is
+only a request, and a roleplay model ignores it often enough -- one 100-turn run had "take a deep breath" in 43% of
+replies with the request in every prompt. So the runner also **redoes** a reply that uses a flagged phrase or opening
+(`overusedHits`, against the same `findOverusedPhrases` list the reminder quotes), up to `MAX_REPEAT_RETRIES` shared with
+the near-copy redo. A redo names what was reused (`retryAvoid` -> "Your previous attempt ... reused ...") and samples
+harder (repeat penalty 1.25, `repeat_last_n` 512, frequency penalty 0.4, temperature up). A phrase still used after the
+redos is only **logged** (`stockPhraseHits`, shown in the export), never a strike: the 3-strike stop stays reserved for
+near-copies, or most runs would end early. Not done for normal chat: a redo there would have to replace text already
+streamed to the screen (a new stream "reset" event), so that waits for evidence that redoing actually works.
+
+**What counts as a repeat.** `isRepeat` is word-set overlap >= 0.8 *or* `repeatedSequenceShare` >= 0.4: the share of the
+reply's 5-word sequences already used in the last 6 replies. Overlap misses a paraphrase loop that says the same things in
+new words in the same order ("Your corruption ends now... no more secrets or lies from behind closed doors", ten times);
+long shared sequences do not (0.43 to 0.89 on the looping replies of a real run, 20 of 99 replies >= 0.5).
+
+**Who writes the persona's side.** The persona's lines are drafted by the same roleplay model, which writes fragments,
+mixes person and walks off alone, and the character copies it. `AutomationStartRequest.personaModel` picks a different model
+for the persona (the Ollama-swap caveat is shown in the panel), and `scriptedPersona` sends the generic
+`SCRIPTED_LINES` instead, so only the character's behaviour is being tested.
 
 One run at a time app-wide. Groups are not supported (their round-robin
 speaker lives in the renderer).

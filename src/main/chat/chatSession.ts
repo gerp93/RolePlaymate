@@ -16,7 +16,7 @@ import {
   MemoryRetrievalOptions,
   MemoryWithEmbedding,
 } from './memoryRetrieval';
-import { extractMemories, pickSemanticallyNew } from './memoryExtraction';
+import { extractMemories, pickSemanticallyNew, whyUnfit } from './memoryExtraction';
 import { SCENE_CHECK_EVERY, buildSceneCheckPrompt, parseSceneSuggestion } from './sceneSuggestion';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply, SuggestionExtras } from './suggestReply';
@@ -216,7 +216,8 @@ export function withStyleReminder(
   otherCharacters: string[] = [],
   directions?: string,
   hasMemories = false,
-  sceneNote?: string | null
+  sceneNote?: string | null,
+  retryAvoid?: string[]
 ): OllamaChatMessage[] {
   // What this character keeps saying: found from their own earlier replies in this very request (the
   // history is already in `messages`, redo and continue included). Whatever the other side says too is
@@ -236,6 +237,7 @@ export function withStyleReminder(
     hasMemories,
     avoid,
     sceneNote,
+    retryAvoid,
   });
 
   const last = messages[messages.length - 1];
@@ -950,7 +952,8 @@ export class ChatSessionManager {
     onToken: (text: string) => void,
     samplers?: Partial<SamplerParams>,
     model?: string,
-    suggestScene = true
+    suggestScene = true,
+    retryAvoid?: string[]
   ): Promise<GenerateResult> {
     const session = this.getSession(conversationId);
     if (session.abort) {
@@ -1000,7 +1003,8 @@ export class ChatSessionManager {
       pending.otherCharacters,
       pending.directions,
       pending.systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`),
-      this.sceneNoteFor(conversationId)
+      this.sceneNoteFor(conversationId),
+      retryAvoid
     );
 
     const controller = new AbortController();
@@ -1753,7 +1757,11 @@ export class ChatSessionManager {
   ) {
     if (explicitMemories) return null;
 
-    const rows = this.conversations.listMemoriesWithEmbeddings(conversationId);
+    // Memories stored before the extraction filters were as strict (second person, commentary on the scene,
+    // what someone was in the middle of doing) stay in the list but are not put in front of the model.
+    const rows = this.conversations
+      .listMemoriesWithEmbeddings(conversationId)
+      .filter((row) => row.memory.source === 'manual' || !whyUnfit(row.memory.content));
     if (rows.length === 0) return null;
 
     const candidates: MemoryWithEmbedding[] = rows.map((row) => ({

@@ -17,6 +17,8 @@ export interface StyleReminderInput {
   avoid?: OverusedPhrases;
   /** The chat's scene note: where the story is now, until the user changes it. */
   sceneNote?: string | null;
+  /** On a redo made because the last attempt fell back on overused wording: what it reused. */
+  retryAvoid?: string[];
 }
 
 /**
@@ -38,6 +40,7 @@ export function buildStyleReminder({
   hasMemories = false,
   avoid,
   sceneNote,
+  retryAvoid,
 }: StyleReminderInput): string {
   const lines: string[] = [];
 
@@ -68,6 +71,13 @@ export function buildStyleReminder({
   // loses to the habit it is imitating from that history.
   const variety = describeOverused(avoid);
   if (variety) lines.push(variety);
+  if (retryAvoid && retryAvoid.length > 0) {
+    lines.push(
+      `Your previous attempt at this reply reused wording you have already worn out (${retryAvoid
+        .map((phrase) => `"${phrase}"`)
+        .join(', ')}). Write the reply again without any of it: a different opening, a different gesture or reaction, different words.`
+    );
+  }
 
   lines.push(
     `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`

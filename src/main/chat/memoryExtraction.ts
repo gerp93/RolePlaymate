@@ -89,6 +89,19 @@ export function whyUnfit(candidate: string): 'second person' | 'commentary' | 'm
   ) {
     return 'commentary';
   }
+  // The model reading a mood or a body off the scene: "fear and urgency are evident in her demeanor".
+  if (/\b(?:evident|apparent)\b|\bdemeanou?r\b|\bbody language\b/i.test(text)) return 'commentary';
+  // What someone is in the middle of doing: "Cormac is taking a closer look at the evidence". True for a
+  // line or two and then false for the rest of the story, yet it was injected on 40 of 100 turns in one run.
+  // Only when the person is the sentence's subject, right at its start: "She believes someone at the Bureau
+  // is watching her" is a fact, and its own subject comes later.
+  if (
+    /^\W*(?:[\w'’.-]+\s+){1,3}(?:is|are|was|were)\s+(?:now\s+|still\s+|currently\s+|just\s+)?(?:taking|having|giving|looking|examining|studying|inspecting|searching|waiting|standing|sitting|walking|moving|hiding|holding|pointing|gesturing|glancing|watching|listening|speaking|talking|asking|whispering|preparing|reaching|stepping|approaching|leaning|pressing|clutching|gripping|scanning|checking|reading|typing|sending|about to|trying to|beginning to|ready to)\b/i.test(
+      text
+    )
+  ) {
+    return 'momentary';
+  }
   // Scene upkeep: what is going on right now, not what happened.
   if (/\b(?:is|are) (?:becoming|getting|growing|starting to)\b|\bcontinues? to\b|\b(?:keeps?|keep) (?:blaring|building|growing|rising)\b/i.test(text)) {
     return 'momentary';

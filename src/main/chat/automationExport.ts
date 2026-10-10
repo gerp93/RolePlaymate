@@ -73,6 +73,15 @@ export function renderRunMarkdown(log: AutomationRunLog): string {
       );
       out.push('');
     }
+    if (turn.stockPhraseRetries && turn.stockPhraseRetries > 0) {
+      out.push(
+        `Reply redone for stock phrases x${turn.stockPhraseRetries}` +
+          (turn.stockPhraseHits && turn.stockPhraseHits.length > 0
+            ? ` -- still used: ${turn.stockPhraseHits.map((phrase) => `"${phrase}"`).join(', ')}.`
+            : '.')
+      );
+      out.push('');
+    }
     out.push(`Retrieval query: ${JSON.stringify(turn.debug.retrieval?.query ?? '')}`);
     const retrieval = turn.debug.retrieval;
     if (!retrieval) {

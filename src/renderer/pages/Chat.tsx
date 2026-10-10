@@ -1811,6 +1811,7 @@ export default function Chat() {
               model={model}
               samplers={samplers}
               isGroup={Boolean(groupId)}
+              models={modelOptions.map((m) => m.name)}
               chatBusy={session.isGenerating}
             />
           }
