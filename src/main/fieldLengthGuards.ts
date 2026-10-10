@@ -44,6 +44,10 @@ export function guardChatMessage(value: string): void {
   assertMaxLength(value, FIELD_LIMITS.chatMessage, 'Message');
 }
 
+export function guardSceneNote(value: string | null | undefined): void {
+  assertMaxLength(value, FIELD_LIMITS.sceneNote, 'Scene note');
+}
+
 export function guardDirections(value: string | null | undefined): void {
   assertMaxLength(value, FIELD_LIMITS.directions, 'Directions');
 }

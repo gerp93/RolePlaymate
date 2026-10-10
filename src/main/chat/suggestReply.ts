@@ -43,6 +43,8 @@ export interface SuggestionExtras {
   avoid?: OverusedPhrases;
   /** The scene has been going in circles (found by suggestPersonaReply): ask for a change. */
   stalled?: boolean;
+  /** The chat's scene note, so the persona's line stays where the story is now. */
+  sceneNote?: string | null;
 }
 
 function buildSuggestionPrompt(
@@ -72,6 +74,7 @@ function buildSuggestionPrompt(
     `next, responding to ${characterName}'s most recent message above. Write ONE short,`,
     `in-character message as ${personaName}: their next line of dialogue and/or actions, in`,
     'the same voice as their earlier lines above.',
+    ...(extras.sceneNote?.trim() ? ['', `Current scene (stay in it): ${extras.sceneNote.trim()}`] : []),
     ...(direction ? ['', `What ${personaName} is aiming for in this message: ${direction}`] : []),
     ...(describeOverused(extras.avoid) ? ['', describeOverused(extras.avoid).replace(/^Variety: /, 'Variety - ')] : []),
     ...(extras.stalled ? ['', STALL_NUDGE] : []),

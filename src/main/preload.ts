@@ -136,6 +136,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chatStyle: {
     getConcise: () => ipcRenderer.invoke('chatStyle:getConcise'),
     setConcise: (value: boolean) => ipcRenderer.invoke('chatStyle:setConcise', value),
+    getSceneSuggestions: () => ipcRenderer.invoke('chatStyle:getSceneSuggestions'),
+    setSceneSuggestions: (value: boolean) => ipcRenderer.invoke('chatStyle:setSceneSuggestions', value),
     getPov: () => ipcRenderer.invoke('chatStyle:getPov'),
     setPov: (value: 'first' | 'third' | null) => ipcRenderer.invoke('chatStyle:setPov', value),
   },
@@ -211,6 +213,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: unknown, payload: unknown) => callback(payload);
       ipcRenderer.on('chat:stream', handler);
       return () => ipcRenderer.removeListener('chat:stream', handler);
+    },
+
+    // Fires when a reply looks like the story has moved to a new setting: the proposed scene note.
+    onSceneSuggestion: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('chat:scene-suggestion', handler);
+      return () => ipcRenderer.removeListener('chat:scene-suggestion', handler);
     },
 
     // Fires when post-turn extraction stored new memories. Same unsubscribe contract.
@@ -329,6 +338,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('conversations:setScenario', id, scenarioId),
     setKeepForever: (id: string, keepForever: boolean) =>
       ipcRenderer.invoke('conversations:setKeepForever', id, keepForever),
+    setSceneNote: (id: string, note: string | null) => ipcRenderer.invoke('conversations:setSceneNote', id, note),
     setImageMode: (id: string, input: unknown) => ipcRenderer.invoke('conversations:setImageMode', id, input),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
     deleteDraft: (id: string) => ipcRenderer.invoke('conversations:deleteDraft', id),

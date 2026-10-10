@@ -336,6 +336,9 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   ensureColumn(db, 'conversations', 'scenario_id', 'TEXT REFERENCES scenarios(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'scenario_image_id', 'TEXT REFERENCES scenario_images(id) ON DELETE SET NULL');
   ensureColumn(db, 'conversations', 'keep_forever', 'INTEGER NOT NULL DEFAULT 0');
+  // Where the story is now and what is happening, in a sentence or two; shown to the model on every
+  // turn until it is changed. Per conversation, edited by the user (or accepted from a suggestion).
+  ensureColumn(db, 'conversations', 'scene_note', 'TEXT');
   ensureColumn(db, 'scenarios', 'description', 'TEXT');
   // Group chat: a conversation is either one character's (character_id) or a group's (group_id),
   // never both. Each assistant message records who spoke it; speaker_name is a snapshot so a

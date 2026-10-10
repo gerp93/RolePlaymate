@@ -17,6 +17,7 @@ import {
   MemoryWithEmbedding,
 } from './memoryRetrieval';
 import { extractMemories, pickSemanticallyNew } from './memoryExtraction';
+import { SCENE_CHECK_EVERY, buildSceneCheckPrompt, parseSceneSuggestion } from './sceneSuggestion';
 import { CONCISE_MAX_TOKENS, finalizeReply } from './replyFormatting';
 import { suggestPersonaReply, SuggestionExtras } from './suggestReply';
 import { composeImagePrompt, IMAGE_PROMPT_HISTORY_LINES } from './imagePrompt';
@@ -29,6 +30,7 @@ import {
   getConciseReplies,
   getConfiguredMemoryEmbeddingModel,
   getConfiguredMemoryExtractionModel,
+  getSceneSuggestionsEnabled,
   getNarrationPov,
 } from '../dbLocation';
 import { findOverusedPhrases } from './phraseGuard';
@@ -150,6 +152,9 @@ export interface GenerateRequest {
   /** Regenerating must not extract: the exchange has already been mined once, and running it
    * again on a second phrasing of the same reply just inserts near-duplicates. */
   extractMemories?: boolean;
+  /** Look for a change of scene after the reply and offer a new scene note. Default on; automated
+   * runs turn it off (no one is there to answer, and it would add a model call to every timing). */
+  suggestScene?: boolean;
   /** Reply to a user message that is already stored and unanswered (its reply was deleted, or
    * generation failed) instead of inserting a new one. Must be the conversation's last message.
    * `userMessage` is then ignored -- the stored text is the turn's user line. */
@@ -210,7 +215,8 @@ export function withStyleReminder(
   personaName: string | null | undefined,
   otherCharacters: string[] = [],
   directions?: string,
-  hasMemories = false
+  hasMemories = false,
+  sceneNote?: string | null
 ): OllamaChatMessage[] {
   // What this character keeps saying: found from their own earlier replies in this very request (the
   // history is already in `messages`, redo and continue included). Whatever the other side says too is
@@ -229,6 +235,7 @@ export function withStyleReminder(
     directions,
     hasMemories,
     avoid,
+    sceneNote,
   });
 
   const last = messages[messages.length - 1];
@@ -263,6 +270,10 @@ export class ChatSessionManager {
    * event and the renderer refreshes its count. Left unset, extraction still runs and still
    * stores; only the live UI refresh is lost.
    */
+  /** Set by main.ts: pushes a scene-note suggestion to the renderer. */
+  onSceneSuggestion: ((conversationId: string, suggestion: { messageId: string; suggestion: string }) => void) | null =
+    null;
+
   onMemoriesExtracted: ((conversationId: string, added: ConversationMemory[]) => void) | null =
     null;
 
@@ -582,6 +593,87 @@ export class ChatSessionManager {
     this.dropSession(conversationId);
   }
 
+  /**
+   * The model for small background jobs (memory extraction, scene checks): the one chosen in
+   * Settings, otherwise the chat model. A chosen model that is no longer installed (removed, or
+   * never pulled on this machine) falls back to the chat model -- a failed request would be
+   * swallowed by the caller and the job would silently stop happening.
+   */
+  private async sideTaskModel(chatModel: string): Promise<string> {
+    const configured = getConfiguredMemoryExtractionModel();
+    if (!configured) return chatModel;
+    try {
+      return (await this.ollama.isModelAvailable(configured)) ? configured : chatModel;
+    } catch {
+      // Ollama unreachable: the job's own request fails the same way with either model.
+      return chatModel;
+    }
+  }
+
+  /** Per conversation: a check in flight, and the last note offered (so it is not offered twice). */
+  private sceneChecks = new Map<string, { running: boolean; lastSuggested: string | null }>();
+
+  /**
+   * Called when a new assistant reply has been delivered. Fire and forget: whatever it finds arrives
+   * later through `onSceneSuggestion`, and a failure costs the chat nothing.
+   */
+  private scheduleSceneCheck(conversationId: string, messageId: string, chatModel: string, enabled = true): void {
+    if (!enabled || !this.onSceneSuggestion || !getSceneSuggestionsEnabled()) return;
+    void this.checkScene(conversationId, messageId, chatModel);
+  }
+
+  private async checkScene(conversationId: string, messageId: string, chatModel: string): Promise<void> {
+    const state = this.sceneChecks.get(conversationId) ?? { running: false, lastSuggested: null };
+    this.sceneChecks.set(conversationId, state);
+    if (state.running) return;
+
+    try {
+      const conversation = this.conversations.getConversation(conversationId);
+      if (!conversation) return;
+      const messages = this.conversations.getMessages(conversationId);
+      const replies = messages.filter((message) => message.role === 'assistant').length;
+      if (replies === 0 || replies % SCENE_CHECK_EVERY !== 0) return;
+
+      state.running = true;
+      const characterName = conversation.characterId
+        ? (this.characters.getCharacterById(conversation.characterId)?.name ?? 'Character')
+        : 'Character';
+      const personaName =
+        (conversation.userPersonaId ? this.conversations.getPersona(conversation.userPersonaId)?.name : null) ?? 'User';
+      const recent = messages
+        .filter((message) => message.content.trim())
+        .slice(-4)
+        .map((message) => ({
+          speaker: message.role === 'user' ? personaName : (message.speakerName ?? characterName),
+          content: message.content,
+        }));
+
+      const model = await this.sideTaskModel(chatModel);
+      const result = await this.ollama.chat({
+        model,
+        messages: [{ role: 'user', content: buildSceneCheckPrompt(conversation.sceneNote, recent) }],
+        options: { temperature: 0.2, num_predict: 90 },
+      });
+      const suggestion = parseSceneSuggestion(result.content, conversation.sceneNote, state.lastSuggested);
+      if (!suggestion) return;
+
+      // The reply may have been redone, deleted or answered since; only offer it for the latest one.
+      if (this.conversations.getMessages(conversationId).at(-1)?.id !== messageId) return;
+      state.lastSuggested = suggestion;
+      this.onSceneSuggestion?.(conversationId, { messageId, suggestion });
+    } catch {
+      // A scene check is a convenience; never let one disturb the chat.
+    } finally {
+      state.running = false;
+    }
+  }
+
+  /** The chat's current scene note (null when unset) -- read fresh every time, so editing it, or redoing
+   * a reply after editing it, takes effect immediately. */
+  private sceneNoteFor(conversationId: string): string | null {
+    return this.conversations.getConversation(conversationId)?.sceneNote ?? null;
+  }
+
   /** Asks Ollama to drop a model from memory (best effort). A speed test does this between models so
    * each one is timed from a cold start, with the GPU to itself. */
   unloadModel(model: string): Promise<void> {
@@ -737,7 +829,8 @@ export class ChatSessionManager {
       request.personaName,
       groupTurn?.otherNames,
       request.directions,
-      memoryTexts.length > 0
+      memoryTexts.length > 0,
+      this.sceneNoteFor(request.conversationId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -829,6 +922,7 @@ export class ChatSessionManager {
         directions: request.directions,
       };
 
+      this.scheduleSceneCheck(request.conversationId, message.id, request.model, request.suggestScene);
       return { message, debug, userMessage };
     } finally {
       // Always cleared, on success, error, and cancellation alike. The source left its
@@ -855,7 +949,8 @@ export class ChatSessionManager {
     conversationId: string,
     onToken: (text: string) => void,
     samplers?: Partial<SamplerParams>,
-    model?: string
+    model?: string,
+    suggestScene = true
   ): Promise<GenerateResult> {
     const session = this.getSession(conversationId);
     if (session.abort) {
@@ -904,7 +999,8 @@ export class ChatSessionManager {
       pending.personaName,
       pending.otherCharacters,
       pending.directions,
-      pending.systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`)
+      pending.systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`),
+      this.sceneNoteFor(conversationId)
     );
 
     const controller = new AbortController();
@@ -985,6 +1081,7 @@ export class ChatSessionManager {
       // not all the way back to the original response's model.
       pending.model = effectiveModel;
 
+      this.scheduleSceneCheck(conversationId, message.id, effectiveModel, suggestScene);
       return { message, debug };
     } finally {
       session.abort = null;
@@ -1107,7 +1204,8 @@ export class ChatSessionManager {
       request.personaName,
       groupTurn?.otherNames,
       request.directions,
-      memoryTexts.length > 0
+      memoryTexts.length > 0,
+      this.sceneNoteFor(request.conversationId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1195,6 +1293,7 @@ export class ChatSessionManager {
         directions: request.directions,
       };
 
+      this.scheduleSceneCheck(request.conversationId, message.id, request.model, request.suggestScene);
       return { message, debug, userMessage };
     } finally {
       session.abort = null;
@@ -1306,7 +1405,8 @@ export class ChatSessionManager {
       request.personaName,
       groupTurn?.otherNames,
       directions,
-      memoryTexts.length > 0
+      memoryTexts.length > 0,
+      this.sceneNoteFor(request.conversationId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1393,6 +1493,7 @@ export class ChatSessionManager {
         directions,
       };
 
+      this.scheduleSceneCheck(request.conversationId, message.id, request.model, request.suggestScene);
       return { message, debug, userMessage: directionsLine ?? undefined };
     } finally {
       session.abort = null;
@@ -1509,7 +1610,7 @@ export class ChatSessionManager {
       historyTurns: recentTurns,
       characterName: built.characterName,
       personaName: personaName?.trim() || 'You',
-      extras,
+      extras: { ...extras, sceneNote: this.sceneNoteFor(conversationId) },
     });
   }
 
@@ -1709,19 +1810,7 @@ export class ChatSessionManager {
   ): Promise<ConversationMemory[]> {
     try {
       const existing = this.conversations.listMemories(turn.conversationId);
-      // An optional separate model for this job (Settings); otherwise the chat model, as before.
-      // A chosen model that is no longer installed (removed, or never pulled on this machine) falls
-      // back to the chat model: a failed request here would be swallowed below and memories would
-      // silently stop being recorded.
-      let extractionModel = turn.model;
-      const configured = getConfiguredMemoryExtractionModel();
-      if (configured) {
-        try {
-          if (await this.ollama.isModelAvailable(configured)) extractionModel = configured;
-        } catch {
-          // Ollama unreachable: the extraction call below fails the same way either model.
-        }
-      }
+      const extractionModel = await this.sideTaskModel(turn.model);
       const facts = await extractMemories(this.ollama, extractionModel, {
         userMessage: turn.userMessage,
         aiResponse,

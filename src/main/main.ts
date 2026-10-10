@@ -47,6 +47,8 @@ import {
   getConfiguredMemoryEmbeddingModel,
   getConfiguredMemoryExtractionModel,
   setConfiguredMemoryExtractionModel,
+  getSceneSuggestionsEnabled,
+  setSceneSuggestionsEnabled,
   isUsingDefaultMemoryEmbeddingModel,
   setConfiguredMemoryEmbeddingModel,
   resetMemoryEmbeddingModel,
@@ -171,6 +173,7 @@ import {
   guardLoreText,
   guardChatMessage,
   guardDirections,
+  guardSceneNote,
   guardMemory,
   guardStopPhrasesUpdate,
   guardUrl,
@@ -1615,6 +1618,13 @@ function registerIPCHandlers() {
     return { success: true };
   });
 
+  // The after-reply check that offers to update a chat's scene note (see chatSession.checkScene).
+  ipcMain.handle('chatStyle:getSceneSuggestions', () => getSceneSuggestionsEnabled());
+  ipcMain.handle('chatStyle:setSceneSuggestions', (_, value: boolean) => {
+    setSceneSuggestionsEnabled(value === true);
+    return { success: true };
+  });
+
   ipcMain.handle('chatStyle:getPov', () => getNarrationPov());
 
   ipcMain.handle('chatStyle:setPov', (_, value: 'first' | 'third' | null) => {
@@ -2007,6 +2017,13 @@ function registerIPCHandlers() {
     const conversation = conversationService.getConversation(id);
     assertScenarioOwnedBy(scenarioId, conversation?.characterId, conversation?.groupId);
     return conversationService.setConversationScenario(id, scenarioId);
+  });
+
+  // The chat's scene note: where the story is now, shown to the model on every turn. Empty clears it.
+  ipcMain.handle('conversations:setSceneNote', (_, id: string, note: string | null) => {
+    guardSceneNote(note);
+    assertNotAutomating(id);
+    return conversationService.setSceneNote(id, note);
   });
 
   ipcMain.handle('conversations:setKeepForever', (_, id: string, keepForever: boolean) =>
@@ -3159,6 +3176,15 @@ function registerChatHandlers() {
     guardChatMessage(content);
     return chatSessions.editMessage(conversationId, messageId, content);
   });
+
+  // Same for a scene-change suggestion: it is found after the reply has been delivered.
+  chatSessions.onSceneSuggestion = (conversationId, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('chat:scene-suggestion', { conversationId, ...payload });
+      }
+    }
+  };
 
   // Extraction outlives the request that triggered it, so its result is pushed rather than
   // returned. Broadcast to every window: two windows can have the same conversation open.

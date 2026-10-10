@@ -354,6 +354,27 @@ answered with "Reply as <name>" under it, or Send with directions only. `generat
 nor left in the flat history (the cache is rebuilt from the transcript, so it ends with that very
 message and is popped).
 
+## Scene note
+
+A scenario's text is the story's starting setup and cannot follow the characters when they move on; the greeting is
+only the first message. So each conversation has an optional **scene note** (`conversations.scene_note`, at most
+`FIELD_LIMITS.sceneNote` chars): where the story is now, a sentence or two, edited in the Settings tab's Scene section.
+It is added to the code-built end-of-prompt reminder (`buildStyleReminder`'s `sceneNote`, "Current scene ... stay in it")
+and to the persona-drafting prompt, and is read fresh from the row on every generation (`sceneNoteFor`), so a redo after
+editing it uses the new text. It is not a template, for the usual reason (stored templates never pick up changed
+defaults). A branch copies it; a duplicate ("new chat, no transcript") does not.
+
+After a reply, `ChatSessionManager.checkScene` (fire and forget) can **propose** a new note: every `SCENE_CHECK_EVERY`-th
+assistant reply it sends the last 4 lines and the current note to the side-task model (the extraction model, falling back
+to the chat model -- `sideTaskModel`, shared with extraction) and asks for `SAME` or one sentence. `parseSceneSuggestion`
+drops SAME, anything too short, and anything whose word overlap with the current note or the last suggestion offered is
+>= 0.6, so a restatement is never asked about twice. The answer is pushed on `chat:scene-suggestion` and only shown while it
+still belongs to the latest reply; the renderer shows an editable banner above the composer (Update / Not now), never a
+blocking dialog. App-wide off switch in the Scene section (`sceneSuggestions` in `app-config.json`, default on). It is a
+second model call competing with the next reply for the GPU, which is why it is throttled and why the extraction model
+setting matters. **Automated runs and speed tests pass `suggestScene: false`** (no one to answer, and it would add a call to
+every timing); the scene note itself still applies to a run, and its Scene section is locked while one is going.
+
 ## Memories
 
 Facts extracted from a conversation and carried into later turns, so continuity survives the

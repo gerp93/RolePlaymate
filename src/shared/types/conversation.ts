@@ -37,6 +37,9 @@ export interface Conversation {
   personaImageId: string | null;
   /** When true, chat retention rules never delete this conversation. */
   keepForever: boolean;
+  /** Where the story is now and what is happening -- a sentence or two the model is reminded of on
+   * every turn until it changes. Null when unset. See ChatSessionManager.sceneNoteFor. */
+  sceneNote: string | null;
   createdAt: string;
   updatedAt: string;
 }
