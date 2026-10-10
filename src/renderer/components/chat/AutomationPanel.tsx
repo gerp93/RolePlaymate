@@ -124,6 +124,12 @@ export default function AutomationPanel({
                 onChange={(e) => setTurns(e.target.value === '' ? NaN : Number(e.target.value))}
               />
             </label>
+            <p className="automation-help">
+              {Number.isNaN(turns) ? 'N' : turns} turns is {Number.isNaN(turns) ? 'N' : turns} persona lines plus{' '}
+              {Number.isNaN(turns) ? 'N' : turns} replies, {Number.isNaN(turns) ? '2N' : turns * 2} messages. The model
+              runs once for each persona line (unless generic lines are on) and once for each reply, plus a redo when a
+              reply repeats itself.
+            </p>
             <label className="chat-settings-field">
               <span className="chat-settings-field-label">Directions for the character's replies (optional)</span>
               <LimitedTextarea
