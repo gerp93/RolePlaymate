@@ -148,6 +148,45 @@ export function findOverusedPhrases(
   };
 }
 
+/**
+ * Which of the flagged habits a finished reply fell back on anyway. Asking the model to avoid them is
+ * only a request, and a roleplay model ignores it often enough (one run: "take a deep breath" in 43% of
+ * replies with the request in every prompt), so a caller that can redo a reply uses this to decide to.
+ * Returns the phrases found, and "<opening>..." for a flagged opening.
+ */
+export function overusedHits(text: string, found: OverusedPhrases | undefined, openingWords = DEFAULTS.openingWords): string[] {
+  if (!hasOverused(found)) return [];
+  const words = plainWords(text);
+  const padded = ` ${words.join(' ')} `;
+  const hits = found.phrases.filter((phrase) => padded.includes(` ${phrase} `));
+  const opening = words.slice(0, openingWords).join(' ');
+  for (const flagged of found.openings) if (flagged === opening) hits.push(`${flagged}...`);
+  return hits;
+}
+
+/**
+ * How much of a reply is wording it already used: the share of its `n`-word sequences that appear in
+ * any of the `previous` replies. Word-set overlap misses a reply that says the same things in new
+ * words order-for-order the same ("Your corruption ends now... before Haven's citizens... no more
+ * secrets or lies from behind closed doors", ten times over); long shared sequences do not.
+ * 0 when there is not enough text to tell.
+ */
+export function repeatedSequenceShare(text: string, previous: string[], n = 5): number {
+  const sequences = (value: string): Set<string> => {
+    const words = plainWords(value);
+    const found = new Set<string>();
+    for (let i = 0; i + n <= words.length; i += 1) found.add(words.slice(i, i + n).join(' '));
+    return found;
+  };
+  const mine = sequences(text);
+  if (mine.size === 0) return 0;
+  const seen = new Set<string>();
+  for (const earlier of previous) for (const sequence of sequences(earlier)) seen.add(sequence);
+  let shared = 0;
+  for (const sequence of mine) if (seen.has(sequence)) shared += 1;
+  return shared / mine.size;
+}
+
 /** Whether there is anything to tell the model. */
 export function hasOverused(found: OverusedPhrases | undefined): found is OverusedPhrases {
   return !!found && (found.phrases.length > 0 || found.openings.length > 0);

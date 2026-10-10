@@ -24,6 +24,14 @@ export interface AutomationStartRequest {
   directions?: string;
   /** Optional: what the persona is steering toward in every line the model writes for them. */
   personaDirections?: string;
+  /** Optional: a different model to write the persona's lines (default: the same model as the
+   * character). A roleplay model writes poor persona lines -- fragments, mixed person, walking off
+   * alone -- and the character copies them. A second large model that does not fit beside the first
+   * makes Ollama swap models every turn. */
+  personaModel?: string;
+  /** Send the generic scripted lines instead of drafting the persona's side, so only the character's
+   * behaviour is being tested. */
+  scriptedPersona?: boolean;
   samplers?: Partial<SamplerParams>;
 }
 
@@ -78,6 +86,10 @@ export interface AutomationTurnLog {
   /** How many times the persona's line / the character's reply was redone because it nearly
    * repeated something recent. Absent in logs from before the repetition guard. */
   repeatRetries?: { persona: number; character: number };
+  /** The reply was redone this many times because it fell back on wording the character had overused. */
+  stockPhraseRetries?: number;
+  /** Overused wording the final reply still used after any redos. */
+  stockPhraseHits?: string[];
   /** True when it still repeated after the retries. */
   stillRepeating?: boolean;
   debug: AutomationTurnDebug;

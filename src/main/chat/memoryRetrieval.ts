@@ -114,6 +114,10 @@ export interface SelectionContext {
  * sit within a few hundredths of each other, so this is enough to rotate in another. */
 const RECENT_USE_PENALTY = 0.025;
 const RECENT_USE_CAP = 8;
+/** A memory already injected in this many of the last turns is left out for now, whatever its score and
+ * even if it is a founding memory: the score penalty above is too gentle to stop a fact that matches
+ * everything (one sat in the prompt for 40 of 100 turns). It returns once it has dropped out of the window. */
+export const RECENT_USE_LIMIT = 5;
 /** Share of the slots held for the founding memories (rounded down), and which count as founding: the
  * oldest 15% of the store, at least 8 of them, but never more than the older half. */
 const ANCHOR_SHARE = 1 / 3;
@@ -176,9 +180,15 @@ export function selectMemories(
   selected.sort((a, b) => b.score - a.score);
 
   const adjusted = new Map<string, number>();
-  for (const c of candidates) {
-    const used = Math.min(uses?.get(c.memory.id) ?? 0, RECENT_USE_CAP);
-    adjusted.set(c.memory.id, c.score - RECENT_USE_PENALTY * used);
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const c = candidates[i];
+    const timesUsed = uses?.get(c.memory.id) ?? 0;
+    if (timesUsed >= RECENT_USE_LIMIT) {
+      rejected.push(c);
+      candidates.splice(i, 1);
+      continue;
+    }
+    adjusted.set(c.memory.id, c.score - RECENT_USE_PENALTY * Math.min(timesUsed, RECENT_USE_CAP));
   }
   const adj = (c: ScoredMemory) => adjusted.get(c.memory.id) ?? c.score;
 
