@@ -1776,6 +1776,7 @@ function registerIPCHandlers() {
   });
 
   ipcMain.handle('tts:speak', async (_, request: TtsSpeakRequest) => {
+    assertNoSpeedTest();
     guardTtsVoice(request.voice);
     guardChatMessage(request.text);
     if (!textForSpeech(request.text)) return { status: 'skipped' as const };
@@ -2658,6 +2659,15 @@ function createConversationWithGreeting(input: CreateConversationInput): Convers
   return conversationService.createConversation({ ...input, greeting: built.greeting, greetingSpeakerId });
 }
 
+/** A speed test measures how fast each model replies, so nothing else may use the GPU while it runs:
+ * chat replies, reply suggestions and speech are refused until it finishes or is stopped. (The test's
+ * own conversations are written by the runner directly, not through these handlers.) */
+function assertNoSpeedTest(): void {
+  if (automationRunner.getActiveBenchmark()) {
+    throw new Error('A speed test is running. Chat is paused so its timings stay accurate -- wait for it to finish or stop it.');
+  }
+}
+
 /** An automated run owns its conversation until it ends; the chat can't also write to it. */
 function assertNotAutomating(conversationId: string): void {
   if (automationRunner.isAutomating(conversationId)) {
@@ -2807,6 +2817,7 @@ function registerAutomationHandlers() {
 function registerChatHandlers() {
   ipcMain.handle('chat:send', (event, request: ChatSendRequest & { characterId: string; personaId?: string; model: string }) => {
     assertNotAutomating(request.conversationId);
+    assertNoSpeedTest();
     guardChatMessage(request.message);
     guardDirections(request.directions);
     const streamId = randomUUID();
@@ -2857,6 +2868,7 @@ function registerChatHandlers() {
   // renderer replaces the pending message in place instead of appending a new one.
   ipcMain.handle('chat:regenerate', (event, request: ChatRegenerateRequest) => {
     assertNotAutomating(request.conversationId);
+    assertNoSpeedTest();
     const streamId = randomUUID();
     const sender = event.sender;
 
@@ -2903,6 +2915,7 @@ function registerChatHandlers() {
       request: ChatEditPriorMessageRequest & { characterId: string; personaId?: string; model: string }
     ) => {
       assertNotAutomating(request.conversationId);
+    assertNoSpeedTest();
       guardChatMessage(request.message);
       guardDirections(request.directions);
       const streamId = randomUUID();
@@ -2954,6 +2967,7 @@ function registerChatHandlers() {
     'chat:continue',
     (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; recordDirections?: boolean; samplers?: Partial<SamplerParams> }) => {
       assertNotAutomating(request.conversationId);
+    assertNoSpeedTest();
       guardDirections(request.directions);
       const streamId = randomUUID();
       const sender = event.sender;
@@ -3003,6 +3017,7 @@ function registerChatHandlers() {
     'chat:replyToLast',
     (event, request: { conversationId: string; characterId: string; personaId?: string; model: string; directions?: string; samplers?: Partial<SamplerParams> }) => {
       assertNotAutomating(request.conversationId);
+    assertNoSpeedTest();
       guardDirections(request.directions);
       const streamId = randomUUID();
       const sender = event.sender;
@@ -3139,6 +3154,7 @@ function registerChatHandlers() {
       _,
       request: { conversationId: string; characterId: string; personaId?: string; model: string }
     ) => {
+      assertNoSpeedTest();
       const conversation = conversationService.getConversation(request.conversationId);
       assertHiddenContentAccessible(request.characterId, request.personaId, conversation?.scenarioId, conversation?.groupId, request.conversationId);
       const persona = request.personaId ? conversationService.getPersona(request.personaId) : null;
