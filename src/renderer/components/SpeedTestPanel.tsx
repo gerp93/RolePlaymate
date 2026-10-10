@@ -371,7 +371,7 @@ export default function SpeedTestPanel({ models }: Props) {
             {ordered.length === 0 ? (
               <p className="text-muted">No model has finished yet.</p>
             ) : (
-              <table className="zebra-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <table className="zebra-table speed-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr>
                     <th>Model</th>

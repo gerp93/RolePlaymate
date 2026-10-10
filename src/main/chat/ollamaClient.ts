@@ -156,6 +156,9 @@ export class OllamaClient {
    */
   async chat(request: ChatRequest): Promise<OllamaChatResult> {
     const stream = typeof request.onToken === 'function';
+    // Started before the request goes out: Ollama sends its response headers only when it has something to
+    // say, so a clock started once they arrive measured nothing (every model read 0.0s to first word).
+    const startedAt = performance.now();
     const response = await this.request(
       '/api/chat',
       {
@@ -191,7 +194,6 @@ export class OllamaClient {
     let evalCount: number | null = null;
     let timings: ReplyTimings | null = null;
     let firstTokenMs: number | null = null;
-    const startedAt = performance.now();
 
     for await (const chunk of readNdjson<OllamaChatChunk>(response)) {
       if (chunk.error) {
