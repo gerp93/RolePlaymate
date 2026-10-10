@@ -489,6 +489,12 @@ resolve identically) so no model inherits another's context. After each model it
 to itself. Each model's run is an ordinary `automation_runs` row carrying `benchmark_id`; those are kept out of
 `listRuns` (the Settings and Automate-tab lists), and the summary lives in `automation_benchmarks`.
 
+**Chat is paused while a speed test runs**: `assertNoSpeedTest` makes the main process refuse chat sends, redos, edits that
+regenerate, continues, reply suggestions and speech (`tts:speak`) in *every* conversation until the test finishes or is stopped,
+so nothing else competes for the GPU (the runner writes its own conversations directly, not through those handlers). The chat
+page shows the same overlay as an automated run over the composer, worded for the speed test with the whole-test progress and a
+Stop button (`useSpeedTestRunning`). Only a speed test pauses other chats; an ordinary automated run does not.
+
 What makes the numbers usable: the user side is, by default, `SCRIPTED_LINES` -- generic lines that read
 sensibly after any reply, identical and in the same order for every model (speed depends on tokens in and out, not
 on the story, and a scene each model wrote itself would differ per model; it also skips the persona-drafting call).

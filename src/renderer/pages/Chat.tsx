@@ -24,6 +24,7 @@ import AutomationPanel from '../components/chat/AutomationPanel';
 import AutomationLock from '../components/chat/AutomationLock';
 import AutomationProgress from '../components/chat/AutomationProgress';
 import SceneSuggestionBanner from '../components/chat/SceneSuggestionBanner';
+import { useSpeedTestRunning } from '../hooks/useSpeedTestRunning';
 import { useAutomation } from '../hooks/useAutomation';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
@@ -341,6 +342,8 @@ export default function Chat() {
 
   // Automated runs live in the main process; this only mirrors them and reloads what a run wrote.
   const automation = useAutomation(conversationId ?? null, () => void session.syncFromStore());
+  // While a speed test runs the main process refuses chat replies (nothing else may use the GPU).
+  const speedTest = useSpeedTestRunning();
 
   const latestAssistantMessage = useMemo(() => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -1128,7 +1131,8 @@ export default function Chat() {
   // hold the previous conversation's character until the speaker effect has run.
   const speakerOnRoster = !groupId || rosterCharacters.some((c) => c.id === characterId);
   // A run owns the conversation until it ends -- the main process refuses writes to it as well.
-  const canChat = Boolean(conversationId && characterId && model && speakerOnRoster) && !automation.automatingHere;
+  const canChat =
+    Boolean(conversationId && characterId && model && speakerOnRoster) && !automation.automatingHere && !speedTest.running;
 
   const handleShowPortraitsChange = useCallback((value: boolean) => {
     setShowPortraits(value);
@@ -1577,8 +1581,35 @@ export default function Chat() {
               )}
 
               <AutomationLock
-                locked={automation.automatingHere}
+                locked={automation.automatingHere || speedTest.running}
                 message={
+                  speedTest.running && !automation.automatingHere ? (
+                    <>
+                      <strong>Speed test running</strong>
+                      {speedTest.progress && (
+                        <AutomationProgress
+                          // Whole-test progress: models finished plus the turns done on the current one.
+                          completedTurns={
+                            speedTest.progress.benchmark.finishedModels * speedTest.progress.benchmark.turns +
+                            speedTest.progress.completedTurns
+                          }
+                          requestedTurns={speedTest.progress.benchmark.models.length * speedTest.progress.benchmark.turns}
+                          label={`Model ${Math.min(
+                            speedTest.progress.benchmark.finishedModels + 1,
+                            speedTest.progress.benchmark.models.length
+                          )} of ${speedTest.progress.benchmark.models.length}`}
+                          detail={speedTest.progress.model ?? undefined}
+                        />
+                      )}
+                      <span>
+                        Chat is paused while models are being timed, so nothing else competes for the GPU. It
+                        resumes when the test finishes.
+                      </span>
+                      <button type="button" className="btn btn-danger" onClick={() => void speedTest.stop()}>
+                        Stop speed test
+                      </button>
+                    </>
+                  ) : (
                   <>
                     <strong>Automated run in progress</strong>
                     {automation.active && (
@@ -1592,6 +1623,7 @@ export default function Chat() {
                       Stop
                     </button>
                   </>
+                  )
                 }
               >
               <Composer
