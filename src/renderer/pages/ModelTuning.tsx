@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SpeedTestPanel from '../components/SpeedTestPanel';
+import { useSpeedTestRunning } from '../hooks/useSpeedTestRunning';
 import { Link } from 'react-router-dom';
 import { ModelSamplerDefaults, SamplerParams, TunableSamplerKey } from '../../shared/types/chat';
 import { HardwareSnapshot, ModelSpeedRating } from '../../shared/types/hardware';
@@ -249,6 +250,8 @@ function SpeedCell({
 
 function ModelTuningPage() {
   const [searchParams] = useSearchParams();
+  // So the tab can say a test is going even while another tab is open.
+  const speedTest = useSpeedTestRunning();
   const linkedTab = searchParams.get('tab');
   const [tab, setTab] = useState<TuningTab>(
     linkedTab === 'speed' || linkedTab === 'embedding' ? linkedTab : 'chat'
@@ -495,7 +498,7 @@ function ModelTuningPage() {
           className={`model-tuning-tab${tab === 'speed' ? ' active' : ''}`}
           onClick={() => setTab('speed')}
         >
-          Speed test
+          Speed test{speedTest.running ? ' (running)' : ''}
         </button>
       </div>
 
