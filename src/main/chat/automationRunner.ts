@@ -26,6 +26,7 @@ import {
   MIN_AUTOMATION_TURNS,
 } from '../../shared/types/automation';
 import { DEFAULT_MEMORY_OPTIONS } from './memoryRetrieval';
+import { summariseModelRun } from './benchmarkStats';
 import { textSimilarity } from './memoryExtraction';
 import { findOverusedPhrases, overusedHits, repeatedSequenceShare } from './phraseGuard';
 import { DEFAULT_HISTORY_LIMIT } from './chatSession';
@@ -364,7 +365,7 @@ export class AutomationRunner {
             title: `Speed test: ${model}`,
           });
           conversationId = conversation.id;
-          this.start(
+          const started = this.start(
             {
               conversationId,
               characterId,
@@ -377,6 +378,24 @@ export class AutomationRunner {
           );
           this.emitBenchmark();
           await this.runFinished;
+          // Keep this model's figures with its run, so its history can be listed without re-reading the turn log.
+          const finishedRun = this.runs.getSummary(started.id);
+          if (finishedRun) {
+            this.runs.saveBenchmarkResult(
+              started.id,
+              summariseModelRun(
+                model,
+                started.id,
+                finishedRun.status,
+                finishedRun.error,
+                this.runs.getRunTurns(started.id),
+                finishedRun.finishedAt
+                  ? new Date(finishedRun.finishedAt).getTime() - new Date(finishedRun.startedAt).getTime()
+                  : null,
+                finishedRun.requestedTurns
+              )
+            );
+          }
         } finally {
           // The run row is final by now. Drop the test conversation unless asked to keep it.
           if (conversationId && !request.keepConversations) {

@@ -2720,6 +2720,7 @@ function registerAutomationHandlers() {
     automationRunner.stopBenchmark();
     return { success: true };
   });
+  ipcMain.handle('benchmark:modelHistory', () => automationRunService.getModelSpeedHistory(securityService.isUnlocked()));
   ipcMain.handle('benchmark:skip', () => ({ skipped: automationRunner.skipCurrentModel() }));
   ipcMain.handle('benchmark:getActive', () => automationRunner.getActiveBenchmark());
   ipcMain.handle('benchmark:list', () => automationRunService.listBenchmarks(securityService.isUnlocked()));

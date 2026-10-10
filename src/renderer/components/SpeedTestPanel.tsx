@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Character } from '../../shared/types/character';
 import { UserPersona } from '../../shared/types/userPersona';
 import { Scenario } from '../../shared/types/scenario';
@@ -44,6 +45,8 @@ function formatWhen(iso: string): string {
  */
 export default function SpeedTestPanel({ models }: Props) {
   const { hiddenUnlocked } = useSecurity();
+  const [searchParams] = useSearchParams();
+  const linkedTest = searchParams.get('test');
   const [characters, setCharacters] = useState<Character[]>([]);
   const [personas, setPersonas] = useState<UserPersona[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -57,7 +60,11 @@ export default function SpeedTestPanel({ models }: Props) {
 
   const [progress, setProgress] = useState<BenchmarkProgress | null>(null);
   const [tests, setTests] = useState<BenchmarkSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(linkedTest);
+  // A link from a model's history (Model Tuning) opens that test.
+  useEffect(() => {
+    if (linkedTest) setSelectedId(linkedTest);
+  }, [linkedTest]);
   const [detail, setDetail] = useState<BenchmarkDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

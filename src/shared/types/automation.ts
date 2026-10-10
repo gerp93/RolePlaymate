@@ -215,3 +215,15 @@ export interface BenchmarkProgress {
   completedTurns: number;
   requestedTurns: number;
 }
+
+/** One model's result in one speed test, with enough about the test to place it in a history. */
+export interface ModelSpeedEntry {
+  benchmarkId: string;
+  startedAt: string;
+  characterName: string;
+  scripted: boolean;
+  result: BenchmarkModelResult;
+}
+
+/** Model tag -> its results in speed tests, newest first. */
+export type ModelSpeedHistory = Record<string, ModelSpeedEntry[]>;

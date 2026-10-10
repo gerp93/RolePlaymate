@@ -1,6 +1,9 @@
 import type { DatabaseSync } from './sqlite';
 import { v4 as uuidv4 } from 'uuid';
+import { summariseModelRun } from '../chat/benchmarkStats';
 import {
+  BenchmarkModelResult,
+  ModelSpeedHistory,
   BenchmarkStatus,
   BenchmarkSummary,
   AutomationMemoryEvent,
@@ -310,6 +313,80 @@ export class AutomationRunService {
           .all(summary.id) as { data: string }[]
       ).map((turn) => JSON.parse(turn.data) as AutomationTurnLog),
     }));
+  }
+
+  /** Stores a model's figures for its finished run (see the schema note on benchmark_result). */
+  saveBenchmarkResult(runId: string, result: BenchmarkModelResult): void {
+    this.db.prepare(`UPDATE automation_runs SET benchmark_result = ? WHERE id = ?`).run(JSON.stringify(result), runId);
+  }
+
+  getRunTurns(runId: string): AutomationTurnLog[] {
+    return (
+      this.db
+        .prepare(`SELECT data FROM automation_run_turns WHERE run_id = ? ORDER BY turn_index`)
+        .all(runId) as { data: string }[]
+    ).map((turn) => JSON.parse(turn.data) as AutomationTurnLog);
+  }
+
+  /** The figures for a finished speed-test run: the stored ones, or worked out now from its turn log (and
+   * stored) for a run from before they were kept. */
+  private resultForRun(runId: string, stored: string | null): BenchmarkModelResult | null {
+    if (stored) return JSON.parse(stored) as BenchmarkModelResult;
+    const summary = this.getSummary(runId);
+    if (!summary || summary.status === 'running') return null;
+    const result = summariseModelRun(
+      summary.model,
+      runId,
+      summary.status,
+      summary.error,
+      this.getRunTurns(runId),
+      summary.finishedAt ? new Date(summary.finishedAt).getTime() - new Date(summary.startedAt).getTime() : null,
+      summary.requestedTurns
+    );
+    this.saveBenchmarkResult(runId, result);
+    return result;
+  }
+
+  /**
+   * Every finished speed-test result, grouped by model, newest first and at most `perModel` each. Results
+   * of a hidden character, persona or scenario are left out while the hidden-items PIN is locked, like
+   * the tests themselves.
+   */
+  getModelSpeedHistory(includeHidden: boolean, perModel = 10): ModelSpeedHistory {
+    const hidden = includeHidden ? '' : `AND ${hiddenConditions('b').join(' AND ')}`;
+    const rows = this.db
+      .prepare(
+        `SELECT r.id AS runId, r.model AS model, r.benchmark_result AS stored,
+                b.id AS benchmarkId, b.started_at AS startedAt, b.character_name AS characterName, b.scripted AS scripted
+         FROM automation_runs r JOIN automation_benchmarks b ON b.id = r.benchmark_id
+         WHERE r.status != 'running' ${hidden}
+         ORDER BY b.started_at DESC LIMIT 1000`
+      )
+      .all() as {
+      runId: string;
+      model: string;
+      stored: string | null;
+      benchmarkId: string;
+      startedAt: string;
+      characterName: string;
+      scripted: number;
+    }[];
+
+    const history: ModelSpeedHistory = {};
+    for (const row of rows) {
+      const list = (history[row.model] ??= []);
+      if (list.length >= perModel) continue;
+      const result = this.resultForRun(row.runId, row.stored);
+      if (!result) continue;
+      list.push({
+        benchmarkId: row.benchmarkId,
+        startedAt: row.startedAt,
+        characterName: row.characterName,
+        scripted: !!row.scripted,
+        result,
+      });
+    }
+    return history;
   }
 
   /** A test still marked running when the app starts was cut off. */

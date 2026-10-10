@@ -5,6 +5,7 @@ import { CharacterFieldVersion } from '../shared/types/fieldVersion';
 import { CharacterImage } from '../shared/types/characterImage';
 import { OllamaModelInfo } from '../shared/types/ollama';
 import {
+  ModelSpeedHistory,
   BenchmarkDetail,
   BenchmarkProgress,
   BenchmarkStartRequest,
@@ -308,6 +309,8 @@ declare global {
         stop: () => Promise<{ success: true }>;
         /** Move on from the model being tested; what it completed is kept. */
         skip: () => Promise<{ skipped: boolean }>;
+        /** Each model's speed-test results, newest first. */
+        modelHistory: () => Promise<ModelSpeedHistory>;
         getActive: () => Promise<BenchmarkProgress | null>;
         list: () => Promise<BenchmarkSummary[]>;
         get: (id: string) => Promise<BenchmarkDetail>;
