@@ -592,3 +592,49 @@ textarea {
   opacity: 0.4;
   cursor: default;
 }
+
+/* Bottom bar while an automated run or speed test is going (RunProgressFooter). A flex item under
+   .main-content, so the page above gets shorter rather than being covered. */
+.run-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-top-bar-bg);
+  font-size: 13px;
+}
+
+.run-footer-detail {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.run-footer-bar {
+  flex: 1;
+  min-width: 80px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.run-footer-fill {
+  height: 100%;
+  background: var(--color-accent-blue);
+  transition: width 0.4s ease;
+}
+
+.run-footer-percent {
+  min-width: 3ch;
+  text-align: right;
+}
+
+.run-footer-link {
+  white-space: nowrap;
+}

@@ -487,6 +487,13 @@ a draft back to its last complete sentence and closes a dangling `*` or `"`. The
 "what the persona is steering toward" directions, added to the persona-drafting prompt only. The first turn's system
 prompt (the character card as given) is kept in the log and shown up front in the Markdown export.
 
+**Progress footer.** `RunProgressFooter` (rendered by `Layout` under `<main>`) is a flex item, not an overlay, so the page above
+gets shorter: while a speed test (`useSpeedTestRunning`) or an automated run (`useAutomation`) is going it shows the label,
+"turn N of M" / "model N of M (name)", a bar and percent, and a View link (`/model-tuning?tab=speed`, which Model Tuning reads
+to open its Speed test tab, or `/chat/<id>`; hidden when already there). It is absent when nothing runs. It deliberately shows
+no character or persona names, so a run of a hidden character does not leak them while the PIN is locked. A speed test takes
+priority over the per-model run it is driving.
+
 ### Speed tests
 
 Model Tuning -> **Speed test** compares models on this PC without anyone chatting. `startBenchmark` runs the
