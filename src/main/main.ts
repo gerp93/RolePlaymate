@@ -2695,7 +2695,16 @@ function registerAutomationHandlers() {
     if (!summary) return null;
     const results = automationRunService
       .getBenchmarkRuns(id)
-      .map(({ summary: run, turns }) => summariseModelRun(run.model, run.id, run.status, run.error, turns));
+      .map(({ summary: run, turns }) =>
+        summariseModelRun(
+          run.model,
+          run.id,
+          run.status,
+          run.error,
+          turns,
+          run.finishedAt ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime() : null
+        )
+      );
     return { summary, results };
   };
   const benchmarkVisible = (id: string) =>

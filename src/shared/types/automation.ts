@@ -192,6 +192,9 @@ export interface BenchmarkModelResult {
   coldLoadMs: number | null;
   /** True when the speed figures fell back to wall time (Ollama reported no counters). */
   approximate: boolean;
+  /** How long this model's whole run took, start to finish (includes loading it and anything else the
+   * app did around the replies). Null while it is still running. */
+  runMs: number | null;
 }
 
 export interface BenchmarkDetail {

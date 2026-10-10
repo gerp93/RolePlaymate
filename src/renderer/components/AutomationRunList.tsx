@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AutomationExportFormat, AutomationRunSummary } from '../../shared/types/automation';
+import { durationBetween } from '../../shared/utils/formatDuration';
 
 const STATUS_LABEL: Record<AutomationRunSummary['status'], string> = {
   running: 'Running',
@@ -64,6 +65,7 @@ export default function AutomationRunList({ runs, showConversation = false, onCh
             {showConversation && <div className="automation-run-meta">Chat: {run.conversationTitle}</div>}
             <div className="automation-run-meta">
               {run.completedTurns}/{run.requestedTurns} turns · {run.model} · {formatWhen(run.startedAt)}
+              {durationBetween(run.startedAt, run.finishedAt) ? ` · took ${durationBetween(run.startedAt, run.finishedAt)}` : ''}
             </div>
             {run.error && <div className="automation-run-error">{run.error}</div>}
             {run.status !== 'running' && (

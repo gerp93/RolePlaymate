@@ -13,6 +13,7 @@ import {
 } from '../../shared/types/automation';
 import { useSecurity } from '../context/SecurityContext';
 import AutomationProgress from './chat/AutomationProgress';
+import { durationBetween, formatDuration } from '../../shared/utils/formatDuration';
 
 interface Props {
   /** Chat models shown on this page (enabled ones), by tag. */
@@ -351,7 +352,11 @@ export default function SpeedTestPanel({ models }: Props) {
             <p className="text-muted" style={{ fontSize: 12, marginTop: -8 }}>
               {detail.summary.characterName} &amp; {detail.summary.personaName} · {detail.summary.turns} turns per model ·{' '}
               {detail.summary.scripted ? 'same lines for every model' : 'lines written by each model'} ·{' '}
-              {formatWhen(detail.summary.startedAt)} · {STATUS_LABEL[detail.summary.status]}
+              Started {formatWhen(detail.summary.startedAt)}
+              {detail.summary.finishedAt
+                ? ` · finished ${formatWhen(detail.summary.finishedAt)} (took ${durationBetween(detail.summary.startedAt, detail.summary.finishedAt)})`
+                : ''}{' '}
+              · {STATUS_LABEL[detail.summary.status]}
               {detail.summary.error ? ` -- ${detail.summary.error}` : ''}
             </p>
             {ordered.length === 0 ? (
@@ -370,6 +375,7 @@ export default function SpeedTestPanel({ models }: Props) {
                     <th title="Request sent to the first words arriving">To first word</th>
                     <th title="Average reply length in tokens">Avg reply</th>
                     <th title="Time Ollama spent loading the model for the first reply">Cold load</th>
+                    <th title="How long this model's whole run took, start to finish">Run time</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -387,6 +393,7 @@ export default function SpeedTestPanel({ models }: Props) {
                       <td>{seconds(r.medianFirstTokenMs)}</td>
                       <td>{fixed(r.avgReplyTokens, 0)}</td>
                       <td>{seconds(r.coldLoadMs)}</td>
+                      <td>{r.runMs === null ? '-' : formatDuration(r.runMs)}</td>
                       <td title={r.error ?? undefined}>{r.status === 'completed' ? '✓' : r.status}</td>
                     </tr>
                   ))}
@@ -432,6 +439,7 @@ export default function SpeedTestPanel({ models }: Props) {
               </div>
               <div className="automation-run-meta">
                 {test.finishedModels}/{test.models.length} finished · {test.turns} turns · {formatWhen(test.startedAt)}
+                {durationBetween(test.startedAt, test.finishedAt) ? ` · took ${durationBetween(test.startedAt, test.finishedAt)}` : ''}
               </div>
               {test.error && <div className="automation-run-error">{test.error}</div>}
               <div className="automation-run-actions">

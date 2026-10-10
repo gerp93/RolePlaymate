@@ -1,3 +1,4 @@
+import { durationBetween, formatDuration } from '../../shared/utils/formatDuration';
 import {
   AutomationRunStatus,
   AutomationTurnLog,
@@ -43,7 +44,8 @@ export function summariseModelRun(
   runId: string,
   status: AutomationRunStatus,
   error: string | null,
-  turns: AutomationTurnLog[]
+  turns: AutomationTurnLog[],
+  runMs: number | null = null
 ): BenchmarkModelResult {
   const measured = turns.length >= MIN_TURNS_TO_DROP_WARMUP ? turns.slice(1) : turns;
 
@@ -93,6 +95,7 @@ export function summariseModelRun(
     // Under a second is "was already loaded", not a load worth reporting.
     coldLoadMs: positive(cold) && cold >= 1000 ? cold : null,
     approximate,
+    runMs,
   };
 }
 
@@ -107,7 +110,10 @@ export function renderBenchmarkMarkdown(detail: BenchmarkDetail): string {
   out.push(`# Speed test: ${summary.characterName} and ${summary.personaName}`);
   out.push('');
   out.push(`- Status: **${summary.status}**${summary.error ? ` -- ${summary.error}` : ''}`);
-  out.push(`- Started: ${summary.startedAt}${summary.finishedAt ? `, finished ${summary.finishedAt}` : ''}`);
+  out.push(
+    `- Started: ${summary.startedAt}${summary.finishedAt ? `, finished ${summary.finishedAt}` : ''}` +
+      (durationBetween(summary.startedAt, summary.finishedAt) ? ` (took ${durationBetween(summary.startedAt, summary.finishedAt)})` : '')
+  );
   out.push(`- ${summary.turns} turns per model${summary.scenarioName ? `, scenario "${summary.scenarioName}"` : ''}`);
   out.push(
     summary.scripted
@@ -119,14 +125,15 @@ export function renderBenchmarkMarkdown(detail: BenchmarkDetail): string {
     'Medians over replies after the first (which carries the model load). Tokens/s is reply-writing speed, prompt tok/s is prompt-reading speed.'
   );
   out.push('');
-  out.push('| Model | Replies | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Avg reply tokens | Cold load | Status |');
-  out.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
+  out.push('| Model | Replies | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Avg reply tokens | Cold load | Run time | Status |');
+  out.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
   const ordered = [...results].sort((a, b) => (b.medianTokensPerSec ?? -1) - (a.medianTokensPerSec ?? -1));
   for (const r of ordered) {
     out.push(
       `| ${r.model} | ${r.repliesMeasured} | ${seconds(r.medianReplyMs)} | ${seconds(r.p90ReplyMs)} | ` +
         `${fixed(r.medianTokensPerSec, 1)}${r.approximate ? '*' : ''} | ${fixed(r.medianPromptTokensPerSec, 0)} | ` +
         `${seconds(r.medianFirstTokenMs)} | ${fixed(r.avgReplyTokens, 0)} | ${seconds(r.coldLoadMs)} | ` +
+        `${r.runMs === null ? '-' : formatDuration(r.runMs)} | ` +
         `${r.status}${r.error ? ` (${r.error})` : ''} |`
     );
   }
