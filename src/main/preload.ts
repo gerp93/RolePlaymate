@@ -236,6 +236,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   benchmark: {
     start: (request: unknown) => ipcRenderer.invoke('benchmark:start', request),
     stop: () => ipcRenderer.invoke('benchmark:stop'),
+    /** Move on from the model being tested; what it completed is kept. */
+    skip: () => ipcRenderer.invoke('benchmark:skip'),
     getActive: () => ipcRenderer.invoke('benchmark:getActive'),
     list: () => ipcRenderer.invoke('benchmark:list'),
     get: (id: string) => ipcRenderer.invoke('benchmark:get', id),

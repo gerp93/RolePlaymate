@@ -50,6 +50,8 @@ interface ActiveRun {
   summary: AutomationRunSummary;
   conversationId: string;
   stopRequested: boolean;
+  /** The user skipped this model of a speed test: the run ends like a stop but is recorded as skipped. */
+  skipRequested: boolean;
   phase: AutomationPhase;
 }
 
@@ -247,7 +249,7 @@ export class AutomationRunner {
       },
     });
 
-    this.active = { summary, conversationId: conversation.id, stopRequested: false, phase: 'idle' };
+    this.active = { summary, conversationId: conversation.id, stopRequested: false, skipRequested: false, phase: 'idle' };
     this.runFinished = this.run(request, characterId, persona.name, persona.background ?? null, options);
     return summary;
   }
@@ -308,6 +310,18 @@ export class AutomationRunner {
     this.benchmark = { summary, stopRequested: false, model: null };
     void this.runBenchmark(request, models, character.id, persona.id, scenario?.id ?? null);
     return summary;
+  }
+
+  /**
+   * Moves a speed test on from the model it is on: the reply in flight is cancelled, what that model had
+   * completed is kept (marked skipped), and the next model starts. For a model that is clearly too slow to be
+   * worth waiting out. False when no model is running (between two models, or no test).
+   */
+  skipCurrentModel(): boolean {
+    if (!this.benchmark || !this.active || this.benchmark.stopRequested) return false;
+    this.active.skipRequested = true;
+    this.stop();
+    return true;
   }
 
   /** Ends the test after the reply in flight; models not yet reached are not run. */
@@ -585,6 +599,9 @@ export class AutomationRunner {
         error = active.stopRequested ? null : (caught as Error).message;
       }
     }
+
+    // A skip ends the run the way a stop does; it is recorded as what it was.
+    if (active.skipRequested && status === 'stopped') status = 'skipped';
 
     try {
       active.summary = this.runs.finishRun(

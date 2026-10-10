@@ -333,6 +333,15 @@ export default function SpeedTestPanel({ models }: Props) {
               }
             />
             <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={!progress.model}
+                title="Cancel the reply in flight and move on to the next model. What this model completed is kept."
+                onClick={() => void window.electronAPI.benchmark.skip()}
+              >
+                Skip this model
+              </button>{' '}
               <button type="button" className="btn btn-danger" onClick={() => void window.electronAPI.benchmark.stop()}>
                 Stop
               </button>
@@ -375,6 +384,9 @@ export default function SpeedTestPanel({ models }: Props) {
                 <thead>
                   <tr>
                     <th>Model</th>
+                    <th title="Turns this model completed, out of the number it was asked for. Less when it was skipped or stopped.">
+                      Turns
+                    </th>
                     <th title="Median time for a whole reply">Median reply</th>
                     <th title="About the slowest typical reply (90th percentile)">Slow reply</th>
                     <th title="How fast it writes: reply tokens per second of writing, from Ollama's own counters">
@@ -392,6 +404,12 @@ export default function SpeedTestPanel({ models }: Props) {
                   {ordered.map((r) => (
                     <tr key={r.runId}>
                       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{r.model}</td>
+                      <td title={r.status === 'completed' ? undefined : 'Fewer than asked for'}>
+                        {r.status === 'running' && progress?.model === r.model
+                          ? progress.completedTurns
+                          : r.turnsCompleted}
+                        {r.turnsRequested === null ? '' : ` of ${r.turnsRequested}`}
+                      </td>
                       <td>{seconds(r.medianReplyMs)}</td>
                       <td>{seconds(r.p90ReplyMs)}</td>
                       <td>
@@ -410,7 +428,7 @@ export default function SpeedTestPanel({ models }: Props) {
               </table>
             )}
             <p className="text-muted" style={{ fontSize: 12, marginBottom: 0 }}>
-              Medians over each model&apos;s replies after the first. Fastest writer first. Reply length is in tokens (about three-quarters of a word each), not a time; the time is Median reply.
+              Medians over each model&apos;s replies after the first; a skipped model is measured on the turns it completed. Fastest writer first. Reply length is in tokens (about three-quarters of a word each), not a time; the time is Median reply.
               {ordered.some((r) => r.approximate)
                 ? ' * Ollama reported no timing counters for some replies, so this speed is output tokens over wall time and includes prompt reading.'
                 : ''}
