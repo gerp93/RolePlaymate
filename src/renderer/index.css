@@ -638,3 +638,22 @@ textarea {
 .run-footer-link {
   white-space: nowrap;
 }
+
+/* Speed test results: model name and status on the left, every figure right-aligned under its header. */
+.speed-table th,
+.speed-table td {
+  padding: 6px 12px;
+}
+
+.speed-table th,
+.speed-table td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-table th:first-child,
+.speed-table td:first-child,
+.speed-table th:last-child,
+.speed-table td:last-child {
+  text-align: left;
+}
