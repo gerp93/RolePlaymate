@@ -382,7 +382,7 @@ export default function SpeedTestPanel({ models }: Props) {
                     </th>
                     <th title="How fast it reads the prompt">Prompt tok/s</th>
                     <th title="Request sent to the first words arriving">To first word</th>
-                    <th title="Average reply length in tokens">Avg reply</th>
+                    <th title="How long the replies were on average, in tokens (a token is about three-quarters of a word). Not a time: the time is Median reply.">Reply length</th>
                     <th title="Time Ollama spent loading the model for the first reply">Cold load</th>
                     <th title="How long this model's whole run took, start to finish">Run time</th>
                     <th>Status</th>
@@ -400,7 +400,7 @@ export default function SpeedTestPanel({ models }: Props) {
                       </td>
                       <td>{fixed(r.medianPromptTokensPerSec, 0)}</td>
                       <td>{seconds(r.medianFirstTokenMs)}</td>
-                      <td>{fixed(r.avgReplyTokens, 0)}</td>
+                      <td>{r.avgReplyTokens === null ? '-' : `${fixed(r.avgReplyTokens, 0)} tokens`}</td>
                       <td>{seconds(r.coldLoadMs)}</td>
                       <td>{r.runMs === null ? '-' : formatDuration(r.runMs)}</td>
                       <td title={r.error ?? undefined}>{r.status === 'completed' ? '✓' : r.status}</td>
@@ -410,7 +410,7 @@ export default function SpeedTestPanel({ models }: Props) {
               </table>
             )}
             <p className="text-muted" style={{ fontSize: 12, marginBottom: 0 }}>
-              Medians over each model&apos;s replies after the first. Fastest writer first.
+              Medians over each model&apos;s replies after the first. Fastest writer first. Reply length is in tokens (about three-quarters of a word each), not a time; the time is Median reply.
               {ordered.some((r) => r.approximate)
                 ? ' * Ollama reported no timing counters for some replies, so this speed is output tokens over wall time and includes prompt reading.'
                 : ''}

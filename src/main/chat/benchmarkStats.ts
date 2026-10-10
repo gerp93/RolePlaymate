@@ -125,7 +125,7 @@ export function renderBenchmarkMarkdown(detail: BenchmarkDetail): string {
     'Medians over replies after the first (which carries the model load). Tokens/s is reply-writing speed, prompt tok/s is prompt-reading speed.'
   );
   out.push('');
-  out.push('| Model | Replies | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Avg reply tokens | Cold load | Run time | Status |');
+  out.push('| Model | Replies | Median reply | Slow reply (p90) | Tokens/s | Prompt tok/s | To first word | Reply length (tokens) | Cold load | Run time | Status |');
   out.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
   const ordered = [...results].sort((a, b) => (b.medianTokensPerSec ?? -1) - (a.medianTokensPerSec ?? -1));
   for (const r of ordered) {
