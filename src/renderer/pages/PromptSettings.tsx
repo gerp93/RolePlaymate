@@ -157,10 +157,6 @@ function PromptSettingsPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Prompt Tuning</h1>
-      </div>
-
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
         <div style={{ flex: '3 1 0', minWidth: 0 }}>
           <p className="text-muted">
