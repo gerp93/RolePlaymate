@@ -254,7 +254,9 @@ export default function SpeedTestPanel({ models }: Props) {
             </select>
           </div>
           <div className="field" style={{ width: 120 }}>
-            <label>Turns per model</label>
+            <label title="One turn is one user line and one character reply, so 12 turns is 12 replies timed (the first is left out of the figures) and 24 messages saved">
+              Turns per model
+            </label>
             <input
               type="number"
               min={MIN_BENCHMARK_TURNS}
@@ -265,6 +267,13 @@ export default function SpeedTestPanel({ models }: Props) {
             />
           </div>
         </div>
+
+        <p className="text-muted" style={{ fontSize: 12, margin: '-4px 0 8px' }}>
+          A turn is one user line and one character reply, so {Number.isNaN(turns) ? 'N' : turns} turns is{' '}
+          {Number.isNaN(turns) ? 'N' : turns} replies per model (the first is left out of the figures) and{' '}
+          {Number.isNaN(turns) ? '2N' : turns * 2} messages in each test conversation. With the generic lines on, only
+          the replies are generated; the user lines are not.
+        </p>
 
         <div className="field">
           <label>Models to test</label>
