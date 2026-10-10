@@ -61,6 +61,65 @@ export const GENERIC_PHRASES = [
   'the scene is',
 ];
 
+/**
+ * Why a candidate is not a fact worth keeping, or null if it is.
+ *
+ * A 12B roleplay model asked for "notable events" writes three kinds of thing that are not facts, and each
+ * does harm once stored:
+ *
+ *  - **Second person.** "The way you touch her shows your love": a memory is read back in a prompt where
+ *    "you" is whoever is reading, and it is no longer clear who did what. Facts name the people.
+ *  - **Commentary.** "...sets the stage for an intimate encounter", "...highlights the emotional
+ *    connection": the model reviewing the scene as a critic. Retrieval then matches it to the very scene
+ *    that produced it and feeds the commentary back as if it were an instruction, so the scene keeps
+ *    escalating along the lines the commentary describes.
+ *  - **Feelings.** "She is nervous about the dark tunnels": true for a moment, then repeated into the
+ *    prompt for dozens of turns, and the character keeps announcing a feeling she no longer has.
+ */
+export function whyUnfit(candidate: string): 'second person' | 'commentary' | 'momentary' | 'feeling' | null {
+  const text = candidate.trim();
+  if (/\b(?:you|your|yours|yourself|you're|you've|you'll|you'd)\b/i.test(text)) return 'second person';
+  if (
+    /\b(?:showcas\w*|highlight\w*|underscor\w*|illustrat\w*|demonstrat\w*|symboli[sz]\w*|conveys?|conveying|evokes?|emphasi[sz]\w*|testament|speaks? to|serves? as|reinforc\w+ the|sets? the stage|turning point|subplot|palpable|intensif\w*|underlying|encapsulat\w*|epitomi[sz]\w*|adds? (?:another |a |an )?(?:layers?|depth|dimension|element)|creates? (?:a |an |the )?(?:sense|moment|atmosphere|anticipation|tension|tender|intimate|mood)|sense of (?:urgency|danger|dread|tension|unease|mystery|foreboding))\b/i.test(
+      text
+    ) ||
+    /\b(?:suggests?|indicates?|implies|signals?|reflects?|reveals?|shows?)\s+(?:a|an|the|that the|that their|that her|that his)\s+(?:growing|deepening|budding|deep|strong|emotional|romantic|intimate|sensual|underlying|mutual|connection|bond|relationship|tension|intimacy|desire|attraction)/i.test(
+      text
+    )
+  ) {
+    return 'commentary';
+  }
+  // Scene upkeep: what is going on right now, not what happened.
+  if (/\b(?:is|are) (?:becoming|getting|growing|starting to)\b|\bcontinues? to\b|\b(?:keeps?|keep) (?:blaring|building|growing|rising)\b/i.test(text)) {
+    return 'momentary';
+  }
+  if (
+    /\b(?:is|are|was|were|feels?|felt|seems?|appears?|remains?)\s+(?:\w+ly\s+)?(?:nervous|anxious|scared|afraid|worried|uneasy|tense|excited|terrified|frightened|overwhelmed|relieved|conflicted|curious|eager|compelled|restless|apprehensive|uncomfortable|exhausted|shaken)\b/i.test(
+      text
+    ) ||
+    /\b(?:in a state of|a (?:wave|surge|pang|rush|flicker|mix) of)\b/i.test(text)
+  ) {
+    return 'feeling';
+  }
+  return null;
+}
+
+/**
+ * Cuts a trailing explanatory clause off a fact ("She hears gunshots behind her, indicating that he is fighting
+ * the intruders"): the model's reading of the event, tacked on after the event itself. What is left is the
+ * fact. Returns the text unchanged when there is no such clause, or when nothing sensible would remain.
+ */
+export function stripAnalyticTail(text: string): string {
+  const cut = text
+    .replace(
+      /,?\s+(?:indicating|showing|highlighting|suggesting|reflecting|demonstrating|signaling|signalling|underscoring|emphasi[sz]ing|adding|creating|marking|making it clear|which (?:shows|suggests|indicates|highlights|underscores))\b.*$/i,
+      ''
+    )
+    .trim();
+  if (cut === text.trim() || cut.length <= MIN_FACT_LENGTH) return text;
+  return /[.!?]$/.test(cut) ? cut : `${cut.replace(/[,;:]$/, '')}.`;
+}
+
 /** A new memory whose meaning is this close (cosine, via the embedding model) to one already
  * stored -- or to another candidate from the same exchange -- is dropped. Word overlap alone
  * (REDUNDANCY_THRESHOLD) misses paraphrases, which is how one scene became dozens of memories. */
@@ -101,12 +160,22 @@ function buildExtractionPrompt(
     'You are extracting durable facts from a roleplay exchange, to be remembered later.',
     '',
     'RECORD only lasting facts that will still matter many scenes from now: decisions made,',
-    'information revealed, changes in relationship, promises, injuries, plans agreed on.',
-    'DO NOT record: momentary state or the scene itself -- where someone is standing or sitting, what',
-    'they are doing, waiting for, feeling or looking at right now, sounds, weather, scenery. Those',
-    'are true for one moment and become wrong the moment the scene moves on. Also skip descriptions',
-    'of who a character already is, restatements of the setting, small talk, or anything already',
-    'listed below.',
+    'information revealed, questions raised that are still unanswered, who is suspected of what,',
+    'goals, threats, changes in relationship, promises, injuries, plans agreed on. Be specific:',
+    'keep the actual names, places, objects, codes and identifiers that were mentioned.',
+    '',
+    'Write each fact as a plain statement of what happened or was established, in the third person,',
+    'naming the people involved (never "you", "your" or "the user"), the way a reference note would.',
+    '',
+    'DO NOT record:',
+    '- momentary state or the scene itself: where someone is standing or sitting, what they are',
+    '  doing, waiting for or looking at right now, sounds, weather, scenery. Those are true for one',
+    '  moment and become wrong the moment the scene moves on.',
+    '- feelings or mood ("is nervous", "feels a rush of desire"). They pass.',
+    '- your own interpretation or commentary: what something "shows", "highlights", "suggests about',
+    '  the relationship" or "sets the stage for". Record only what actually happened or was said.',
+    '- descriptions of who a character already is, restatements of the setting, small talk, or',
+    '  anything already listed below.',
     '',
     'Reply with one "- " bullet per fact, and nothing else. Reply with exactly NONE if there',
     'is nothing worth remembering.',
@@ -178,7 +247,9 @@ export function filterRedundant(
   const systemLower = systemPrompt.toLowerCase();
   const kept: string[] = [];
 
-  for (const candidate of candidates) {
+  for (const original of candidates) {
+    // The event without the model's reading of it tacked on.
+    const candidate = stripAnalyticTail(original);
     const lower = candidate.toLowerCase().trim();
 
     if (existingMemories.some((existing) => textSimilarity(lower, existing.toLowerCase()) > REDUNDANCY_THRESHOLD)) {
@@ -196,6 +267,7 @@ export function filterRedundant(
     }
 
     if (GENERIC_PHRASES.some((phrase) => lower.includes(phrase))) continue;
+    if (whyUnfit(candidate)) continue;
 
     kept.push(candidate);
   }

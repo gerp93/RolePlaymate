@@ -38,6 +38,7 @@ npm install
 npm run dev        # renderer (Vite) + electron main, concurrently
 npm run build       # build:renderer + build:electron
 npm run typecheck    # tsc --noEmit for both renderer and main
+npm test             # node:test over src/shared and src/main/**/*.test.ts (compiled to dist-test/)
 npm run package      # electron-builder, produces installers in release/
 ```
 
@@ -398,8 +399,45 @@ within cosine 0.85 of a stored memory or an earlier candidate is dropped -- word
 keeping everything, when embedding is unavailable); and an optional **extraction model** (Settings -> Chat
 Dependencies; `memoryExtractionModel` in `app-config.json`, default = the chat model). A roleplay tune is a poor
 extractor, but a second model that does not fit in VRAM beside the chat model makes Ollama reload models every turn,
-so it is opt-in with that warning. Not done yet: retrieval still ranks by similarity alone, so near-paraphrases can
-fill all `topK` slots (a diversity step like MMR would fix that).
+so it is opt-in with that warning.
+
+A second pass, from reading a 100-turn run's log in full (all of it generic, nothing tied to one character):
+
+- **Fit filter** (`whyUnfit`, `stripAnalyticTail`): a memory is read back later by the other speaker, so a "fact" in second
+  person ("your touch shows..."), commentary on the scene ("underscores their mutual attraction"), a passing feeling or
+  impulse, or scene upkeep ("the siren continues to blare") is rejected, and an explanatory tail (", indicating that...")
+  is cut off, leaving the event. The extraction prompt asks for third-person events, decisions, revelations and open
+  questions, and to keep specific names and identifiers.
+- **Selection** (`selectMemories`): MMR (relevance 0.75) so near-paraphrases do not fill `topK`; a small penalty for a
+  memory injected in each of the last 10 turns (`ChatSessionManager.memoryUseLog`, in memory only) so one fact does not sit
+  in the prompt every turn; and about a third of the slots reserved for the oldest memories (the first ~15%, at least 8),
+  because the founding facts of a story otherwise sink under newer, similar ones.
+- Tested on pure functions only (`memoryRetrieval.test.ts`, `memoryExtraction.test.ts`); the thresholds were calibrated on
+  one run, so expect to revisit them.
+
+## Repetition guard
+
+`chat/phraseGuard.ts` (pure, no model) finds what the repetition guard in automation cannot: new sentences built from the
+same stock phrases. `findOverusedPhrases` takes the speaker's last 12 replies and returns 3-7-word runs (at least two
+content words) that appear in 3 or more of them, minus phrases the other speakers use too (that is the scene's
+vocabulary), plus repeated opening words. The style reminder (`buildStyleReminder`, `avoid`) then quotes them at the very
+end of the prompt, and the persona-reply drafter does the same in its own prompt. Sampling backs this up: new optional
+sampler params `minP`, `repeatLastN`, `frequencyPenalty`, `presencePenalty` (defaults set in `DEFAULT_SAMPLERS`, editable
+per model like the others; the allowed keys are `TunableSamplerKey`). The defaults are reasoned, not tuned.
+
+`isStalled` measures how much of each recent line is new vocabulary (threshold `STALL_NOVELTY`, calibrated on one run);
+when the scene is going in circles, the persona drafter is also told to change something (`STALL_NUDGE`).
+
+Persona drafts sometimes ran on into the other character's turn (a trailing "Veridia: *"). `suggestPersonaReply` now sends
+stop sequences for the other speakers and `cutOffOtherSpeakers` trims whatever slips through.
+
+## Run-quality report
+
+`chat/runQuality.ts` (`renderQualityReport`) is a section of the automated-run Markdown export, between Settings and
+Prompt setup. From the log alone it reports reply stats, stock phrases and repeated openings, stall points, opening
+threads that never came back, who takes the initiative, memory health (pool growth, memories injected every turn, share
+that fail the fit filter, whether founding memories reached the prompt) and whether the character card's example dialogue is
+a placeholder. It is a reading aid; it changes nothing about a run.
 
 ## Automated runs
 

@@ -31,6 +31,7 @@ import {
   getConfiguredMemoryExtractionModel,
   getNarrationPov,
 } from '../dbLocation';
+import { findOverusedPhrases } from './phraseGuard';
 import { buildContinuationCue, buildStyleReminder } from './styleReminder';
 import { TEMPLATE_TAGS } from './promptTemplates';
 
@@ -97,6 +98,15 @@ export const DEFAULT_SAMPLERS: SamplerParams = {
   topP: 0.95,
   topK: 50,
   repetitionPenalty: 1.1,
+  // Against stock phrases. A roleplay model falls back on the same few phrases; Ollama's repeat penalty
+  // only sees the last 64 tokens, so a phrase reused every few replies is invisible to it. A longer
+  // look-back and a light frequency penalty make reuse across replies cost something, and min_p trims
+  // the long tail of odd choices that a hotter temperature would otherwise bring in. Mild values:
+  // these are reasoned defaults, not tuned ones (the automated-run report shows the effect).
+  minP: 0.05,
+  repeatLastN: 256,
+  frequencyPenalty: 0.15,
+  presencePenalty: 0,
 };
 
 /** Sliding window over prior turns, matching the source's hard-coded 20. Becomes a setting
@@ -172,6 +182,10 @@ export function toOllamaOptions(samplers: SamplerParams, stop: string[]): Ollama
     top_p: Math.min(Math.max(samplers.topP, 0.1), 1),
     top_k: samplers.topK > 0 ? samplers.topK : 50,
     repeat_penalty: Math.max(samplers.repetitionPenalty, 1),
+    ...(samplers.repeatLastN !== undefined ? { repeat_last_n: samplers.repeatLastN } : {}),
+    ...(samplers.minP !== undefined ? { min_p: Math.min(Math.max(samplers.minP, 0), 1) } : {}),
+    ...(samplers.frequencyPenalty !== undefined ? { frequency_penalty: samplers.frequencyPenalty } : {}),
+    ...(samplers.presencePenalty !== undefined ? { presence_penalty: samplers.presencePenalty } : {}),
     num_predict: samplers.maxTokens,
     ...(stop.length > 0 ? { stop } : {}),
   };
@@ -198,6 +212,14 @@ export function withStyleReminder(
   directions?: string,
   hasMemories = false
 ): OllamaChatMessage[] {
+  // What this character keeps saying: found from their own earlier replies in this very request (the
+  // history is already in `messages`, redo and continue included). Whatever the other side says too is
+  // the scene's vocabulary and is left out.
+  const avoid = findOverusedPhrases(
+    messages.filter((m) => m.role === 'assistant').map((m) => m.content),
+    {},
+    messages.filter((m) => m.role === 'user').map((m) => m.content)
+  );
   const reminder = buildStyleReminder({
     charName,
     personaName: personaName?.trim() || 'User',
@@ -206,6 +228,7 @@ export function withStyleReminder(
     otherCharacters,
     directions,
     hasMemories,
+    avoid,
   });
 
   const last = messages[messages.length - 1];
@@ -224,8 +247,13 @@ export function renderMessagesForDebug(messages: OllamaChatMessage[]): string {
   return messages.map((m) => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n');
 }
 
+/** How many recent turns of memory injections are remembered, for the cooldown in selectMemories. */
+const MEMORY_USE_WINDOW = 10;
+
 export class ChatSessionManager {
   private sessions = new Map<string, ChatSession>();
+  /** Per conversation, the ids of the memories injected on each of its last few turns. */
+  private memoryUseLog = new Map<string, string[][]>();
 
   /**
    * Called when post-turn extraction stored new memories.
@@ -1633,10 +1661,26 @@ export class ChatSessionManager {
       embeddingModel: row.embeddingModel,
     }));
 
-    const outcome = await retrieveMemories(this.ollama, query, candidates, {
-      ...options,
-      embeddingModel: options?.embeddingModel ?? getConfiguredMemoryEmbeddingModel(),
-    });
+    // How often each memory went in over the last few turns, so one that has sat in the prompt turn after
+    // turn is passed over for a while (see selectMemories).
+    const log = this.memoryUseLog.get(conversationId) ?? [];
+    const recentUses = new Map<string, number>();
+    for (const turn of log) for (const id of turn) recentUses.set(id, (recentUses.get(id) ?? 0) + 1);
+
+    const outcome = await retrieveMemories(
+      this.ollama,
+      query,
+      candidates,
+      {
+        ...options,
+        embeddingModel: options?.embeddingModel ?? getConfiguredMemoryEmbeddingModel(),
+      },
+      recentUses
+    );
+    this.memoryUseLog.set(
+      conversationId,
+      [...log, outcome.result.selected.map((entry) => entry.memory.id)].slice(-MEMORY_USE_WINDOW)
+    );
 
     // Write freshly computed vectors back so the next turn only embeds the query.
     if (outcome.computed.length > 0) {

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from './sqlite';
-import { ModelSamplerDefaults, SamplerParams } from '../../shared/types/chat';
+import { ModelSamplerDefaults, SamplerParams, TunableSamplerKey } from '../../shared/types/chat';
 import { detectModelFamily } from '../../shared/utils/modelFamily';
 import { FAMILY_SAMPLER_PRESETS } from '../chat/modelFamilyPresets';
 
@@ -135,7 +135,7 @@ export class ModelSamplerService {
 
   /** Clears one field back to "use the global default" -- distinct from deleting the whole
    * row, since a model might have other fields still customized. */
-  resetField(model: string, field: keyof SamplerParams): void {
+  resetField(model: string, field: TunableSamplerKey): void {
     const existing = this.getForModel(model);
     if (!existing) return;
     const column =

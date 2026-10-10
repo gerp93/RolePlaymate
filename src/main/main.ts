@@ -146,6 +146,7 @@ import {
   ChatEditPriorMessageRequest,
   ChatStreamEvent,
   SamplerParams,
+  TunableSamplerKey,
 } from '../shared/types/chat';
 import {
   CreateLorebookInput,
@@ -2132,7 +2133,7 @@ function registerIPCHandlers() {
   ipcMain.handle('modelTuning:update', (_, model: string, partial: Partial<SamplerParams>) =>
     modelSamplerService.upsert(model, partial)
   );
-  ipcMain.handle('modelTuning:resetField', (_, model: string, field: keyof SamplerParams) => {
+  ipcMain.handle('modelTuning:resetField', (_, model: string, field: TunableSamplerKey) => {
     modelSamplerService.resetField(model, field);
     return { success: true };
   });

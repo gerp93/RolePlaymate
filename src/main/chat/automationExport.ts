@@ -1,4 +1,5 @@
 import { AutomationRunLog } from '../../shared/types/automation';
+import { renderQualityReport } from './runQuality';
 
 /** The first turn's system prompt. Logs made before it was kept separately still have it as the
  * leading [SYSTEM] block of that turn's full prompt. */
@@ -11,7 +12,7 @@ function firstTurnSystemPrompt(log: AutomationRunLog): string | null {
 }
 
 /**
- * The readable form of a run log: the transcript, then for every turn which memories the model
+ * The readable form of a run log: a quality report, the transcript, then for every turn which memories the model
  * was given (with scores) and what was left out, then the memories stored by the end. The full
  * prompts are only in the JSON export -- repeating them here would make this unreadable.
  */
@@ -33,6 +34,10 @@ export function renderRunMarkdown(log: AutomationRunLog): string {
   out.push('```json');
   out.push(JSON.stringify(log.settings, null, 2));
   out.push('```');
+
+  // The measurements first: what to look at before reading a hundred turns.
+  out.push('');
+  out.push(...renderQualityReport(log));
 
   const firstPrompt = firstTurnSystemPrompt(log);
   if (firstPrompt) {

@@ -1,3 +1,5 @@
+import { OverusedPhrases, describeOverused } from './phraseGuard';
+
 export interface StyleReminderInput {
   charName: string;
   personaName: string;
@@ -11,6 +13,8 @@ export interface StyleReminderInput {
   directions?: string;
   /** True when the system prompt carries a memory section this turn. */
   hasMemories?: boolean;
+  /** Wording this character has been leaning on in their recent replies (see phraseGuard). */
+  avoid?: OverusedPhrases;
 }
 
 /**
@@ -30,6 +34,7 @@ export function buildStyleReminder({
   otherCharacters = [],
   directions,
   hasMemories = false,
+  avoid,
 }: StyleReminderInput): string {
   const lines: string[] = [];
 
@@ -47,6 +52,11 @@ export function buildStyleReminder({
       `Scene continuity: the memories in the system prompt are past events, some from other places or moments. The recent conversation above is the present -- stay in the location, situation and activity it shows, react to what was just said and done, and never jump back to a memory's setting or repeat it. Use a memory only if it fits the scene right now.`
     );
   }
+
+  // Quoted back to the model, at the end where it holds: a rule above thousands of tokens of history
+  // loses to the habit it is imitating from that history.
+  const variety = describeOverused(avoid);
+  if (variety) lines.push(variety);
 
   lines.push(
     `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`

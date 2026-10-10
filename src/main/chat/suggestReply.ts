@@ -1,4 +1,5 @@
 import { OllamaClient } from './ollamaClient';
+import { OverusedPhrases, STALL_NUDGE, describeOverused, findOverusedPhrases, isStalled } from './phraseGuard';
 
 /**
  * Drafts what the user's persona might say or do next, for the "Suggest reply" button.
@@ -16,6 +17,13 @@ export const SUGGESTION_OPTIONS = {
   temperature: 0.95,
   top_p: 0.95,
   num_predict: 150,
+  // The persona's lines used to be drafted with nothing against repetition, so the same few phrases
+  // ("my voice low and urgent") came back turn after turn. Same mild settings as a reply (see
+  // DEFAULT_SAMPLERS): a long look-back, a light frequency penalty, min_p to trim odd choices.
+  repeat_penalty: 1.1,
+  repeat_last_n: 256,
+  frequency_penalty: 0.15,
+  min_p: 0.05,
 };
 
 /** One transcript line. `speakerName` labels an assistant line in a group conversation, where
@@ -31,6 +39,10 @@ export interface SuggestionExtras {
   directions?: string;
   /** A previous draft repeated an earlier line; say so and ask for something different. */
   avoidRepeats?: boolean;
+  /** Wording this persona has been leaning on in their own recent lines (found by suggestPersonaReply). */
+  avoid?: OverusedPhrases;
+  /** The scene has been going in circles (found by suggestPersonaReply): ask for a change. */
+  stalled?: boolean;
 }
 
 function buildSuggestionPrompt(
@@ -61,6 +73,8 @@ function buildSuggestionPrompt(
     `in-character message as ${personaName}: their next line of dialogue and/or actions, in`,
     'the same voice as their earlier lines above.',
     ...(direction ? ['', `What ${personaName} is aiming for in this message: ${direction}`] : []),
+    ...(describeOverused(extras.avoid) ? ['', describeOverused(extras.avoid).replace(/^Variety: /, 'Variety - ')] : []),
+    ...(extras.stalled ? ['', STALL_NUDGE] : []),
     ...(extras.avoidRepeats
       ? [
           '',
@@ -114,19 +128,32 @@ export async function suggestPersonaReply(
   },
   signal?: AbortSignal
 ): Promise<string> {
+  // From the transcript itself, so every caller gets this: what this persona keeps saying (a phrase the
+  // other side uses too is the scene's vocabulary, not a habit), and whether the scene has stopped moving.
+  const personaLines = input.historyTurns.filter((t) => t.role !== 'assistant').map((t) => t.content);
+  const characterLines = input.historyTurns.filter((t) => t.role === 'assistant').map((t) => t.content);
+  const extras: SuggestionExtras = {
+    ...input.extras,
+    avoid: findOverusedPhrases(personaLines, {}, characterLines),
+    stalled: isStalled(input.historyTurns.map((t) => t.content)),
+  };
   const prompt = buildSuggestionPrompt(
     input.characterContext,
     input.historyTurns,
     input.characterName,
     input.personaName,
-    input.extras
+    extras
   );
 
+  const others = otherSpeakerNames(input.characterName, input.personaName, input.historyTurns);
   const result = await ollama.chat({
     model,
     messages: [{ role: 'user', content: prompt }],
     options: {
       ...SUGGESTION_OPTIONS,
+      // The draft is a line in a "Name: text" transcript, so the model will happily go on to write the
+      // next speaker's turn. Stop it at the first label.
+      stop: others.map((name) => `\n${name}:`),
       // The draft is built from a transcript the model is tempted to copy from; a heavier penalty
       // when it has just done so keeps the retry from landing on the same words.
       ...(input.extras?.avoidRepeats ? { temperature: 1.05, repeat_penalty: 1.25 } : {}),
@@ -134,5 +161,37 @@ export async function suggestPersonaReply(
     signal,
   });
 
-  return trimToCompleteSentence(result.content);
+  return trimToCompleteSentence(cutOffOtherSpeakers(result.content, others));
+}
+
+/** Everyone in the transcript who is not the persona: the character and, in a group, the other speakers. */
+export function otherSpeakerNames(characterName: string, personaName: string, turns: SuggestionTurn[]): string[] {
+  const names = new Set<string>([characterName]);
+  for (const turn of turns) if (turn.role === 'assistant' && turn.speakerName) names.add(turn.speakerName);
+  names.delete(personaName);
+  return [...names].filter((name) => name.trim().length > 0);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Removes any part of a draft that is another speaker's turn: from the first line that starts with their
+ * label ("Veridia: ..."), and a label left dangling at the end of a line ("... consequences." Veridia: *).
+ * The stop phrase usually prevents this, but a draft can still end on the start of the next turn, and the
+ * trimmer treats a trailing `*` as a clean ending, so it was sent as part of the persona's line.
+ */
+export function cutOffOtherSpeakers(text: string, names: string[]): string {
+  let result = text;
+  for (const name of names) {
+    const label = escapeRegExp(name);
+    // A line that begins with their label (only if something comes before it: a draft that starts with
+    // the label is left alone rather than emptied).
+    const lineStart = new RegExp(`\\n[ \\t]*[*_]*${label}[*_]*[ \\t]*:`, 'i').exec(result);
+    if (lineStart) result = result.slice(0, lineStart.index);
+    // A label hanging at the very end of the text.
+    result = result.replace(new RegExp(`[ \\t]+[*_]*${label}[*_]*[ \\t]*:[ \\t]*[*_"“]*\\s*$`, 'i'), '');
+  }
+  return result.trimEnd();
 }

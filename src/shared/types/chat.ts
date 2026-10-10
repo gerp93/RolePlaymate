@@ -12,7 +12,16 @@ export interface SamplerParams {
   topP: number;
   topK: number;
   repetitionPenalty: number;
+  /** Not shown in Model Tuning (yet); set here, and sent to Ollama whenever defined. */
+  minP?: number;
+  /** How far back the repetition penalty looks, in tokens. */
+  repeatLastN?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
 }
+
+/** The sampler fields Model Tuning shows and lets a model override. */
+export type TunableSamplerKey = 'temperature' | 'maxTokens' | 'topP' | 'topK' | 'repetitionPenalty';
 
 /** Per-model sampler overrides -- see Model Tuning settings page. Every field nullable: a
  * model with no row (or a row with some fields left null) falls back to DEFAULT_SAMPLERS for
