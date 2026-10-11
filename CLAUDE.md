@@ -97,6 +97,15 @@ them, and a restart recovers them from the stored user message.
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
 "User" when none is selected.
 
+**Strict-alternation templates.** Some models (Mistral-family Jinja templates, e.g. `magnum:22b`) make Ollama answer HTTP 400
+("After the optional system message, conversation roles must alternate...") unless the first message after the system prompt is the
+user's and the roles strictly alternate -- and a conversation opens with the scenario's greeting, which is the character's.
+`OllamaClient.chat` sends every request as it always was; if the server refuses for that reason it retries once through
+`alternateRoles` (`roleAlternation.ts`: a short user placeholder in front of an opening assistant message, same-side runs joined)
+and remembers the model for the session so only the first request is sent twice. Stored conversations are never touched, and a
+model that never refused is never sent the altered shape. HTTP errors are reported as "Ollama ... rejected the request", not "not
+reachable" (the server answered).
+
 `chat/ollamaClient.ts` is a thin `fetch` client against the Ollama HTTP API --
 no dependency, no model in-process. It streams `/api/chat` (the source never
 did) and keeps a non-streaming path for the short internal calls where partial
