@@ -6,6 +6,7 @@
  * targets a server the user runs on their own machine. Uses global `fetch`, so no dependency.
  */
 import { ReplyTimings } from '../../shared/types/chat';
+import { alternateRoles, isAlternationError } from './roleAlternation';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 
 export const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
@@ -21,7 +22,8 @@ const PULL_TIMEOUT_MS = 3_600_000;
 export class OllamaUnavailableError extends Error {
   constructor(host: string, cause: unknown) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    super(`Ollama not reachable at ${host}: ${detail}`);
+    // An HTTP error means the server is there and said no; "not reachable" would send the user looking for the wrong problem.
+    super(/^HTTP \d+/.test(detail) ? `Ollama at ${host} rejected the request: ${detail}` : `Ollama not reachable at ${host}: ${detail}`);
     this.name = 'OllamaUnavailableError';
   }
 }
@@ -71,6 +73,10 @@ export interface ChatRequest {
 
 export class OllamaClient {
   constructor(private hostProvider: () => string = () => DEFAULT_OLLAMA_HOST) {}
+
+  /** Models that refused a request for not alternating user/assistant roles. Remembered for the session, so
+   * only the first request to such a model is sent twice. */
+  private strictAlternation = new Set<string>();
 
   get host(): string {
     return (this.hostProvider() || DEFAULT_OLLAMA_HOST).replace(/\/+$/, '');
@@ -155,6 +161,28 @@ export class OllamaClient {
    * memory extraction and prompt suggestion, where partial output is useless.
    */
   async chat(request: ChatRequest): Promise<OllamaChatResult> {
+    const original = request.messages;
+    if (this.strictAlternation.has(request.model)) {
+      return this.chatOnce({ ...request, messages: alternateRoles(original) });
+    }
+    try {
+      return await this.chatOnce(request);
+    } catch (error) {
+      // The model's template insists on user/assistant/user/... and the conversation opens with the character's
+      // greeting (or has two lines from one side in a row). Retry once in the shape it wants -- the error comes
+      // back before anything streams, so nothing has been shown yet.
+      if (error instanceof OllamaUnavailableError && isAlternationError(error.message)) {
+        const fixed = alternateRoles(original);
+        if (JSON.stringify(fixed) !== JSON.stringify(original)) {
+          this.strictAlternation.add(request.model);
+          return this.chatOnce({ ...request, messages: fixed });
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async chatOnce(request: ChatRequest): Promise<OllamaChatResult> {
     const stream = typeof request.onToken === 'function';
     // Started before the request goes out: Ollama sends its response headers only when it has something to
     // say, so a clock started once they arrive measured nothing (every model read 0.0s to first word).
