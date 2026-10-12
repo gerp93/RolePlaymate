@@ -368,15 +368,6 @@ same-role messages into one turn so what the model sees strictly alternates. The
 untouched -- five continues are still five messages. Solo chats only reconstruct a redoable reply after
 a restart when it directly follows a user message, so a continue chain is not redoable after one.
 
-**Continue chains stall in the doorway.** A run of continues with no reply used to loop: the character is about to do
-something, ends on "a thought occurs", and the next continue re-enters a moment *before* that, preparing again (a ship
-alone, "I take a deep breath, hands over the controls", five times). Word novelty (`noveltyOf`) cannot see it -- it measured 0.4-0.7
-on exactly such a run -- so nothing is detected; `buildContinuationCue` takes the history and always quotes where the last
-reply stopped (`describeChain`/`endingOf`: its final sentence or two, markdown stripped), says to start *after* that moment, that what
-the character was about to do now happens with a result, not to prepare/hesitate/take stock again, and not to end on a thought
-rather than an event. From the third reply in a row (`chain >= 3`) it adds that the situation must visibly change (new place,
-event, someone arriving). Code-built like the other reply guidance; the redo of a continuation rebuilds it the same way.
-
 **Directions only.** Send works with directions and no message: an empty message takes the Continue
 path with `recordDirections`, which stores a **directions-only user line** (`isDirectionsOnly`:
 role `user`, empty content, directions set) so the turn shows in the transcript. Such a line is never
@@ -502,19 +493,16 @@ the switches" / "She is expressing her frustration" / "The ship is a sleek, adva
 `chat/phraseGuard.ts` (pure, no model) finds what the repetition guard in automation cannot: new sentences built from the
 same stock phrases. `findOverusedPhrases` takes the speaker's last 12 replies and returns 3-7-word runs (at least two
 content words) that appear in 3 or more of them, minus phrases the other speakers use too (that is the scene's
-vocabulary), plus repeated opening words. The style reminder (`buildStyleReminder`, `avoid`) then quotes them at the very
-end of the prompt, and the persona-reply drafter does the same in its own prompt. Sampling backs this up: new optional
-sampler params `minP`, `repeatLastN`, `frequencyPenalty`, `presencePenalty` (defaults set in `DEFAULT_SAMPLERS`, editable
-per model like the others; the allowed keys are `TunableSamplerKey`). The defaults are now Ollama's own (`repeat_last_n` 64,
-frequency penalty 0) plus `min_p` 0.05: a 256-token look-back with a 0.15 frequency penalty was shipped first and removed after replies
-began mirroring the user's action instead of answering it -- llama.cpp counts the *prompt's* tokens for these penalties, so they
-plausibly discourage the words the prompt is full of ("I", the character's name, the scene's nouns). That cause is suspected, not
-proven. Only automation's redo of a stock-phrase reply still sets the stronger values.
-
-**Who is who.** `buildStyleReminder` always carries a "Who is who" line at the end of the prompt: the character is only itself, an
-"I"/"my" in the persona's message means the persona, react from the character's own position and add something new, and never
-retell or perform the persona's action. In a first-person chat both sides write "I", and a mid-size model answers "I look around for
-a weapon" with "I scan the floor for a weapon" or retells it; a rule above the transcript loses to that habit, so it is said last.
+vocabulary), plus repeated opening words. It is **not** put into a normal chat's prompt: it was (a "Variety" line in the reply
+guidance, plus a "Who is who" line and a longer Continue note, plus a 256-token repeat look-back with a frequency penalty and
+`min_p`), and the chat felt worse than it had before 9 October -- replies mirroring the user's action, a character watching from the
+sidelines -- so the reply prompt and the sampler defaults (`DEFAULT_SAMPLERS`: the five Ollama basics, no `min_p`/look-back/frequency
+penalty) were put back as they were on 5 October. What stayed from that work is what fixed a real, repeated failure: the memory
+continuity rule, the scene note (opt-in, user-set) and the memory selection/extraction hygiene. The phrase guard now feeds only the
+persona-reply drafter ("Suggest reply"), automation's redo of a stock-phrase reply (`retryAvoid`, with stronger one-off sampler
+values) and the run-quality report. The optional sampler params (`minP`, `repeatLastN`, `frequencyPenalty`, `presencePenalty`,
+`TunableSamplerKey`) remain editable per model on Model Tuning. Rule of thumb: do not add hidden text to the reply prompt from a
+single example; show the prompt, change one thing, and compare on the same message with a redo.
 
 `isStalled` measures how much of each recent line is new vocabulary (threshold `STALL_NOVELTY`, calibrated on one run);
 when the scene is going in circles, the persona drafter is also told to change something (`STALL_NUDGE`).
@@ -597,10 +585,10 @@ counters falls back to tokens over wall time, and the result is flagged approxim
 **medians** (and p90) and drops the first reply as warm-up (its model load is shown separately as cold load),
 when there are at least 3 turns. Not measured yet: GPU/CPU split (Ollama's `/api/ps`) and text-to-speech.
 
-**Enforcing, not just asking (automation).** Quoting a character's worn-out phrases back to her (`describeOverused`) is
-only a request, and a roleplay model ignores it often enough -- one 100-turn run had "take a deep breath" in 43% of
-replies with the request in every prompt. So the runner also **redoes** a reply that uses a flagged phrase or opening
-(`overusedHits`, against the same `findOverusedPhrases` list the reminder quotes), up to `MAX_REPEAT_RETRIES` shared with
+**Enforcing, not just asking (automation).** Asking a roleplay model to avoid its worn-out phrases is only a request it
+ignores often enough (one 100-turn run had "take a deep breath" in 43% of replies with the request in every prompt; that request
+is no longer sent, see "Repetition guard"). So the runner **redoes** a reply that uses a flagged phrase or opening
+(`overusedHits`, against `findOverusedPhrases`) and only logs one still used after the retries, up to `MAX_REPEAT_RETRIES` shared with
 the near-copy redo. A redo names what was reused (`retryAvoid` -> "Your previous attempt ... reused ...") and samples
 harder (repeat penalty 1.25, `repeat_last_n` 512, frequency penalty 0.4, temperature up). A phrase still used after the
 redos is only **logged** (`stockPhraseHits`, shown in the export), never a strike: the 3-strike stop stays reserved for
