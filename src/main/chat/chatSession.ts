@@ -106,14 +106,15 @@ export const DEFAULT_SAMPLERS: SamplerParams = {
   topP: 0.95,
   topK: 50,
   repetitionPenalty: 1.1,
-  // Against stock phrases. A roleplay model falls back on the same few phrases; Ollama's repeat penalty
-  // only sees the last 64 tokens, so a phrase reused every few replies is invisible to it. A longer
-  // look-back and a light frequency penalty make reuse across replies cost something, and min_p trims
-  // the long tail of odd choices that a hotter temperature would otherwise bring in. Mild values:
-  // these are reasoned defaults, not tuned ones (the automated-run report shows the effect).
+  // Only min_p is added to what Ollama does by default: it trims the long tail of odd choices. A longer repeat
+  // look-back (256) and a frequency penalty (0.15) were tried here against stock phrases and taken out again after
+  // replies started mirroring the user's action instead of answering it: llama.cpp counts the prompt's own tokens
+  // for these penalties, so they plausibly push the model off the words the prompt is full of ("I", the
+  // character's name, the scene's nouns). Not proven, and stock phrases have code-side guards anyway (phraseGuard in
+  // the reply reminder, redo in automation). A model that wants them can still set them on Model Tuning.
   minP: 0.05,
-  repeatLastN: 256,
-  frequencyPenalty: 0.15,
+  repeatLastN: 64,
+  frequencyPenalty: 0,
   presencePenalty: 0,
 };
 

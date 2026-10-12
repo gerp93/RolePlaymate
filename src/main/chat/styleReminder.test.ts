@@ -58,3 +58,10 @@ test('a very long last reply is quoted by its final sentences only', () => {
   assert.ok(lastBeat.endsWith('Sentence number 29 goes here.'));
   assert.ok(!lastBeat.includes('Sentence number 0 '));
 });
+
+test('the reminder says whose "I" is whose, and not to echo the persona', () => {
+  const text = buildStyleReminder({ ...base, pov: 'first' });
+  assert.match(text, /Who is who: you are Mara, and only Mara\./);
+  assert.match(text, /"I" or "my" in a message from Tom means Tom, not you/);
+  assert.match(text, /Do not retell or repeat Tom's action/);
+});

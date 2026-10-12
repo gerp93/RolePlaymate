@@ -505,7 +505,16 @@ content words) that appear in 3 or more of them, minus phrases the other speaker
 vocabulary), plus repeated opening words. The style reminder (`buildStyleReminder`, `avoid`) then quotes them at the very
 end of the prompt, and the persona-reply drafter does the same in its own prompt. Sampling backs this up: new optional
 sampler params `minP`, `repeatLastN`, `frequencyPenalty`, `presencePenalty` (defaults set in `DEFAULT_SAMPLERS`, editable
-per model like the others; the allowed keys are `TunableSamplerKey`). The defaults are reasoned, not tuned.
+per model like the others; the allowed keys are `TunableSamplerKey`). The defaults are now Ollama's own (`repeat_last_n` 64,
+frequency penalty 0) plus `min_p` 0.05: a 256-token look-back with a 0.15 frequency penalty was shipped first and removed after replies
+began mirroring the user's action instead of answering it -- llama.cpp counts the *prompt's* tokens for these penalties, so they
+plausibly discourage the words the prompt is full of ("I", the character's name, the scene's nouns). That cause is suspected, not
+proven. Only automation's redo of a stock-phrase reply still sets the stronger values.
+
+**Who is who.** `buildStyleReminder` always carries a "Who is who" line at the end of the prompt: the character is only itself, an
+"I"/"my" in the persona's message means the persona, react from the character's own position and add something new, and never
+retell or perform the persona's action. In a first-person chat both sides write "I", and a mid-size model answers "I look around for
+a weapon" with "I scan the floor for a weapon" or retells it; a rule above the transcript loses to that habit, so it is said last.
 
 `isStalled` measures how much of each recent line is new vocabulary (threshold `STALL_NOVELTY`, calibrated on one run);
 when the scene is going in circles, the persona drafter is also told to change something (`STALL_NUDGE`).

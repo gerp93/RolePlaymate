@@ -79,6 +79,16 @@ export function buildStyleReminder({
     );
   }
 
+  // Both sides write in first person in a first-person chat, and a 12-22B model blurs them: it answers the user's
+  // action by performing it itself ("I look around for a weapon" -> "I scan the floor for a weapon"), or retells
+  // it. Said at the end, where it outweighs the transcript, and in both directions: whose "I" is whose, and that
+  // a reply adds something rather than echoing.
+  lines.push(
+    `Who is who: you are ${charName}, and only ${charName}. Any "I" or "my" in a message from ${personaName} means ${personaName}, not you. ` +
+      `React to what ${personaName} just did or said from ${charName}'s own position in the scene, and add something new ${charName} says or does. ` +
+      `Do not retell or repeat ${personaName}'s action, and never carry it out yourself as if you were ${personaName}.`
+  );
+
   lines.push(
     `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`
   );
