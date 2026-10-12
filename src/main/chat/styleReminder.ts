@@ -1,5 +1,3 @@
-import { OverusedPhrases, describeOverused } from './phraseGuard';
-
 export interface StyleReminderInput {
   charName: string;
   personaName: string;
@@ -13,8 +11,6 @@ export interface StyleReminderInput {
   directions?: string;
   /** True when the system prompt carries a memory section this turn. */
   hasMemories?: boolean;
-  /** Wording this character has been leaning on in their recent replies (see phraseGuard). */
-  avoid?: OverusedPhrases;
   /** The chat's scene note: where the story is now, until the user changes it. */
   sceneNote?: string | null;
   /** On a redo made because the last attempt fell back on overused wording: what it reused. */
@@ -38,7 +34,6 @@ export function buildStyleReminder({
   otherCharacters = [],
   directions,
   hasMemories = false,
-  avoid,
   sceneNote,
   retryAvoid,
 }: StyleReminderInput): string {
@@ -67,10 +62,6 @@ export function buildStyleReminder({
     );
   }
 
-  // Quoted back to the model, at the end where it holds: a rule above thousands of tokens of history
-  // loses to the habit it is imitating from that history.
-  const variety = describeOverused(avoid);
-  if (variety) lines.push(variety);
   if (retryAvoid && retryAvoid.length > 0) {
     lines.push(
       `Your previous attempt at this reply reused wording you have already worn out (${retryAvoid
@@ -78,16 +69,6 @@ export function buildStyleReminder({
         .join(', ')}). Write the reply again without any of it: a different opening, a different gesture or reaction, different words.`
     );
   }
-
-  // Both sides write in first person in a first-person chat, and a 12-22B model blurs them: it answers the user's
-  // action by performing it itself ("I look around for a weapon" -> "I scan the floor for a weapon"), or retells
-  // it. Said at the end, where it outweighs the transcript, and in both directions: whose "I" is whose, and that
-  // a reply adds something rather than echoing.
-  lines.push(
-    `Who is who: you are ${charName}, and only ${charName}. Any "I" or "my" in a message from ${personaName} means ${personaName}, not you. ` +
-      `React to what ${personaName} just did or said from ${charName}'s own position in the scene, and add something new ${charName} says or does. ` +
-      `Do not retell or repeat ${personaName}'s action, and never carry it out yourself as if you were ${personaName}.`
-  );
 
   lines.push(
     `Formatting: put ${charName}'s actions, thoughts, and narration in single asterisks, like *this*. Put every line ${charName} says aloud in double quotes wrapped in double asterisks, like **"this"**. Always close every asterisk pair.`
@@ -135,58 +116,11 @@ export function buildStyleReminder({
  * outright what a continuation is for. The reply guidance (and any directions) is appended to it
  * like any other last user turn.
  */
-export function buildContinuationCue(
-  charName: string,
-  personaName: string,
-  history: { role: string; content: string }[] = []
-): string {
-  const { chain, lastBeat } = describeChain(history);
-  const parts = [
-    `${personaName} has not replied. Continue the scene as ${charName}: ${charName} speaks or acts again, on their own. ` +
-      `Move things forward with something NEW -- a new action, new information, or a change in the situation. ` +
-      `Do not repeat, restate, or rephrase anything ${charName} has already said or done in the lines above, ` +
-      `and do not write anything for ${personaName}.`,
-  ];
-  // Left to itself, a model re-enters the scene a moment BEFORE where the last reply stopped (it was about to
-  // do something, so it prepares again) and the story never gets past the doorway. Quoting where it stopped
-  // and demanding the next thing happen is what moves it.
-  if (lastBeat) {
-    parts.push(
-      `The last reply stopped at: "${lastBeat}" Start AFTER that moment. Whatever ${charName} was about to do, ` +
-        `was preparing for or was wondering about now happens, and something comes of it (a result, a discovery, a reaction from the world). ` +
-        `Do not spend this turn preparing, hesitating, taking stock, looking things over or musing again -- that is already done. ` +
-        `End on something that happened, not on a thought or a feeling that something is about to.`
-    );
-  }
-  if (chain >= 3) {
-    parts.push(
-      `${charName} has now taken ${chain} turns in a row and the scene is in danger of standing still. This turn the situation must visibly change: ` +
-        `a new place, an event, a decision acted on, or someone or something arriving or reacting from outside ${charName}.`
-    );
-  }
-  parts.push('Never mention or quote this note.');
-  return `[${parts.join(' ')}]`;
-}
-
-/** How many replies in a row the speaker has just written with no one answering, and where the last one stopped. */
-export function describeChain(history: { role: string; content: string }[]): { chain: number; lastBeat: string } {
-  let chain = 0;
-  for (let i = history.length - 1; i >= 0 && history[i].role === 'assistant'; i -= 1) chain += 1;
-  if (chain === 0) return { chain: 0, lastBeat: '' };
-  return { chain, lastBeat: endingOf(history[history.length - 1].content) };
-}
-
-/** The last sentence or two of a reply, without the markdown, for quoting back. */
-function endingOf(text: string): string {
-  const plain = text.replace(/[*_]/g, '').replace(/["“”]/g, "'").replace(/\s+/g, ' ').trim();
-  if (!plain) return '';
-  const sentences = plain.match(/[^.!?…]+[.!?…]+["')\]]*|[^.!?…]+$/g) ?? [plain];
-  let ending = '';
-  for (let i = sentences.length - 1; i >= 0; i -= 1) {
-    const next = `${sentences[i].trim()} ${ending}`.trim();
-    if (ending && next.length > 220) break;
-    ending = next;
-    if (ending.length >= 90) break;
-  }
-  return ending.length > 260 ? `…${ending.slice(-257)}` : ending;
+export function buildContinuationCue(charName: string, personaName: string): string {
+  return (
+    `[${personaName} has not replied. Continue the scene as ${charName}: ${charName} speaks or acts again, on their own. ` +
+    `Move things forward with something NEW -- a new action, new information, or a change in the situation. ` +
+    `Do not repeat, restate, or rephrase anything ${charName} has already said or done in the lines above, ` +
+    `and do not write anything for ${personaName}. Never mention or quote this note.]`
+  );
 }

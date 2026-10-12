@@ -33,7 +33,6 @@ import {
   getSceneSuggestionsEnabled,
   getNarrationPov,
 } from '../dbLocation';
-import { findOverusedPhrases } from './phraseGuard';
 import { buildContinuationCue, buildStyleReminder } from './styleReminder';
 import { TEMPLATE_TAGS } from './promptTemplates';
 
@@ -106,16 +105,6 @@ export const DEFAULT_SAMPLERS: SamplerParams = {
   topP: 0.95,
   topK: 50,
   repetitionPenalty: 1.1,
-  // Only min_p is added to what Ollama does by default: it trims the long tail of odd choices. A longer repeat
-  // look-back (256) and a frequency penalty (0.15) were tried here against stock phrases and taken out again after
-  // replies started mirroring the user's action instead of answering it: llama.cpp counts the prompt's own tokens
-  // for these penalties, so they plausibly push the model off the words the prompt is full of ("I", the
-  // character's name, the scene's nouns). Not proven, and stock phrases have code-side guards anyway (phraseGuard in
-  // the reply reminder, redo in automation). A model that wants them can still set them on Model Tuning.
-  minP: 0.05,
-  repeatLastN: 64,
-  frequencyPenalty: 0,
-  presencePenalty: 0,
 };
 
 /** Sliding window over prior turns, matching the source's hard-coded 20. Becomes a setting
@@ -226,14 +215,6 @@ export function withStyleReminder(
   sceneNote?: string | null,
   retryAvoid?: string[]
 ): OllamaChatMessage[] {
-  // What this character keeps saying: found from their own earlier replies in this very request (the
-  // history is already in `messages`, redo and continue included). Whatever the other side says too is
-  // the scene's vocabulary and is left out.
-  const avoid = findOverusedPhrases(
-    messages.filter((m) => m.role === 'assistant').map((m) => m.content),
-    {},
-    messages.filter((m) => m.role === 'user').map((m) => m.content)
-  );
   const reminder = buildStyleReminder({
     charName,
     personaName: personaName?.trim() || 'User',
@@ -242,7 +223,6 @@ export function withStyleReminder(
     otherCharacters,
     directions,
     hasMemories,
-    avoid,
     sceneNote,
     retryAvoid,
   });
@@ -1037,7 +1017,7 @@ export class ChatSessionManager {
         ? [
             {
               role: 'user' as const,
-              content: buildContinuationCue(pending.characterName, pending.personaName?.trim() || 'User', replayBase),
+              content: buildContinuationCue(pending.characterName, pending.personaName?.trim() || 'User'),
             },
           ]
         : []),
@@ -1465,7 +1445,7 @@ export class ChatSessionManager {
         // whole history is already one user-role turn, and two in a row defeats the point.
         ...mergeAdjacentTurns([
           ...historyTurns,
-          { role: 'user' as const, content: buildContinuationCue(built.characterName, request.personaName?.trim() || 'User', historyTurns) },
+          { role: 'user' as const, content: buildContinuationCue(built.characterName, request.personaName?.trim() || 'User') },
         ]),
       ],
       built.characterName,
