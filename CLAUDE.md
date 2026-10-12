@@ -97,6 +97,18 @@ them, and a restart recovers them from the stored user message.
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
 "User" when none is selected.
 
+**Context window.** Ollama's default window here is 4096 tokens and the app never asked for more, but a normal prompt (character
+card, memories, 20 messages of history, the reminder) is 3,500 to 6,000+. Past the window Ollama silently drops the oldest
+messages one at a time -- history quietly lost for every model, and for a strict-alternation template it can leave the
+conversation opening on the assistant, so the request is refused (HTTP 400) even though what we sent alternated perfectly: a
+valid 5,000-token conversation failed and the same one worked with a larger `num_ctx`. So `OllamaClient` puts `num_ctx` on **every**
+chat request (`getContextWindow`, `contextWindow` in `app-config.json`, default 8192, set on Model Tuning), including background
+calls: a model reloads whenever its window changes between requests, so extraction or a scene check that left it unset would make
+it reload around every reply. If a conversation still does not fit, `fitMessagesToContext` (`contextBudget.ts`) leaves out the oldest
+turns itself -- system message and the latest turn always kept, never opening on the assistant -- and the result and the debug
+record carry `contextDropped`. A bigger window costs GPU memory (a model that stops fitting spills onto the CPU) and a longer
+prompt to read each turn, which is why it is a setting.
+
 **Strict-alternation templates.** Some models (Mistral-family Jinja templates, e.g. `magnum:22b`) make Ollama answer HTTP 400
 ("After the optional system message, conversation roles must alternate...") unless the first message after the system prompt is the
 user's and the roles strictly alternate -- and a conversation opens with the scenario's greeting, which is the character's.

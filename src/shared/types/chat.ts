@@ -74,6 +74,9 @@ export interface ChatDebugInfo {
   outputTokens: number | null;
   /** Where the time went, from Ollama's own counters (null on a reply from before they were kept). */
   timings?: ReplyTimings | null;
+  /** Oldest messages left out of the request because the conversation did not fit the context window
+   * (see contextBudget.ts). Absent or 0 when everything was sent. */
+  contextDropped?: number;
   error?: string;
 }
 

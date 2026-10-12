@@ -7,6 +7,7 @@
  */
 import { ReplyTimings } from '../../shared/types/chat';
 import { alternateRoles, isAlternationError } from './roleAlternation';
+import { DEFAULT_CONTEXT_WINDOW, fitMessagesToContext } from './contextBudget';
 import { OllamaModelInfo } from '../../shared/types/ollama';
 
 export const DEFAULT_OLLAMA_HOST = 'http://localhost:11434';
@@ -50,6 +51,8 @@ export interface OllamaOptions {
   frequency_penalty?: number;
   presence_penalty?: number;
   num_predict?: number;
+  /** Context window in tokens. Set by OllamaClient on every chat request; callers normally leave it alone. */
+  num_ctx?: number;
   stop?: string[];
 }
 
@@ -60,6 +63,8 @@ export interface OllamaChatResult {
   evalCount: number | null;
   /** Where the time went, from Ollama's own counters. Null when the server reports none. */
   timings: ReplyTimings | null;
+  /** Oldest messages left out because the conversation did not fit the context window (0 normally). */
+  contextDropped: number;
 }
 
 export interface ChatRequest {
@@ -72,7 +77,11 @@ export interface ChatRequest {
 }
 
 export class OllamaClient {
-  constructor(private hostProvider: () => string = () => DEFAULT_OLLAMA_HOST) {}
+  constructor(
+    private hostProvider: () => string = () => DEFAULT_OLLAMA_HOST,
+    /** The context window to request, read on every request so changing it applies at once. */
+    private contextProvider: () => number = () => DEFAULT_CONTEXT_WINDOW
+  ) {}
 
   /** Models that refused a request for not alternating user/assistant roles. Remembered for the session, so
    * only the first request to such a model is sent twice. */
@@ -184,6 +193,13 @@ export class OllamaClient {
 
   private async chatOnce(request: ChatRequest): Promise<OllamaChatResult> {
     const stream = typeof request.onToken === 'function';
+    // Every chat request to a model must use the same window: Ollama reloads a model whenever the window changes
+    // between requests, so a background call (memory extraction, a scene check) that left it unset would make the
+    // model reload around every reply.
+    const contextWindow = request.options?.num_ctx ?? this.contextProvider();
+    // The window is set explicitly, so Ollama no longer has to cut the conversation to fit; if it still does not
+    // fit, the oldest messages are left out here, in whole turns, rather than by the server one message at a time.
+    const fitted = fitMessagesToContext(request.messages, contextWindow, request.options?.num_predict);
     // Started before the request goes out: Ollama sends its response headers only when it has something to
     // say, so a clock started once they arrive measured nothing (every model read 0.0s to first word).
     const startedAt = performance.now();
@@ -194,13 +210,13 @@ export class OllamaClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages,
+          messages: fitted.messages,
           stream,
           // Reasoning models (e.g. gemma4) otherwise spend the whole num_predict budget on a
           // hidden <thinking> pass, leaving `message.content` empty -- this app has nowhere to
           // show a thinking trace and no UI concept of it, so it's always off.
           think: false,
-          ...(request.options ? { options: request.options } : {}),
+          options: { ...request.options, num_ctx: contextWindow },
         }),
         signal: request.signal,
       },
@@ -214,6 +230,7 @@ export class OllamaClient {
         promptEvalCount: data.prompt_eval_count ?? null,
         evalCount: data.eval_count ?? null,
         timings: timingsFromChunk(data, null),
+        contextDropped: fitted.dropped,
       };
     }
 
@@ -242,7 +259,7 @@ export class OllamaClient {
       }
     }
 
-    return { content, promptEvalCount, evalCount, timings };
+    return { content, promptEvalCount, evalCount, timings, contextDropped: fitted.dropped };
   }
 
   /**

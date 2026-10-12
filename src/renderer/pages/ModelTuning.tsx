@@ -255,6 +255,16 @@ function ModelTuningPage() {
   // Each model's speed-test results (newest first), and which rows are expanded to show them.
   const [speedHistory, setSpeedHistory] = useState<ModelSpeedHistory>({});
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+  // How many tokens of context every chat request asks Ollama for.
+  const [contextWindow, setContextWindowState] = useState<number | null>(null);
+  useEffect(() => {
+    void window.electronAPI.contextWindow.get().then(setContextWindowState);
+  }, []);
+  const changeContextWindow = async (value: number) => {
+    setContextWindowState(value);
+    const saved = await window.electronAPI.contextWindow.set(value);
+    setContextWindowState(saved.value);
+  };
   // Loaded on mount and again whenever a test ends, so a finished test shows up without a reload.
   useEffect(() => {
     if (speedTest.running) return;
@@ -532,6 +542,34 @@ function ModelTuningPage() {
         hardware above — Fast on a 7B can be Slow on a 70B even when Tier says Best. The overlap
         (strong Tier, Fast or OK here, marked ★) is the usual sweet spot.
       </p>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <strong>Context window</strong>
+          <select
+            value={contextWindow ?? ''}
+            disabled={contextWindow === null}
+            onChange={(e) => void changeContextWindow(Number(e.target.value))}
+            style={{ width: 150 }}
+          >
+            {[...new Set([4096, 8192, 12288, 16384, 24576, 32768, ...(contextWindow ? [contextWindow] : [])])]
+              .sort((a, b) => a - b)
+              .map((tokens) => (
+                <option key={tokens} value={tokens}>
+                  {tokens.toLocaleString()} tokens{tokens === 8192 ? ' (default)' : ''}
+                </option>
+              ))}
+          </select>
+        </div>
+        <p className="text-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+          How much of the conversation (character card, memories, history and the reply) every model is given at once.
+          Ollama&apos;s own default is 4,096, which a normal chat soon outgrows: past it Ollama silently drops the oldest
+          messages, and models with a strict chat template (such as magnum:22b) refuse the request outright. A larger
+          window keeps more of the conversation, but uses more GPU memory (a model that no longer fits spills onto the
+          CPU and gets much slower) and reads a longer prompt each turn. The first request after you change it reloads
+          the model. If the conversation still does not fit, the oldest turns are left out and the debug view says so.
+        </p>
+      </div>
 
       {models.length === 0 && (
         <div className="text-muted">No chat models installed yet.</div>

@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, shell, dialog } from 'electron';
 import { DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
+import { DEFAULT_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW, MIN_CONTEXT_WINDOW } from './chat/contextBudget';
 import { DEFAULT_CHATTERBOX_HOST } from './chat/chatterboxClient';
 import { DEFAULT_EMBEDDING_MODEL } from '../shared/embeddingModel';
 import { CharacterTtsVoice } from '../shared/types/tts';
@@ -35,6 +36,8 @@ interface AppConfig {
   memoryEmbeddingModel?: string;
   /** Optional Ollama model used only to extract memories after a reply. Unset means the chat model. */
   memoryExtractionModel?: string;
+  /** Context window (tokens) requested from Ollama for every chat request. Unset means DEFAULT_CONTEXT_WINDOW. */
+  contextWindow?: number;
   /** False turns off the after-reply check that offers to update a chat's scene note. Unset means on. */
   sceneSuggestions?: boolean;
   /** 0–N chat deletion rules. Missing or empty means keep forever. */
@@ -498,6 +501,23 @@ export function setNarratorVoice(voice: CharacterTtsVoice | null): void {
   } else {
     config.narratorVoice = { mode: voice.mode, id: voice.id };
   }
+  writeConfig(config);
+}
+
+/** The context window asked of Ollama on every chat request. Ollama's own default (4096 on this setup) is smaller than
+ * a normal roleplay prompt, and over it Ollama silently drops the oldest messages. */
+export function getContextWindow(): number {
+  const configured = readConfig().contextWindow;
+  return typeof configured === 'number' && Number.isFinite(configured)
+    ? Math.min(Math.max(Math.round(configured), MIN_CONTEXT_WINDOW), MAX_CONTEXT_WINDOW)
+    : DEFAULT_CONTEXT_WINDOW;
+}
+
+export function setContextWindow(value: number): void {
+  const config = readConfig();
+  const clamped = Math.min(Math.max(Math.round(value), MIN_CONTEXT_WINDOW), MAX_CONTEXT_WINDOW);
+  if (clamped === DEFAULT_CONTEXT_WINDOW) delete config.contextWindow;
+  else config.contextWindow = clamped;
   writeConfig(config);
 }
 

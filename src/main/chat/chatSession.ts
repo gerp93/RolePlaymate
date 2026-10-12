@@ -890,6 +890,7 @@ export class ChatSessionManager {
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
         timings: result.timings,
+        contextDropped: result.contextDropped,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -1067,6 +1068,7 @@ export class ChatSessionManager {
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
         timings: result.timings,
+        contextDropped: result.contextDropped,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -1260,6 +1262,7 @@ export class ChatSessionManager {
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
         timings: result.timings,
+        contextDropped: result.contextDropped,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;
@@ -1468,6 +1471,7 @@ export class ChatSessionManager {
         cleanedResponse: content,
         inputTokens: result.promptEvalCount,
         timings: result.timings,
+        contextDropped: result.contextDropped,
         outputTokens: result.evalCount,
       };
       session.lastDebug = debug;

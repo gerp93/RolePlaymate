@@ -159,6 +159,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('embeddingModelPrompt:setSuppressed', suppressed),
   },
 
+  contextWindow: {
+    get: () => ipcRenderer.invoke('contextWindow:get'),
+    set: (value: number) => ipcRenderer.invoke('contextWindow:set', value),
+  },
   memoryExtractionModel: {
     get: () => ipcRenderer.invoke('memoryExtractionModel:get'),
     set: (model: string | null) => ipcRenderer.invoke('memoryExtractionModel:set', model),
