@@ -49,6 +49,8 @@ import {
   setConfiguredMemoryExtractionModel,
   getSceneSuggestionsEnabled,
   setSceneSuggestionsEnabled,
+  getContextWindow,
+  setContextWindow,
   isUsingDefaultMemoryEmbeddingModel,
   setConfiguredMemoryEmbeddingModel,
   resetMemoryEmbeddingModel,
@@ -948,7 +950,7 @@ app.whenReady().then(async () => {
   // A function, not a resolved string, so a host change from the settings page (see
   // ollamaHost:set below) takes effect on the client's very next request -- no restart, unlike
   // the db path, which OllamaClient never caches for that reason.
-  ollamaClient = new OllamaClient(getEffectiveOllamaHost);
+  ollamaClient = new OllamaClient(getEffectiveOllamaHost, getContextWindow);
   chatterboxClient = new ChatterboxClient(getEffectiveChatterboxHost);
   // KVGenius writes mcp-api.json into its own userData folder: `kvgenius` when packaged,
   // `kvgenius-dev` from source. Try the installed app first.
@@ -1623,6 +1625,14 @@ function registerIPCHandlers() {
   ipcMain.handle('chatStyle:setSceneSuggestions', (_, value: boolean) => {
     setSceneSuggestionsEnabled(value === true);
     return { success: true };
+  });
+
+  // How many tokens of context every chat request asks Ollama for (Model Tuning).
+  ipcMain.handle('contextWindow:get', () => getContextWindow());
+  ipcMain.handle('contextWindow:set', (_, value: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('Context window must be a number of tokens.');
+    setContextWindow(value);
+    return { value: getContextWindow() };
   });
 
   ipcMain.handle('chatStyle:getPov', () => getNarrationPov());

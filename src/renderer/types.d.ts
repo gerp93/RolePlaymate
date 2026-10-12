@@ -208,6 +208,11 @@ declare global {
         getSuppressed: () => Promise<{ suppressed: boolean }>;
         setSuppressed: (suppressed: boolean) => Promise<{ success: boolean }>;
       };
+      contextWindow: {
+        get: () => Promise<number>;
+        /** Tokens of context requested on every chat request; clamped. Returns the value actually stored. */
+        set: (value: number) => Promise<{ value: number }>;
+      };
       memoryExtractionModel: {
         get: () => Promise<{ model: string | null }>;
         /** Null or empty goes back to using the chat model. */
