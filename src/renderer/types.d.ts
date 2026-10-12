@@ -349,6 +349,8 @@ declare global {
         setPinned: (id: string, pinned: boolean) => Promise<ConversationMemory>;
         delete: (id: string) => Promise<{ success: true }>;
         deleteAll: (conversationId: string) => Promise<{ success: true }>;
+        /** Removes extracted memories that are junk or paraphrases of an earlier one; pinned ones are kept. */
+        prune: (conversationId: string) => Promise<{ removed: number; remaining: number }>;
       };
       lorebooks: {
         getWorldBooks: () => Promise<Lorebook[]>;

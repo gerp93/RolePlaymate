@@ -280,6 +280,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('memories:delete', id),
     deleteAll: (conversationId: string) =>
       ipcRenderer.invoke('memories:deleteAll', conversationId),
+    prune: (conversationId: string) => ipcRenderer.invoke('memories:prune', conversationId),
   },
 
   lorebooks: {

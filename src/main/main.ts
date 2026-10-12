@@ -108,6 +108,8 @@ import { CharacterTtsVoice, TtsSpeakRequest, TtsStoreAudioRequest, TtsAttachAudi
 import { DEFAULT_EMBEDDING_MODEL, isEmbeddingModel } from '../shared/embeddingModel';
 import { isHardpointReachable, openHardpoint } from './hardpointLaunch';
 import { ChatSessionManager, DEFAULT_SAMPLERS } from './chat/chatSession';
+import { blobToVector } from './chat/memoryRetrieval';
+import { pickPrunable } from './chat/memoryExtraction';
 import { AutomationRunner } from './chat/automationRunner';
 import { renderRunMarkdown } from './chat/automationExport';
 import { AutomationRunService } from './database/automationRunService';
@@ -3262,6 +3264,21 @@ function registerChatHandlers() {
   ipcMain.handle('memories:delete', (_, id: string) => {
     conversationService.deleteMemory(id);
     return { success: true };
+  });
+
+  // Clean-up for a pile of junk memories: automatic ones today's extraction filters would reject, and
+  // automatic ones that restate an earlier one by meaning. Pinned memories are never touched.
+  ipcMain.handle('memories:prune', (_, conversationId: string) => {
+    const embeddingModel = getConfiguredMemoryEmbeddingModel();
+    const rows = conversationService.listMemoriesWithEmbeddings(conversationId).map((row) => ({
+      id: row.memory.id,
+      content: row.memory.content,
+      source: row.memory.source,
+      vector: row.embedding && row.embeddingModel === embeddingModel ? blobToVector(row.embedding) : null,
+    }));
+    const ids = pickPrunable(rows);
+    for (const id of ids) conversationService.deleteMemory(id);
+    return { removed: ids.length, remaining: rows.length - ids.length };
   });
 
   ipcMain.handle('memories:deleteAll', (_, conversationId: string) => {

@@ -26,6 +26,7 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
   const [confirmClear, setConfirmClear] = useState(false);
   const [embeddingMissing, setEmbeddingMissing] = useState(false);
   const [embeddingModelName, setEmbeddingModelName] = useState('nomic-embed-text');
+  const [pruneNote, setPruneNote] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const load = useCallback(async () => {
@@ -96,6 +97,14 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
     window.setTimeout(() => setCopyState('idle'), 2000);
   };
 
+  // Drops extracted memories that are momentary or feelings, or restate an earlier one (pinned are kept).
+  const cleanUp = async () => {
+    const { removed } = await window.electronAPI.memories.prune(conversationId);
+    setPruneNote(removed === 0 ? 'Nothing to clean up' : `Removed ${removed}`);
+    window.setTimeout(() => setPruneNote(null), 3000);
+    await afterChange();
+  };
+
   const autoCount = memories.filter((m) => m.source === 'auto').length;
 
   return (
@@ -124,6 +133,14 @@ export default function MemoriesPanel({ conversationId, onChanged }: Props) {
           <div className="memories-header-actions">
             <button type="button" className="btn" onClick={() => void copyAll()}>
               {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy all'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              title="Removes extracted memories that only describe what someone was doing or feeling at the moment, or repeat an earlier one. Pinned memories are kept."
+              onClick={() => void cleanUp()}
+            >
+              {pruneNote ?? 'Clean up'}
             </button>
             {confirmClear ? (
             <div className="memories-clear-confirm">
