@@ -1,5 +1,5 @@
 import { ConversationService } from '../database/conversationService';
-import { GroupPromptContext, PromptBuilder } from './promptBuilder';
+import { GroupPromptContext, PromptBuildOptions, PromptBuilder } from './promptBuilder';
 import { LorebookService } from '../database/lorebookService';
 import { ScenarioService } from '../database/scenarioService';
 import { GroupService } from '../database/groupService';
@@ -23,7 +23,7 @@ import { suggestPersonaReply, SuggestionExtras } from './suggestReply';
 import { composeImagePrompt, IMAGE_PROMPT_HISTORY_LINES } from './imagePrompt';
 import { Message, isDirectionsOnly } from '../../shared/types/message';
 import { Conversation } from '../../shared/types/conversation';
-import { ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
+import { BuiltPrompt, ChatDebugInfo, SamplerParams } from '../../shared/types/chat';
 import { ConversationMemory } from '../../shared/types/conversationMemory';
 import { ModelSamplerService } from '../database/modelSamplerService';
 import {
@@ -56,6 +56,12 @@ export interface PendingTurn {
    * instructions/lore/memories preamble can't push personality traits out of view. See
    * PromptBuilder.baseSystemPrompt. */
   baseSystemPrompt: string;
+  /** Who was speaking, and what the system prompt was built from (retrieved memories and lore, directions, group,
+   * persona, scenario). A redo builds the prompt again from these, with the character card, scenario text and
+   * persona read afresh, so edits made since the reply was first generated take effect -- while what was retrieved
+   * for that turn stays, because a redo is another try at the same turn. */
+  speakerId?: string;
+  promptInputs?: PromptBuildOptions;
   /** What the end-of-prompt reply guidance is written around -- kept so a redo can rebuild it
    * from the *current* Chat Settings toggles instead of replaying whatever was on at send time. */
   characterName: string;
@@ -488,15 +494,18 @@ export class ChatSessionManager {
       const scenarioContent = conversation.scenarioId
         ? this.scenarios.getActiveContent(conversation.scenarioId)
         : null;
-      const built = this.prompts.buildSystemPrompt(conversation.characterId, {
+      const promptInputs: PromptBuildOptions = {
         personaName: persona?.name,
         personaBackground: persona?.background,
         scenarioContent,
-      });
+      };
+      const built = this.prompts.buildSystemPrompt(conversation.characterId, promptInputs);
       return {
         userMessage,
         assistantMessageId,
         model: conversation.model,
+        speakerId: conversation.characterId,
+        promptInputs,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
         characterName: built.characterName,
@@ -535,12 +544,13 @@ export class ChatSessionManager {
       const scenarioContent = conversation.scenarioId
         ? this.scenarios.getActiveContent(conversation.scenarioId)
         : null;
-      const built = this.prompts.buildSystemPrompt(reply.speakerCharacterId, {
+      const promptInputs: PromptBuildOptions = {
         personaName: persona?.name,
         personaBackground: persona?.background,
         scenarioContent,
         group: groupTurn.context,
-      });
+      };
+      const built = this.prompts.buildSystemPrompt(reply.speakerCharacterId, promptInputs);
 
       const excluded = new Set([reply.id, ...(precedingUser ? [precedingUser.id] : [])]);
       let replayMessages = this.getGroupHistory(
@@ -667,6 +677,29 @@ export class ChatSessionManager {
       // A scene check is a convenience; never let one disturb the chat.
     } finally {
       state.running = false;
+    }
+  }
+
+  /**
+   * The system prompt for a redo: built again from what the original was built from, but with the character card
+   * (personality, example dialogue, ...), the scenario text and the persona read afresh. Without this a redo kept
+   * the prompt frozen at the first attempt, so editing the card and redoing changed nothing -- even after the
+   * version it used was deleted. Null when there is nothing to rebuild from or the character is gone, in which
+   * case the redo falls back to the frozen prompt.
+   */
+  private refreshedPrompt(conversationId: string, pending: PendingTurn): BuiltPrompt | null {
+    if (!pending.speakerId || !pending.promptInputs) return null;
+    try {
+      const conversation = this.conversations.getConversation(conversationId);
+      const persona = conversation?.userPersonaId ? this.conversations.getPersona(conversation.userPersonaId) : null;
+      return this.prompts.buildSystemPrompt(pending.speakerId, {
+        ...pending.promptInputs,
+        personaName: persona?.name ?? pending.promptInputs.personaName,
+        personaBackground: persona?.background ?? pending.promptInputs.personaBackground,
+        scenarioContent: this.getScenarioContent(conversationId),
+      });
+    } catch {
+      return null;
     }
   }
 
@@ -811,7 +844,7 @@ export class ChatSessionManager {
       : characterLore;
     this.recordLoreHits(lore.selected);
 
-    const built = this.prompts.buildSystemPrompt(request.characterId, {
+    const promptInputs: PromptBuildOptions = {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
@@ -821,7 +854,8 @@ export class ChatSessionManager {
       worldLore,
       personalLore,
       personaLore,
-    });
+    };
+    const built = this.prompts.buildSystemPrompt(request.characterId, promptInputs);
     const turns = groupTurn
       ? appendUserLine(historyTurns, request.personaName ?? null, userText)
       : mergeAdjacentTurns([...historyTurns, { role: 'user' as const, content: userText }]);
@@ -914,6 +948,8 @@ export class ChatSessionManager {
         userMessage: userText,
         assistantMessageId: message.id,
         model: request.model,
+        speakerId: request.characterId,
+        promptInputs,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
         characterName: built.characterName,
@@ -965,6 +1001,11 @@ export class ChatSessionManager {
       throw new Error('Nothing to redo -- send a message first');
     }
     const effectiveModel = model || pending.model;
+    // The character card, scenario text and persona are read again, so a card edited since this reply was first
+    // generated is what the redo uses (the example dialogue, personality...). Memories, lore and directions are the
+    // turn's own and stay as they were.
+    const refreshed = this.refreshedPrompt(conversationId, pending);
+    const systemPrompt = refreshed?.prompt ?? pending.systemPrompt;
 
     const concise = getConciseReplies();
     const options = capForConcise(
@@ -996,14 +1037,14 @@ export class ChatSessionManager {
     ]);
     const messages = withStyleReminder(
       [
-        ...(pending.systemPrompt ? [{ role: 'system' as const, content: pending.systemPrompt }] : []),
+        ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         ...replayTurns,
       ],
       pending.characterName,
       pending.personaName,
       pending.otherCharacters,
       pending.directions,
-      pending.systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`),
+      systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`),
       this.sceneNoteFor(conversationId),
       retryAvoid
     );
@@ -1050,7 +1091,7 @@ export class ChatSessionManager {
           memories: [],
           retrieval: null,
           lore: null,
-          systemPrompt: pending.systemPrompt,
+          systemPrompt: systemPrompt,
           userMessage: pending.userMessage ?? '',
           historyTurns: session.history,
           historyLength: session.history.length,
@@ -1063,6 +1104,11 @@ export class ChatSessionManager {
         };
       const debug: ChatDebugInfo = {
         ...baseDebug,
+        // The prompt this redo actually sent (the card may have been edited since the first attempt).
+        systemPrompt,
+        ...(refreshed
+          ? { baseSystemPrompt: refreshed.baseSystemPrompt, characterInstructions: refreshed.characterInstructions }
+          : {}),
         fullPrompt: renderMessagesForDebug(messages),
         rawResponse: result.content,
         cleanedResponse: content,
@@ -1086,6 +1132,9 @@ export class ChatSessionManager {
       // A later redo with no explicit model falls back to whichever one this redo just used,
       // not all the way back to the original response's model.
       pending.model = effectiveModel;
+      // What the next redo starts from, and what memory extraction reads the character sheet from.
+      pending.systemPrompt = systemPrompt;
+      if (refreshed) pending.baseSystemPrompt = refreshed.baseSystemPrompt;
 
       this.scheduleSceneCheck(conversationId, message.id, effectiveModel, suggestScene);
       return { message, debug };
@@ -1190,7 +1239,7 @@ export class ChatSessionManager {
       : characterLore;
     this.recordLoreHits(lore.selected);
 
-    const built = this.prompts.buildSystemPrompt(speakerId, {
+    const promptInputs: PromptBuildOptions = {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
@@ -1200,7 +1249,8 @@ export class ChatSessionManager {
       worldLore,
       personalLore,
       personaLore,
-    });
+    };
+    const built = this.prompts.buildSystemPrompt(speakerId, promptInputs);
     const turns = groupTurn
       ? appendUserLine(historyTurns, request.personaName ?? null, trimmed)
       : mergeAdjacentTurns([...historyTurns, { role: 'user' as const, content: trimmed }]);
@@ -1289,6 +1339,8 @@ export class ChatSessionManager {
         userMessage: trimmed,
         assistantMessageId: pending.assistantMessageId,
         model: request.model,
+        speakerId: speakerId,
+        promptInputs,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
         characterName: built.characterName,
@@ -1384,7 +1436,7 @@ export class ChatSessionManager {
     // wait rather than understanding it should keep going unprompted.
     const directions = request.directions?.trim() || DEFAULT_CONTINUE_DIRECTIONS;
 
-    const built = this.prompts.buildSystemPrompt(request.characterId, {
+    const promptInputs: PromptBuildOptions = {
       personaName: request.personaName,
       personaBackground: request.personaBackground,
       scenarioContent: this.getScenarioContent(request.conversationId),
@@ -1394,7 +1446,8 @@ export class ChatSessionManager {
       worldLore,
       personalLore,
       personaLore,
-    });
+    };
+    const built = this.prompts.buildSystemPrompt(request.characterId, promptInputs);
     // No trailing `{ role: 'user', ... }` -- that's the whole point. Whatever chat template the
     // model uses gets to decide how it handles two turns from the same role in a row; most
     // roleplay-tuned models handle this fine, same as SillyTavern's "Continue" does.
@@ -1490,6 +1543,8 @@ export class ChatSessionManager {
         userMessage: null,
         assistantMessageId: message.id,
         model: request.model,
+        speakerId: request.characterId,
+        promptInputs,
         systemPrompt: built.prompt,
         baseSystemPrompt: built.baseSystemPrompt,
         characterName: built.characterName,
