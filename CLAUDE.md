@@ -368,6 +368,15 @@ same-role messages into one turn so what the model sees strictly alternates. The
 untouched -- five continues are still five messages. Solo chats only reconstruct a redoable reply after
 a restart when it directly follows a user message, so a continue chain is not redoable after one.
 
+**Continue chains stall in the doorway.** A run of continues with no reply used to loop: the character is about to do
+something, ends on "a thought occurs", and the next continue re-enters a moment *before* that, preparing again (a ship
+alone, "I take a deep breath, hands over the controls", five times). Word novelty (`noveltyOf`) cannot see it -- it measured 0.4-0.7
+on exactly such a run -- so nothing is detected; `buildContinuationCue` takes the history and always quotes where the last
+reply stopped (`describeChain`/`endingOf`: its final sentence or two, markdown stripped), says to start *after* that moment, that what
+the character was about to do now happens with a result, not to prepare/hesitate/take stock again, and not to end on a thought
+rather than an event. From the third reply in a row (`chain >= 3`) it adds that the situation must visibly change (new place,
+event, someone arriving). Code-built like the other reply guidance; the redo of a continuation rebuilds it the same way.
+
 **Directions only.** Send works with directions and no message: an empty message takes the Continue
 path with `recordDirections`, which stores a **directions-only user line** (`isDirectionsOnly`:
 role `user`, empty content, directions set) so the turn shows in the transcript. Such a line is never
