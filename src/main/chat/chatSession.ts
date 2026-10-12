@@ -1019,18 +1019,19 @@ export class ChatSessionManager {
     // with the same continuation note its first generation ended on.
     // A group turn replays the exact per-speaker messages it was first sent (see
     // PendingTurn.replayMessages); a one-character turn rebuilds them from the flat history.
+    const replayBase = pending.replayMessages ?? [
+      ...session.history,
+      ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
+    ];
     const replayTurns = mergeAdjacentTurns([
-      ...(pending.replayMessages ?? [
-        ...session.history,
-        ...(pending.userMessage !== null ? [{ role: 'user' as const, content: pending.userMessage }] : []),
-      ]),
+      ...replayBase,
       // A continuation has no user message to answer; it ends on the same note its first
       // generation did (see continueAsCharacter), merged into a trailing user turn if there is one.
       ...(pending.userMessage === null
         ? [
             {
               role: 'user' as const,
-              content: buildContinuationCue(pending.characterName, pending.personaName?.trim() || 'User'),
+              content: buildContinuationCue(pending.characterName, pending.personaName?.trim() || 'User', replayBase),
             },
           ]
         : []),
@@ -1458,7 +1459,7 @@ export class ChatSessionManager {
         // whole history is already one user-role turn, and two in a row defeats the point.
         ...mergeAdjacentTurns([
           ...historyTurns,
-          { role: 'user' as const, content: buildContinuationCue(built.characterName, request.personaName?.trim() || 'User') },
+          { role: 'user' as const, content: buildContinuationCue(built.characterName, request.personaName?.trim() || 'User', historyTurns) },
         ]),
       ],
       built.characterName,

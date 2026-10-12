@@ -125,11 +125,58 @@ export function buildStyleReminder({
  * outright what a continuation is for. The reply guidance (and any directions) is appended to it
  * like any other last user turn.
  */
-export function buildContinuationCue(charName: string, personaName: string): string {
-  return (
-    `[${personaName} has not replied. Continue the scene as ${charName}: ${charName} speaks or acts again, on their own. ` +
-    `Move things forward with something NEW -- a new action, new information, or a change in the situation. ` +
-    `Do not repeat, restate, or rephrase anything ${charName} has already said or done in the lines above, ` +
-    `and do not write anything for ${personaName}. Never mention or quote this note.]`
-  );
+export function buildContinuationCue(
+  charName: string,
+  personaName: string,
+  history: { role: string; content: string }[] = []
+): string {
+  const { chain, lastBeat } = describeChain(history);
+  const parts = [
+    `${personaName} has not replied. Continue the scene as ${charName}: ${charName} speaks or acts again, on their own. ` +
+      `Move things forward with something NEW -- a new action, new information, or a change in the situation. ` +
+      `Do not repeat, restate, or rephrase anything ${charName} has already said or done in the lines above, ` +
+      `and do not write anything for ${personaName}.`,
+  ];
+  // Left to itself, a model re-enters the scene a moment BEFORE where the last reply stopped (it was about to
+  // do something, so it prepares again) and the story never gets past the doorway. Quoting where it stopped
+  // and demanding the next thing happen is what moves it.
+  if (lastBeat) {
+    parts.push(
+      `The last reply stopped at: "${lastBeat}" Start AFTER that moment. Whatever ${charName} was about to do, ` +
+        `was preparing for or was wondering about now happens, and something comes of it (a result, a discovery, a reaction from the world). ` +
+        `Do not spend this turn preparing, hesitating, taking stock, looking things over or musing again -- that is already done. ` +
+        `End on something that happened, not on a thought or a feeling that something is about to.`
+    );
+  }
+  if (chain >= 3) {
+    parts.push(
+      `${charName} has now taken ${chain} turns in a row and the scene is in danger of standing still. This turn the situation must visibly change: ` +
+        `a new place, an event, a decision acted on, or someone or something arriving or reacting from outside ${charName}.`
+    );
+  }
+  parts.push('Never mention or quote this note.');
+  return `[${parts.join(' ')}]`;
+}
+
+/** How many replies in a row the speaker has just written with no one answering, and where the last one stopped. */
+export function describeChain(history: { role: string; content: string }[]): { chain: number; lastBeat: string } {
+  let chain = 0;
+  for (let i = history.length - 1; i >= 0 && history[i].role === 'assistant'; i -= 1) chain += 1;
+  if (chain === 0) return { chain: 0, lastBeat: '' };
+  return { chain, lastBeat: endingOf(history[history.length - 1].content) };
+}
+
+/** The last sentence or two of a reply, without the markdown, for quoting back. */
+function endingOf(text: string): string {
+  const plain = text.replace(/[*_]/g, '').replace(/["“”]/g, "'").replace(/\s+/g, ' ').trim();
+  if (!plain) return '';
+  const sentences = plain.match(/[^.!?…]+[.!?…]+["')\]]*|[^.!?…]+$/g) ?? [plain];
+  let ending = '';
+  for (let i = sentences.length - 1; i >= 0; i -= 1) {
+    const next = `${sentences[i].trim()} ${ending}`.trim();
+    if (ending && next.length > 220) break;
+    ending = next;
+    if (ending.length >= 90) break;
+  }
+  return ending.length > 260 ? `…${ending.slice(-257)}` : ending;
 }
