@@ -93,6 +93,13 @@ copy alone was ignored: a 12B model imitates the recent transcript far more than
 above thousands of tokens of history. `PendingTurn.directions` carries them so a redo repeats
 them, and a restart recovers them from the stored user message.
 
+**A redo reads the card again.** `PendingTurn` keeps `speakerId` and `promptInputs` (what the system prompt was built
+from), and `regenerate` calls `refreshedPrompt`, which rebuilds the prompt with the character's fields (read fresh inside
+`buildSystemPrompt`), the scenario text and the persona re-read -- so a card edited, or a version deleted, since the reply
+was first generated is what the redo uses (the debug record shows it). What the turn retrieved (memories, lore, directions,
+group context) is kept, because a redo is another try at the same turn. It falls back to the frozen prompt when there is
+nothing to rebuild from (e.g. a character that no longer exists).
+
 `{{char}}`/`{{user}}` macros in field content are substituted before the text
 reaches a model -- `{{user}}` resolves to the selected persona's name, or
 "User" when none is selected.
