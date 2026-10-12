@@ -28,6 +28,14 @@ export const EXTRACTION_OPTIONS = {
  * "recording" them as new memories every turn. */
 const SYSTEM_PROMPT_PREVIEW_LENGTH = 4000;
 
+/** Most facts one extraction may keep. Most stretches of a roleplay contain one or two things worth carrying
+ * forward; a model asked for "notable events" every turn invents more (262 memories from 192 messages in one real
+ * chat, nearly all of them what someone was doing at that moment). */
+export const MAX_FACTS_PER_EXTRACTION = 3;
+/** How many of the newest stored memories the extractor is shown, so it does not repeat them. The rest are
+ * still checked against by word overlap and meaning after it answers; listing hundreds only buried the prompt. */
+const RECENT_MEMORIES_SHOWN = 25;
+
 const MIN_FACT_LENGTH = 5;
 const MAX_FACT_LENGTH = 300;
 
@@ -102,6 +110,25 @@ export function whyUnfit(candidate: string): 'second person' | 'commentary' | 'm
   ) {
     return 'momentary';
   }
+  // Any present-progressive predicate right after the subject: "She is running her fingers over the controls",
+  // "Vespara is exploring the cockpit", "The ship is lurching into motion", "She is expressing her frustration".
+  // What is going on at this moment is never a lasting fact, whatever the verb; a list of verbs only ever
+  // caught the ones already seen. Embedded ones ("She believes someone is watching her") start later and pass.
+  if (/^\W*(?:[\w'’.-]+\s+){1,3}(?:is|are)\s+(?:now\s+|still\s+|currently\s+|just\s+|also\s+)?(?:[a-z]+ly\s+)?[a-z]{3,}ing\b/i.test(text)) {
+    return 'momentary';
+  }
+  // Scenery: what the place or the vessel looks like ("The ship is a sleek, advanced model"), or someone taking
+  // it in ("Vespara noticed the ship is more advanced than most"). The scenario already describes the setting.
+  if (
+    /^\W*(?:the|a|an|this|that)\s+(?:[\w-]+\s+){0,2}(?:ship|room|cockpit|corridor|cabin|hallway|building|place|area|bridge|vessel|station|city|street|house|door|engines?)\s+(?:is|are|was|were)\b/i.test(
+      text
+    ) ||
+    /^\W*(?:[\w'’.-]+\s+){1,3}(?:noticed|notices|observed|observes|sees|saw|spotted|looks? around|takes? in)\b.*\b(?:sleek|advanced|cutting-edge|spacious|cramped|dim|dimly|ornate|shabby|gleaming|polished|modern|ancient|cluttered)\b/i.test(
+      text
+    )
+  ) {
+    return 'momentary';
+  }
   // Scene upkeep: what is going on right now, not what happened.
   if (/\b(?:is|are) (?:becoming|getting|growing|starting to)\b|\bcontinues? to\b|\b(?:keeps?|keep) (?:blaring|building|growing|rising)\b/i.test(text)) {
     return 'momentary';
@@ -149,15 +176,22 @@ export function textSimilarity(a: string, b: string): number {
   return intersection / (setA.size + setB.size - intersection);
 }
 
-function buildExtractionPrompt(
-  userMessage: string,
-  aiResponse: string,
-  existingMemories: string[],
-  systemPrompt: string
-): string {
+/** The stretch of conversation the extractor reads, as the "User:/Assistant:" transcript it expects. */
+export function formatExchanges(exchanges: { userMessage: string; aiResponse: string }[]): string {
+  return exchanges
+    .map(({ userMessage, aiResponse }) =>
+      [userMessage.trim() ? `User: ${userMessage.trim()}` : '', `Assistant: ${aiResponse.trim()}`]
+        .filter(Boolean)
+        .join('\n')
+    )
+    .join('\n\n');
+}
+
+function buildExtractionPrompt(transcript: string, existingMemories: string[], systemPrompt: string): string {
+  const shown = existingMemories.slice(-RECENT_MEMORIES_SHOWN);
   const existing =
-    existingMemories.length > 0
-      ? `\nAlready recorded memories (do NOT repeat these):\n${existingMemories
+    shown.length > 0
+      ? `\nAlready recorded memories (the newest ones; do NOT repeat these):\n${shown
           .map((memory) => `- ${memory}`)
           .join('\n')}\n`
       : '';
@@ -171,6 +205,9 @@ function buildExtractionPrompt(
 
   return [
     'You are extracting durable facts from a roleplay exchange, to be remembered later.',
+    '',
+    `Most stretches of a roleplay contain NOTHING worth remembering, and NONE is the normal answer. Record at`,
+    `most ${MAX_FACTS_PER_EXTRACTION} facts, and only ones a person would still need an hour of story later.`,
     '',
     'RECORD only lasting facts that will still matter many scenes from now: decisions made,',
     'information revealed, questions raised that are still unanswered, who is suspected of what,',
@@ -195,10 +232,9 @@ function buildExtractionPrompt(
     '',
     systemNote,
     existing,
-    `User: ${userMessage}`,
-    `Assistant: ${aiResponse}`,
+    transcript,
     '',
-    'Notable events from this exchange:',
+    'Lasting facts from this part of the story (or NONE):',
   ].join('\n');
 }
 
@@ -289,6 +325,37 @@ export function filterRedundant(
 }
 
 /**
+ * Which stored memories are not worth keeping, for the Memories panel's clean-up: automatic ones that today's
+ * filters would reject (momentary state, feelings, commentary, second person, boilerplate), and automatic ones
+ * that restate an earlier memory by meaning. Pinned ('manual') memories are never touched. `vector` is the cached
+ * embedding, or null when there is none (meaning is then not compared for that one). Oldest first in, and the
+ * earliest of a group of paraphrases is the one kept.
+ */
+export function pickPrunable(
+  memories: { id: string; content: string; source: string; vector: number[] | null }[],
+  threshold: number = SEMANTIC_DUPLICATE_THRESHOLD
+): string[] {
+  const prune: string[] = [];
+  const keptVectors: number[][] = [];
+  for (const memory of memories) {
+    const vector = memory.vector ? l2Normalize(memory.vector) : null;
+    if (memory.source === 'manual') {
+      if (vector) keptVectors.push(vector);
+      continue;
+    }
+    const lower = memory.content.toLowerCase();
+    const junk = GENERIC_PHRASES.some((phrase) => lower.includes(phrase)) || whyUnfit(memory.content) !== null;
+    const duplicate = vector !== null && keptVectors.some((other) => dot(vector, other) >= threshold);
+    if (junk || duplicate) {
+      prune.push(memory.id);
+    } else if (vector) {
+      keptVectors.push(vector);
+    }
+  }
+  return prune;
+}
+
+/**
  * Asks the model what is worth remembering from one exchange.
  *
  * Non-streaming: partial output is useless here, and this is exactly the short internal call
@@ -299,19 +366,13 @@ export async function extractMemories(
   ollama: OllamaClient,
   model: string,
   input: {
-    userMessage: string;
-    aiResponse: string;
+    exchanges: { userMessage: string; aiResponse: string }[];
     existingMemories: string[];
     systemPrompt: string;
   },
   signal?: AbortSignal
 ): Promise<string[]> {
-  const prompt = buildExtractionPrompt(
-    input.userMessage,
-    input.aiResponse,
-    input.existingMemories,
-    input.systemPrompt
-  );
+  const prompt = buildExtractionPrompt(formatExchanges(input.exchanges), input.existingMemories, input.systemPrompt);
 
   try {
     const result = await ollama.chat({
@@ -324,7 +385,7 @@ export async function extractMemories(
     });
 
     const facts = parseExtractedFacts(result.content);
-    return filterRedundant(facts, input.systemPrompt, input.existingMemories);
+    return filterRedundant(facts, input.systemPrompt, input.existingMemories).slice(0, MAX_FACTS_PER_EXTRACTION);
   } catch {
     return [];
   }

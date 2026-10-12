@@ -481,6 +481,22 @@ A second pass, from reading a 100-turn run's log in full (all of it generic, not
 - Tested on pure functions only (`memoryRetrieval.test.ts`, `memoryExtraction.test.ts`); the thresholds were calibrated on
   one run, so expect to revisit them.
 
+A third pass, from a real chat with **262 memories from 192 messages**, nearly all of them "She is running her fingers along
+the switches" / "She is expressing her frustration" / "The ship is a sleek, advanced model":
+
+- **Volume.** Extraction no longer runs after every turn. `finalizePending` buffers finished exchanges per conversation
+  (`extractionBuffer`, in memory) and every `EXTRACT_EVERY` (3rd) turn sends the whole stretch -- continues included, which
+  have no user line (`formatExchanges`) -- in one call; at most `MAX_FACTS_PER_EXTRACTION` (3) facts survive it, and the prompt
+  says NONE is the normal answer. The extractor is shown only the newest 25 stored memories (it used to be all of them, which
+  at hundreds buried the prompt); duplicates against the rest are still dropped by word overlap and by meaning afterwards.
+- **Kind.** `whyUnfit` no longer lists verbs: any present-progressive predicate right after the subject ("X is <verb>ing ...")
+  is momentary, and so is scenery ("The ship is a ...", "X noticed the ship is more sleek/advanced"). Embedded progressives ("She
+  believes someone is watching her") and past-tense events still pass. The cost is some true facts phrased progressively
+  ("The Bureau is investigating Vance") being dropped, accepted because fewer memories was the complaint.
+- **Existing piles.** The Memories panel's **Clean up** button (`memories:prune`, `pickPrunable`) deletes automatic memories
+  today's filters would reject and automatic paraphrases of an earlier one (cached embeddings, cosine 0.85, earliest kept).
+  Pinned memories are never touched.
+
 ## Repetition guard
 
 `chat/phraseGuard.ts` (pure, no model) finds what the repetition guard in automation cannot: new sentences built from the

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterRedundant, parseExtractedFacts, stripAnalyticTail, whyUnfit } from './memoryExtraction';
+import { filterRedundant, formatExchanges, parseExtractedFacts, pickPrunable, stripAnalyticTail, whyUnfit } from './memoryExtraction';
 
 test('second-person "facts" are rejected: a memory is read back by someone else', () => {
   assert.equal(whyUnfit('The way you touch and kiss her shows your deep love and desire for her.'), 'second person');
@@ -86,4 +86,51 @@ test('an explanatory tail is cut off a fact, leaving the event', () => {
   assert.equal(stripAnalyticTail('Showing the way.'), 'Showing the way.');
   // Applied by the filter, so the event is kept.
   assert.deepEqual(filterRedundant(['Tom arranges a private ambulance, showing his concern for Mara.'], '', []), ['Tom arranges a private ambulance.']);
+});
+
+test('what someone is doing at the moment, and scenery, are never kept, whatever the verb', () => {
+  for (const text of [
+    'Vespara is exploring the cockpit and control panel, trying to find information about their location.',
+    'She is expressing her frustration and confusion about being left alone without any information.',
+    'She is feeling trapped and powerless in her current situation.',
+    'She is yanking the controls forward to send the ship into motion',
+    'The ship is lurching into motion, its engines humming around Vespara',
+    'She is muttering "Fuck it" and grinning recklessly',
+    'The ship is a sleek, advanced model with cutting-edge technology',
+    'Vespara noticed the ship is more advanced than most freighters, with a sleek design.',
+  ]) {
+    assert.notEqual(whyUnfit(text), null, text);
+  }
+});
+
+test('real facts still pass, including ones with a progressive later in the sentence', () => {
+  for (const text of [
+    'Corso locked Vespara in the cargo bay and left with the access codes.',
+    'She believes someone at the Bureau is watching her.',
+    'Vespara learned the freighter is registered under a false name.',
+  ]) {
+    assert.equal(whyUnfit(text), null, text);
+  }
+});
+
+test('the exchanges an extraction reads are laid out as a transcript, a continue having no user line', () => {
+  assert.equal(
+    formatExchanges([
+      { userMessage: 'Hi', aiResponse: 'Hello.' },
+      { userMessage: '', aiResponse: 'More.' },
+    ]),
+    'User: Hi\nAssistant: Hello.\n\nAssistant: More.'
+  );
+});
+
+test('clean-up removes junk and paraphrases of an earlier memory, never a pinned one', () => {
+  const v = (x: number, y: number) => [x, y];
+  const prune = pickPrunable([
+    { id: 'a', content: 'Corso locked Vespara in the cargo bay.', source: 'auto', vector: v(1, 0) },
+    { id: 'b', content: 'She is running her fingers along the switches.', source: 'auto', vector: v(0, 1) },
+    { id: 'c', content: 'Vespara was shut in the cargo hold by Corso.', source: 'auto', vector: v(0.99, 0.05) },
+    { id: 'd', content: 'She is running her fingers along the switches.', source: 'manual', vector: v(0, 1) },
+    { id: 'e', content: 'The access codes are in the captain\'s safe.', source: 'auto', vector: null },
+  ]);
+  assert.deepEqual(prune, ['b', 'c']);
 });

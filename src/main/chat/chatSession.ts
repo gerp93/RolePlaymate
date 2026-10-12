@@ -264,11 +264,16 @@ export function renderMessagesForDebug(messages: OllamaChatMessage[]): string {
 
 /** How many recent turns of memory injections are remembered, for the cooldown in selectMemories. */
 const MEMORY_USE_WINDOW = 10;
+/** Memory extraction runs once per this many finished turns, over all of them (see finalizePending). */
+export const EXTRACT_EVERY = 3;
 
 export class ChatSessionManager {
   private sessions = new Map<string, ChatSession>();
   /** Per conversation, the ids of the memories injected on each of its last few turns. */
   private memoryUseLog = new Map<string, string[][]>();
+  /** Exchanges finished since memories were last extracted, per conversation (in memory only: a restart just
+   * waits for the next full batch). */
+  private extractionBuffer = new Map<string, { userMessage: string; aiResponse: string }[]>();
 
   /**
    * Called when post-turn extraction stored new memories.
@@ -1786,19 +1791,29 @@ export class ChatSessionManager {
     }
 
     if (pending.shouldExtract && finalContent) {
-      // Deliberately not awaited, same as the source's inline call would have blocked --
-      // extraction is a second model call, and the turn that triggered finalizing is already
-      // underway generating its own reply.
-      void this.extract(
-        {
-          conversationId: session.conversationId,
-          model: pending.model,
-          userMessage: pending.userMessage ?? '',
-          messageId: pending.assistantMessageId,
-        },
-        pending.baseSystemPrompt,
-        finalContent
-      );
+      // Not every turn: one exchange rarely holds anything lasting, and asking after each one made the model
+      // invent something (262 memories from 192 messages). Every EXTRACT_EVERY-th turn it reads the whole stretch
+      // since the last time, which is also where "this will still matter" can actually be judged.
+      const waiting = [
+        ...(this.extractionBuffer.get(session.conversationId) ?? []),
+        { userMessage: pending.userMessage ?? '', aiResponse: finalContent },
+      ];
+      if (waiting.length < EXTRACT_EVERY) {
+        this.extractionBuffer.set(session.conversationId, waiting);
+      } else {
+        this.extractionBuffer.delete(session.conversationId);
+        // Deliberately not awaited -- extraction is a second model call, and the turn that triggered
+        // finalizing is already underway generating its own reply.
+        void this.extract(
+          {
+            conversationId: session.conversationId,
+            model: pending.model,
+            messageId: pending.assistantMessageId,
+          },
+          pending.baseSystemPrompt,
+          waiting
+        );
+      }
     }
   }
 
@@ -1872,16 +1887,15 @@ export class ChatSessionManager {
    * and by this point the user already has their reply.
    */
   private async extract(
-    turn: { conversationId: string; model: string; userMessage: string; messageId: string },
+    turn: { conversationId: string; model: string; messageId: string },
     characterSheet: string,
-    aiResponse: string
+    exchanges: { userMessage: string; aiResponse: string }[]
   ): Promise<ConversationMemory[]> {
     try {
       const existing = this.conversations.listMemories(turn.conversationId);
       const extractionModel = await this.sideTaskModel(turn.model);
       const facts = await extractMemories(this.ollama, extractionModel, {
-        userMessage: turn.userMessage,
-        aiResponse,
+        exchanges,
         existingMemories: existing.map((memory) => memory.content),
         systemPrompt: characterSheet,
       });
