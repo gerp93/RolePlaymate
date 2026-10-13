@@ -2043,6 +2043,11 @@ function registerIPCHandlers() {
     conversationService.setKeepForever(id, keepForever)
   );
 
+  // Time spent in the chat, reported by the chat page while the user is active (see useChatTimer).
+  ipcMain.handle('conversations:addActiveSeconds', (_, id: string, seconds: number) =>
+    conversationService.addActiveSeconds(id, seconds)
+  );
+
   ipcMain.handle(
     'conversations:setImageMode',
     (

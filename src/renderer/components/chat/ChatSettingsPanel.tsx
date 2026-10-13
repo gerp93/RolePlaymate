@@ -58,6 +58,9 @@ interface Props {
   /** Whether replies are checked for a change of scene (an app-wide setting). */
   sceneSuggestions: boolean;
   onSceneSuggestionsChange: (value: boolean) => void;
+  /** Whether the active-time timer is shown above the transcript. */
+  showTimer: boolean;
+  onShowTimerChange: (value: boolean) => void;
 }
 
 /** Hover/focus card — Electron's native `title` tooltips look dated and often don't show. */
@@ -129,6 +132,8 @@ export default function ChatSettingsPanel({
   onSceneNoteSave,
   sceneSuggestions,
   onSceneSuggestionsChange,
+  showTimer,
+  onShowTimerChange,
 }: Props) {
   // Edited locally and saved when the field loses focus, so typing is not a save per keystroke.
   const [sceneDraft, setSceneDraft] = useState(sceneNote);
@@ -226,6 +231,16 @@ export default function ChatSettingsPanel({
             ))}
           </select>
         </label>
+
+        {conversationId && (
+          <label
+            className="chat-settings-checkbox"
+            title="Time actively spent in this chat. Pauses after 2 minutes without mouse or keyboard activity."
+          >
+            <input type="checkbox" checked={showTimer} onChange={(e) => onShowTimerChange(e.target.checked)} />
+            Show time spent in this chat
+          </label>
+        )}
 
         {showPortraitsToggle && (
           <label className="chat-settings-field">

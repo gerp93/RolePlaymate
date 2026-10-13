@@ -9,6 +9,17 @@ export function formatDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+/** A running-clock reading from whole seconds: "5:07", "1:05:07". */
+export function formatClock(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(s / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  const ss = String(seconds).padStart(2, '0');
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${ss}`;
+  return `${minutes}:${ss}`;
+}
+
 /** How long between two ISO timestamps, formatted; null when either is missing or unreadable. */
 export function durationBetween(startIso: string | null | undefined, endIso: string | null | undefined): string | null {
   if (!startIso || !endIso) return null;

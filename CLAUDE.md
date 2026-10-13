@@ -403,6 +403,16 @@ second model call competing with the next reply for the GPU, which is why it is 
 setting matters. **Automated runs and speed tests pass `suggestScene: false`** (no one to answer, and it would add a call to
 every timing); the scene note itself still applies to a run, and its Scene section is locked while one is going.
 
+## Time spent in a chat
+
+A small clock above the transcript (and the Settings tab's "Show time spent in this chat" checkbox, a localStorage
+toggle, on by default) shows how long the user was *actively* in the conversation, across every visit:
+`conversations.active_seconds`, added to by `useChatTimer` every ~15s and when leaving the chat via
+`conversations:addActiveSeconds` (capped per call; no `updated_at` bump). `ActiveTimeClock`
+(`shared/utils/activeTimeClock.ts`, pure, tested) counts while there was mouse/key/scroll input within
+`CHAT_IDLE_MS` (2 minutes) and the window is visible, so the idle window itself counts as reading time and counting
+stops after it; the next input resumes it. It is tracked even while hidden. A branch or duplicate starts at 0.
+
 ## Memories
 
 Facts extracted from a conversation and carried into later turns, so continuity survives the

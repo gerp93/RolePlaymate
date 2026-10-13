@@ -411,6 +411,8 @@ declare global {
         setKeepForever: (id: string, keepForever: boolean) => Promise<Conversation>;
         /** Where the story is now; shown to the model every turn. Empty or null clears it. */
         setSceneNote: (id: string, note: string | null) => Promise<Conversation>;
+        /** Adds seconds of active time to the chat; resolves to the new total. */
+        addActiveSeconds: (id: string, seconds: number) => Promise<number>;
         setImageMode: (
           id: string,
           input: {

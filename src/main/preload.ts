@@ -348,6 +348,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setKeepForever: (id: string, keepForever: boolean) =>
       ipcRenderer.invoke('conversations:setKeepForever', id, keepForever),
     setSceneNote: (id: string, note: string | null) => ipcRenderer.invoke('conversations:setSceneNote', id, note),
+    addActiveSeconds: (id: string, seconds: number) =>
+      ipcRenderer.invoke('conversations:addActiveSeconds', id, seconds),
     setImageMode: (id: string, input: unknown) => ipcRenderer.invoke('conversations:setImageMode', id, input),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
     deleteDraft: (id: string) => ipcRenderer.invoke('conversations:deleteDraft', id),
