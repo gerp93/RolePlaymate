@@ -4,7 +4,8 @@ interface Props {
   /** Same character/persona/scenario/model/image picks as this conversation, no transcript --
    * a fresh start, not a copy of the conversation itself. */
   onDuplicate: () => void;
-  /** Same settings, plus the full transcript/variants/memories copied so far. */
+  /** Same settings, plus the whole transcript/variants/memories copied so far. (Branching at an
+   * earlier line is the "Branch" button on that message.) */
   onBranch: () => void;
 }
 
@@ -58,7 +59,7 @@ export default function ConversationMenu({ onDuplicate, onBranch }: Props) {
               onBranch();
             }}
           >
-            Branch from here
+            Branch whole conversation
           </button>
         </div>
       )}

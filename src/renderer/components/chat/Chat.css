@@ -1748,6 +1748,7 @@
   margin-left: auto;
 }
 
+.chat-message-branch,
 .chat-message-sources-toggle {
   width: auto;
   gap: 4px;

@@ -390,7 +390,7 @@ only the first message. So each conversation has an optional **scene note** (`co
 It is added to the code-built end-of-prompt reminder (`buildStyleReminder`'s `sceneNote`, "Current scene ... stay in it")
 and to the persona-drafting prompt, and is read fresh from the row on every generation (`sceneNoteFor`), so a redo after
 editing it uses the new text. It is not a template, for the usual reason (stored templates never pick up changed
-defaults). A branch copies it; a duplicate ("new chat, no transcript") does not.
+defaults). A whole-chat branch copies it; a branch cut at an earlier message and a duplicate ("new chat, no transcript") do not.
 
 After a reply, `ChatSessionManager.checkScene` (fire and forget) can **propose** a new note: every `SCENE_CHECK_EVERY`-th
 assistant reply it sends the last 4 lines and the current note to the side-task model (the extraction model, falling back
@@ -402,6 +402,16 @@ blocking dialog. App-wide off switch in the Scene section (`sceneSuggestions` in
 second model call competing with the next reply for the GPU, which is why it is throttled and why the extraction model
 setting matters. **Automated runs and speed tests pass `suggestScene: false`** (no one to answer, and it would add a call to
 every timing); the scene note itself still applies to a run, and its Scene section is locked while one is going.
+
+## Branching a conversation
+
+Every message has a "Branch" button in its footer (`MessageList`'s `onBranchFrom`, hidden while generating), and the
+"..." menu has "Branch whole conversation". Both call `conversations:branch` -> `ConversationService.branchConversation(sourceId,
+upToMessageId?)`, which makes a new conversation with the same settings and copies the transcript (every redo variant, not
+just the selected one) **up to and including** that message. Nothing after it comes along, and neither do memories whose
+`message_id` is a line left behind (pinned memories have none and always come). A branch cut early also starts with an empty
+scene note, since the note describes where the story is *now*. Copied rows get fresh ids and no TTS audio path (two
+conversations must never share a WAV that either can delete). `branchConversation.test.ts` runs against a real temporary DB.
 
 ## Time spent in a chat
 

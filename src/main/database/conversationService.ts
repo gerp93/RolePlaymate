@@ -455,13 +455,23 @@ export class ConversationService {
 
   /** Same settings as duplicateConversation, plus a full copy of the transcript (messages +
    * every redo variant, not just the selected ones) and every extracted/pinned memory, so the
-   * branch continues exactly where the source conversation currently stands. Each copied
+   * branch continues exactly where the source conversation currently stands. With
+   * `upToMessageId` the copy stops at that message (inclusive): nothing after it comes along,
+   * and neither do memories extracted from the lines that were left behind (pinned memories
+   * have no message and always come). Each copied
    * message/variant gets a fresh id and its own `tts_audio_path` cleared -- if both
    * conversations pointed at the same WAV file, deleting a message in either one would unlink
    * a file the other still references (see deleteTtsFilesForMessage/Conversation). */
-  branchConversation(sourceId: string): Conversation {
+  branchConversation(sourceId: string, upToMessageId?: string): Conversation {
     const source = this.getConversation(sourceId);
     if (!source) throw new Error(`Conversation ${sourceId} not found`);
+
+    let messages = this.getMessages(sourceId);
+    if (upToMessageId) {
+      const cut = messages.findIndex((m) => m.id === upToMessageId);
+      if (cut < 0) throw new Error(`Message ${upToMessageId} is not in conversation ${sourceId}`);
+      messages = messages.slice(0, cut + 1);
+    }
 
     return transaction(this.db, () => {
       const newId = uuidv4();
@@ -488,13 +498,14 @@ export class ConversationService {
           source.personaImageMode,
           source.personaImageId,
           0,
-          // A branch keeps the whole transcript, so the scene it is in carries over too.
-          source.sceneNote,
+          // The scene note is where the story is *now*, which is only right for a branch that
+          // keeps the whole transcript; one cut earlier starts without it rather than with a
+          // description of events it no longer contains.
+          upToMessageId ? '' : source.sceneNote,
           now,
           now
         );
 
-      const messages = this.getMessages(sourceId);
       const messageIdMap = new Map<string, string>();
 
       for (const message of messages) {
@@ -581,6 +592,8 @@ export class ConversationService {
       }[];
 
       for (const memory of memories) {
+        // Extracted from a line the branch did not keep: the branch must not remember it.
+        if (memory.messageId && !messageIdMap.has(memory.messageId)) continue;
         this.db
           .prepare(
             `INSERT INTO conversation_memories

@@ -831,12 +831,15 @@ export default function Chat() {
     navigate(`/chat/${duplicated.id}`);
   }, [conversationId, navigate, refreshConversations]);
 
-  const handleBranchConversation = useCallback(async () => {
-    if (!conversationId) return;
-    const branched = await window.electronAPI.conversations.branch(conversationId);
-    await refreshConversations();
-    navigate(`/chat/${branched.id}`);
-  }, [conversationId, navigate, refreshConversations]);
+  const handleBranchConversation = useCallback(
+    async (upToMessageId?: string) => {
+      if (!conversationId) return;
+      const branched = await window.electronAPI.conversations.branch(conversationId, upToMessageId);
+      await refreshConversations();
+      navigate(`/chat/${branched.id}`);
+    },
+    [conversationId, navigate, refreshConversations]
+  );
 
   const handleSend = useCallback(
     async (message: string, directions: string) => {
@@ -1510,6 +1513,7 @@ export default function Chat() {
                   onEditLast={handleEditLast}
                   onEditPrior={handleEditPrior}
                   onDeleteLast={() => void session.deleteLastMessage()}
+                  onBranchFrom={(messageId) => void handleBranchConversation(messageId)}
                   onViewPrompt={(messageId) => void handleViewPrompt(messageId)}
                   onContinue={
                     canChat

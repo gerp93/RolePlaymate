@@ -2011,10 +2011,11 @@ function registerIPCHandlers() {
     return conversationService.duplicateConversation(sourceId, built.greeting, greetingSpeakerId);
   });
 
-  // "Branch from here": same settings, plus the full transcript/variants/memories copied so
-  // far -- see conversationService.branchConversation for why copied rows get fresh TTS paths.
-  ipcMain.handle('conversations:branch', (_, sourceId: string) =>
-    conversationService.branchConversation(sourceId)
+  // Branch: same settings, plus the transcript/variants/memories copied -- all of it, or up to
+  // and including `upToMessageId`. See conversationService.branchConversation for why copied
+  // rows get fresh TTS paths.
+  ipcMain.handle('conversations:branch', (_, sourceId: string, upToMessageId?: string) =>
+    conversationService.branchConversation(sourceId, upToMessageId)
   );
 
   ipcMain.handle('conversations:rename', (_, id: string, title: string) => {
