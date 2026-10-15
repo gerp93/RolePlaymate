@@ -26,6 +26,8 @@ import AutomationProgress from '../components/chat/AutomationProgress';
 import SceneSuggestionBanner from '../components/chat/SceneSuggestionBanner';
 import { useSpeedTestRunning } from '../hooks/useSpeedTestRunning';
 import { useAutomation } from '../hooks/useAutomation';
+import { useChatTimer } from '../hooks/useChatTimer';
+import ChatTimer from '../components/chat/ChatTimer';
 import ImagePickerSelect from '../components/chat/ImagePickerSelect';
 import ConversationMenu from '../components/chat/ConversationMenu';
 import GroupRosterBar from '../components/chat/GroupRosterBar';
@@ -83,6 +85,7 @@ function isCommittedSidebarConversation(c: ConversationListItem): boolean {
 
 const SHOW_PORTRAITS_KEY = 'roleplaymate-chat-show-portraits';
 const SIDEBAR_COLLAPSED_KEY = 'roleplaymate-chat-sidebar-collapsed';
+const SHOW_TIMER_KEY = 'roleplaymate-chat-show-timer';
 /** Matches `@container chat-main (max-width: 1000px)` in Chat.css — below this the
  *  side portrait columns don't fit. The Settings-tab Portraits dropdown stays visible but disabled. */
 const PORTRAITS_MIN_MAIN_WIDTH = 1000;
@@ -114,6 +117,15 @@ function getStoredBoolean(key: string): boolean {
     return localStorage.getItem(key) === 'true';
   } catch {
     return false;
+  }
+}
+
+/** On unless the user has switched it off. */
+function getStoredBooleanDefaultOn(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== 'false';
+  } catch {
+    return true;
   }
 }
 
@@ -184,6 +196,9 @@ export default function Chat() {
   const [fontSize, setFontSize] = useState<ChatFontSize>(() => getStoredChatFontSize());
   const [showPortraits, setShowPortraits] = useState(() => getStoredBoolean(SHOW_PORTRAITS_KEY));
   const [portraitsTooNarrow, setPortraitsTooNarrow] = useState(false);
+  const [showTimer, setShowTimer] = useState(() => getStoredBooleanDefaultOn(SHOW_TIMER_KEY));
+  // Tracked for every open conversation whether or not the timer is shown.
+  const chatTimer = useChatTimer(conversationId);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => getStoredBoolean(SIDEBAR_COLLAPSED_KEY));
   const [model, setModel] = useState('');
   const [samplers, setSamplers] = useState({ temperature: 0.7, maxTokens: 256 });
@@ -1139,6 +1154,11 @@ export default function Chat() {
     saveBoolean(SHOW_PORTRAITS_KEY, value);
   }, []);
 
+  const handleShowTimerChange = useCallback((value: boolean) => {
+    setShowTimer(value);
+    saveBoolean(SHOW_TIMER_KEY, value);
+  }, []);
+
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsed((collapsed) => {
       const next = !collapsed;
@@ -1438,10 +1458,13 @@ export default function Chat() {
             className={`chat-column chat-column-center${portraitsActive ? ' chat-column-center-capped' : ''}`}
           >
             {conversationId && (
-              <ConversationMenu
-                onDuplicate={() => void handleDuplicateConversation()}
-                onBranch={() => void handleBranchConversation()}
-              />
+              <div className="chat-conversation-toolbar">
+                {showTimer ? <ChatTimer seconds={chatTimer.seconds} running={chatTimer.running} /> : <span />}
+                <ConversationMenu
+                  onDuplicate={() => void handleDuplicateConversation()}
+                  onBranch={() => void handleBranchConversation()}
+                />
+              </div>
             )}
             {selectedScenario && (
               <header
@@ -1858,6 +1881,8 @@ export default function Chat() {
               onSceneNoteSave={(note) => void handleSceneNoteSave(note)}
               sceneSuggestions={sceneSuggestionsOn}
               onSceneSuggestionsChange={handleSceneSuggestionsChange}
+              showTimer={showTimer}
+              onShowTimerChange={handleShowTimerChange}
             />
           }
         />

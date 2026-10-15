@@ -20,6 +20,9 @@ import { SecurityService } from './securityService';
 import { PersonaFieldVersionService } from './personaFieldVersionService';
 import { deleteTtsAudioFile } from '../ttsAudio';
 
+/** The page reports active time every ~15s; anything far above that is not a real flush. */
+const MAX_ACTIVE_SECONDS_PER_CALL = 120;
+
 const CONVERSATION_COLUMNS = `
   id,
   title,
@@ -35,6 +38,7 @@ const CONVERSATION_COLUMNS = `
   persona_image_id as personaImageId,
   keep_forever as keepForever,
   scene_note as sceneNote,
+  active_seconds as activeSeconds,
   created_at as createdAt,
   updated_at as updatedAt
 `;
@@ -54,6 +58,7 @@ const CONVERSATION_COLUMNS_FROM_C = `
   c.persona_image_id as personaImageId,
   c.keep_forever as keepForever,
   c.scene_note as sceneNote,
+  c.active_seconds as activeSeconds,
   c.created_at as createdAt,
   c.updated_at as updatedAt
 `;
@@ -143,6 +148,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     personaImageId: (row.personaImageId as string | null) ?? null,
     keepForever: !!row.keepForever,
     sceneNote: (row.sceneNote as string | null) ?? null,
+    activeSeconds: Number(row.activeSeconds ?? 0),
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -660,6 +666,19 @@ export class ConversationService {
     const trimmed = note?.trim() || null;
     this.db.prepare(`UPDATE conversations SET scene_note = ? WHERE id = ?`).run(trimmed, id);
     return this.getConversation(id)!;
+  }
+
+  /** Adds seconds of active time to the chat and returns the new total. Not activity as far as
+   * `updated_at` goes (it would re-sort the sidebar every few seconds). Each call is capped, so one
+   * bad value cannot inflate the total; a missing conversation (deleted while the page flushes) is
+   * ignored. */
+  addActiveSeconds(id: string, seconds: number): number {
+    const add = Math.min(Math.max(0, Math.floor(Number(seconds) || 0)), MAX_ACTIVE_SECONDS_PER_CALL);
+    this.db.prepare(`UPDATE conversations SET active_seconds = active_seconds + ? WHERE id = ?`).run(add, id);
+    const row = this.db.prepare(`SELECT active_seconds as activeSeconds FROM conversations WHERE id = ?`).get(id) as
+      | { activeSeconds: number }
+      | undefined;
+    return Number(row?.activeSeconds ?? 0);
   }
 
   /** Retention never deletes a kept conversation, regardless of matching rules. Does not bump

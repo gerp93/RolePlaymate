@@ -301,9 +301,39 @@
 /* The one persistent per-conversation control -- unlike the scenario header (only when a
    scenario's selected) or the sidebar reveal buttons (only while their sidebar is collapsed),
    this is always available whenever a conversation is open. */
+.chat-conversation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .chat-conversation-menu {
   position: relative;
   align-self: flex-end;
+}
+
+/* Time actively spent in the chat; dims when paused. */
+.chat-timer {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.chat-timer-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-timer-paused {
+  opacity: 0.6;
+}
+
+.chat-timer-state {
+  font-size: 11px;
+  font-style: italic;
 }
 
 .chat-conversation-menu-trigger {

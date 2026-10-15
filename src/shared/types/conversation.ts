@@ -40,6 +40,8 @@ export interface Conversation {
   /** Where the story is now and what is happening -- a sentence or two the model is reminded of on
    * every turn until it changes. Null when unset. See ChatSessionManager.sceneNoteFor. */
   sceneNote: string | null;
+  /** Seconds the user spent actively in this chat (paused while idle or the window is hidden). */
+  activeSeconds: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -342,6 +342,9 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   // Where the story is now and what is happening, in a sentence or two; shown to the model on every
   // turn until it is changed. Per conversation, edited by the user (or accepted from a suggestion).
   ensureColumn(db, 'conversations', 'scene_note', 'TEXT');
+  // Seconds the user was actually active in this chat (see shared/utils/activeTimeClock.ts), added to
+  // by the chat page every few seconds. Not message timestamps: it excludes time away from the chat.
+  ensureColumn(db, 'conversations', 'active_seconds', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'scenarios', 'description', 'TEXT');
   // Group chat: a conversation is either one character's (character_id) or a group's (group_id),
   // never both. Each assistant message records who spoke it; speaker_name is a snapshot so a
