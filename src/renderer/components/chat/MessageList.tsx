@@ -65,6 +65,9 @@ interface Props {
    * nothing to regenerate. Save only. See chatSession.editUnansweredUserMessage. */
   onEditUnansweredUser?: (messageId: string, content: string, directions: string) => void;
   onDeleteLast: () => void;
+  /** Start a new conversation holding everything up to and including this message. Offered on
+   * every message, while nothing is generating. */
+  onBranchFrom?: (messageId: string) => void;
   onViewPrompt: (messageId: string) => void;
   /** Have the character take another turn with no new user message. Omitted when Continue
    * isn't available (no conversation, generating, last line isn't theirs). */
@@ -107,6 +110,7 @@ export default function MessageList({
   onEditPrior,
   onEditUnansweredUser,
   onDeleteLast,
+  onBranchFrom,
   onViewPrompt,
   onContinue,
   onReply,
@@ -272,7 +276,9 @@ export default function MessageList({
         // Available on every real reply, not just the last -- unlike edit/delete/redo, browsing
         // what fed an older reply is just as useful once the conversation has moved on from it.
         const showSources = !isEditing && message.role === 'assistant' && !!message.model;
-        const showFooter = showTts || showVariantNav || showEdit || showDelete || showSources;
+        // A directions-only line has nothing to branch from by itself, but the branch keeps it.
+        const showBranch = !isEditing && !isGenerating && !!onBranchFrom;
+        const showFooter = showTts || showVariantNav || showEdit || showDelete || showSources || showBranch;
         return (
           <Bubble
             key={message.id}
@@ -356,6 +362,17 @@ export default function MessageList({
                     }
                   >
                     ✏️
+                  </button>
+                )}
+                {showBranch && (
+                  <button
+                    type="button"
+                    className="chat-variant-btn chat-message-branch"
+                    onClick={() => onBranchFrom?.(message.id)}
+                    title="Branch from here: start a new chat with everything up to this message"
+                    aria-label="Branch from here: start a new chat with everything up to this message"
+                  >
+                    🌿 Branch
                   </button>
                 )}
                 {showDelete && (
