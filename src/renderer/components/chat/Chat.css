@@ -1673,6 +1673,23 @@
   animation: chat-typing-bounce 1.2s ease-in-out infinite;
 }
 
+.chat-typing-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* tabular-nums so the ticking digits don't jiggle the layout. */
+.chat-wait-elapsed {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.chat-wait-row {
+  margin-top: 4px;
+}
+
 .chat-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
 .chat-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
 
