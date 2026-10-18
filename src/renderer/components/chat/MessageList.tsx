@@ -123,6 +123,13 @@ export default function MessageList({
   tts,
 }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
+  // When the current wait began, shared by the typing bubble and the streaming bubble so the
+  // seconds count carries on across the first token instead of restarting. Held as a timestamp
+  // (not a ticking value) so only the small ElapsedSeconds label re-renders each second.
+  const [waitStartedAt, setWaitStartedAt] = useState<number | null>(null);
+  useEffect(() => {
+    setWaitStartedAt(isGenerating ? Date.now() : null);
+  }, [isGenerating]);
   // Which message (if any) is showing an edit textarea in place of its formatted content, and
   // what's currently typed into it. Either the last message (assistant, see canActOnLast/
   // isGreeting below) or the one right before it (the user turn behind a pending reply, see
@@ -414,6 +421,7 @@ export default function MessageList({
           onAvatarCropSaved={refreshAvatarCrops}
           content={streamingText}
           streaming
+          waitStartedAt={waitStartedAt}
         />
       ) : (
         isGenerating && (
@@ -422,6 +430,7 @@ export default function MessageList({
             avatar={typingAs === 'persona' ? personaAvatar : characterAvatar}
             side={typingAs === 'persona' ? 'user' : 'assistant'}
             onAvatarCropSaved={refreshAvatarCrops}
+            waitStartedAt={waitStartedAt}
           />
         )
       )}
@@ -475,24 +484,48 @@ function TypingIndicator({
   avatar,
   side,
   onAvatarCropSaved,
+  waitStartedAt,
 }: {
   name: string;
   avatar: AvatarInfo;
   side: 'assistant' | 'user';
   onAvatarCropSaved?: () => void;
+  waitStartedAt: number | null;
 }) {
   return (
     <div className={`chat-bubble chat-bubble-${side} chat-bubble-typing`}>
       <BubbleAvatarPanel avatar={avatar} name={name} onCropSaved={onAvatarCropSaved} />
       <div className="chat-bubble-content">
         <div className="chat-bubble-name">{name}</div>
-        <div className="chat-typing-dots" aria-label={`${name} is typing`}>
-          <span />
-          <span />
-          <span />
+        <div className="chat-typing-row">
+          <div className="chat-typing-dots" aria-label={`${name} is typing`}>
+            <span />
+            <span />
+            <span />
+          </div>
+          <ElapsedSeconds startedAt={waitStartedAt} />
         </div>
       </div>
     </div>
+  );
+}
+
+/** Whole seconds since `startedAt`, ticking while a reply is awaited -- the same span the
+ * eventual per-reply generation time records. Renders nothing until the start is known. */
+function ElapsedSeconds({ startedAt }: { startedAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt == null) return;
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, [startedAt]);
+  if (startedAt == null) return null;
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return (
+    <span className="chat-wait-elapsed" title="Time spent waiting for this reply">
+      {seconds}s
+    </span>
   );
 }
 
@@ -646,6 +679,7 @@ function Bubble({
   content,
   directions,
   streaming = false,
+  waitStartedAt = null,
   model,
   generationMs,
   onViewPrompt,
@@ -671,6 +705,8 @@ function Bubble({
    * the message content it accompanied. */
   directions?: string | null;
   streaming?: boolean;
+  /** While streaming: when the wait for this reply began, for the live seconds label under it. */
+  waitStartedAt?: number | null;
   /** Shown in a hover tooltip below the bubble. Undefined/null for user messages and for an
    * assistant message that predates this column -- nothing to report either way. */
   model?: string | null;
@@ -776,6 +812,11 @@ function Bubble({
           </div>
         )}
         {children}
+        {streaming && (
+          <div className="chat-wait-row">
+            <ElapsedSeconds startedAt={waitStartedAt} />
+          </div>
+        )}
         {model && (
           <div className="chat-bubble-hover-info">
             <span>Model: {model}</span>
