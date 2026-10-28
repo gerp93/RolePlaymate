@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface StartPickerOption {
   value: string;
@@ -21,6 +22,21 @@ interface Props {
   allowEmpty?: boolean;
   emptyLabel?: string;
   className?: string;
+  /** When set, opening the picker on a wide enough screen fills the free space on that side of the
+   * trigger with a big thumbnail gallery instead of the small dropdown list. Too narrow a space
+   * falls back to the dropdown. */
+  gallery?: 'left' | 'right';
+}
+
+/** The gallery needs at least this much free width beside the trigger, or the plain list is used. */
+const MIN_GALLERY_WIDTH = 360;
+const GALLERY_MARGIN = 16;
+
+interface GalleryBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 function OptionText({ option, compact }: { option: StartPickerOption; compact?: boolean }) {
@@ -64,16 +80,56 @@ export default function StartScreenPicker({
   allowEmpty = false,
   emptyLabel = 'None',
   className,
+  gallery,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [galleryBox, setGalleryBox] = useState<GalleryBox | null>(null);
+  const [filter, setFilter] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const galleryRef = useRef<HTMLDivElement>(null);
 
   const selected = options.find((o) => o.value === value) ?? null;
+
+  // The gallery is portalled to <body> (the start screen's panels sit inside a transformed
+  // element, which would make `position: fixed` relative to it) and sized to the free space
+  // between the trigger and the edge of the chat column.
+  useLayoutEffect(() => {
+    if (!open || !gallery) {
+      setGalleryBox(null);
+      return;
+    }
+    const measure = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      const host = triggerRef.current?.closest('.chat-main')?.getBoundingClientRect();
+      if (!trigger || !host) {
+        setGalleryBox(null);
+        return;
+      }
+      const left = gallery === 'left' ? host.left + GALLERY_MARGIN : trigger.right + GALLERY_MARGIN;
+      const right = gallery === 'left' ? trigger.left - GALLERY_MARGIN : host.right - GALLERY_MARGIN;
+      const width = right - left;
+      setGalleryBox(
+        width >= MIN_GALLERY_WIDTH
+          ? { left, top: host.top + GALLERY_MARGIN, width, height: host.height - 2 * GALLERY_MARGIN }
+          : null
+      );
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open, gallery]);
+
+  useEffect(() => {
+    if (!open) setFilter('');
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onClickOutside = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target) || galleryRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -91,6 +147,7 @@ export default function StartScreenPicker({
       <div className="start-picker-anchor">
         <button
           type="button"
+          ref={triggerRef}
           className="start-picker-trigger"
           disabled={disabled}
           aria-label={ariaLabel}
@@ -111,7 +168,70 @@ export default function StartScreenPicker({
           </span>
         </button>
 
-        {open && (
+        {open && galleryBox &&
+          createPortal(
+            <div
+              ref={galleryRef}
+              className="start-picker-gallery"
+              style={galleryBox}
+              role="listbox"
+              aria-label={ariaLabel}
+            >
+              <div className="start-picker-gallery-head">
+                <input
+                  type="search"
+                  className="start-picker-gallery-filter"
+                  placeholder={`Filter ${ariaLabel.toLowerCase()}s…`}
+                  aria-label={`Filter ${ariaLabel.toLowerCase()}s`}
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  autoFocus
+                />
+                <button type="button" className="btn" onClick={() => setOpen(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="start-picker-gallery-grid">
+                {options
+                  .filter((o) => {
+                    const q = filter.trim().toLowerCase();
+                    return !q || o.label.toLowerCase().includes(q) || (o.subtext ?? '').toLowerCase().includes(q);
+                  })
+                  .map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={value === option.value}
+                      className={`start-picker-gallery-card${value === option.value ? ' active' : ''}`}
+                      onClick={() => {
+                        onChange(option.value);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="start-picker-gallery-art">
+                        {option.imageUrl ? (
+                          <img src={option.imageUrl} alt="" />
+                        ) : (
+                          <span className="start-picker-gallery-glyph" aria-hidden>
+                            {option.fallbackGlyph ?? '?'}
+                          </span>
+                        )}
+                      </span>
+                      <span className="start-picker-gallery-caption">
+                        <span className="start-picker-gallery-name">{option.label}</span>
+                        {option.subtext ? (
+                          <span className="start-picker-gallery-subtext">{option.subtext}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {open && !galleryBox && (
           <div className="start-picker-panel" role="listbox" aria-label={ariaLabel}>
             {allowEmpty && (
               <button
