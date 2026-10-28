@@ -3331,12 +3331,16 @@
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
   align-content: start;
+  /* Rows keep their natural height and the grid scrolls. Without this, a grid with a fixed height
+     and cards that clip their overflow squeezes every row down once there are many cards. */
+  grid-auto-rows: max-content;
   padding: 2px;
 }
 
 .start-picker-gallery-card {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   min-width: 0;
   padding: 0;
   border: 2px solid var(--color-border);
