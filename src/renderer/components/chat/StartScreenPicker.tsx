@@ -192,6 +192,27 @@ export default function StartScreenPicker({
                 </button>
               </div>
               <div className="start-picker-gallery-grid">
+                {allowEmpty && !filter.trim() && (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={value === ''}
+                    className={`start-picker-gallery-card${value === '' ? ' active' : ''}`}
+                    onClick={() => {
+                      onChange('');
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="start-picker-gallery-art">
+                      <span className="start-picker-gallery-glyph" aria-hidden>
+                        —
+                      </span>
+                    </span>
+                    <span className="start-picker-gallery-caption">
+                      <span className="start-picker-gallery-name">{emptyLabel}</span>
+                    </span>
+                  </button>
+                )}
                 {options
                   .filter((o) => {
                     const q = filter.trim().toLowerCase();

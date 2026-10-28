@@ -419,6 +419,7 @@ export default function ChatStartScreen({
                 allowEmpty
                 emptyLabel="None"
                 ariaLabel="Scenario"
+                gallery="right"
               />
             }
           >
