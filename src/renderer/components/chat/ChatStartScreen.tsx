@@ -364,6 +364,7 @@ export default function ChatStartScreen({
                 options={showGroups ? groupOptions : characterOptions}
                 placeholder="Select…"
                 ariaLabel={showGroups ? 'Group' : 'Character'}
+                gallery="left"
               />
             </>
           }
@@ -389,6 +390,7 @@ export default function ChatStartScreen({
               options={personaOptions}
               placeholder="Select…"
               ariaLabel="Persona"
+              gallery="right"
             />
           }
         >
