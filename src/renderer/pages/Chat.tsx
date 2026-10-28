@@ -766,6 +766,10 @@ export default function Chat() {
   // that already has a hidden character/persona selected (opened before locking, or via an
   // old link) still resolves fine above -- only what's offered/listed is filtered here.
   const visibleCharacters = characters.filter((c) => hiddenUnlocked || !c.isHidden);
+  // Quick characters are guest speakers only (the "Respond as" picker uses `characters`, not this):
+  // a chat can't be started with one. One already selected stays listed so an old conversation
+  // owned by one still shows its character.
+  const chatOwnerCharacters = visibleCharacters.filter((c) => !c.isQuick || c.id === characterId);
   const visiblePersonas = personas.filter((p) => hiddenUnlocked || !p.isHidden);
   // Already scoped to the selected character (loaded per characterId, see the effect above).
   const visibleScenarios = scenarios.filter((s) => hiddenUnlocked || !s.isHidden);
@@ -1344,7 +1348,7 @@ export default function Chat() {
 
         {showStartScreen ? (
           <ChatStartScreen
-            characters={visibleCharacters}
+            characters={chatOwnerCharacters}
             groups={visibleGroups}
             personas={visiblePersonas}
             scenarios={visibleScenarios}
@@ -1415,7 +1419,7 @@ export default function Chat() {
                     }}
                   >
                     <option value="">Select…</option>
-                    {visibleCharacters.map((c) => (
+                    {chatOwnerCharacters.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>

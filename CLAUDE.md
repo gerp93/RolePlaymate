@@ -332,7 +332,10 @@ character (name + one-line description) and selects it -- the description is all
 speakers see of them, since a speaker only gets their *own* full card. It is created with
 `is_quick = 1`, which changes one thing: the Characters page lists it in a collapsed "Quick
 characters" group instead of the main grid, with a Promote button (`characters:promoteQuick`) that
-clears the flag. Editing one does not promote it, and it stays pickable everywhere else.
+clears the flag. Editing one does not promote it. It is a guest speaker only: it has no Chat Now button, is left out
+of the chat start screen / in-chat character pickers and the group roster pickers (a conversation or group that
+already holds one keeps showing it), and `createConversationWithGreeting` refuses a new conversation owned by one. It
+stays available in "Respond as".
 
 There is **no stored roster**. `ChatSessionManager.getGuestScene` derives an implicit scene from
 the transcript: the conversation's own character plus every distinct guest with an assistant line

@@ -245,9 +245,11 @@ export default function CharacterList() {
                       </div>
                     )}
                     <div className="character-card-actions">
-                      <button className="btn btn-primary" onClick={(e) => handleChatNow(e, character.id)}>
-                        Chat Now
-                      </button>
+                      {!character.isQuick && (
+                        <button className="btn btn-primary" onClick={(e) => handleChatNow(e, character.id)}>
+                          Chat Now
+                        </button>
+                      )}
                       <div className="character-card-actions-row">
                         {character.isQuick && (
                           <button className="btn" onClick={(e) => void handlePromote(e, character.id)}>

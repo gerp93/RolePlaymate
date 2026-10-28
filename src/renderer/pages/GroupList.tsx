@@ -54,7 +54,7 @@ export default function GroupList() {
   const characterById = new Map(characters.map((c) => [c.id, c]));
   // A locked session can neither pick nor chat with a hidden character, so a group containing one
   // is hidden along with it -- the main process refuses to generate for it either way.
-  const pickable = characters.filter((c) => hiddenUnlocked || !c.isHidden);
+  const pickable = characters.filter((c) => !c.isQuick && (hiddenUnlocked || !c.isHidden));
   const isVisible = (group: GroupWithMembers) =>
     hiddenUnlocked ||
     (!group.isHidden && group.members.every((m) => !characterById.get(m.characterId)?.isHidden));
