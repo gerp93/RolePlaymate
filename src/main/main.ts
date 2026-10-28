@@ -2668,6 +2668,11 @@ function createConversationWithGreeting(input: CreateConversationInput): Convers
   assertScenarioOwnedBy(input.scenarioId, input.characterId, input.groupId);
   const characterId = input.characterId ?? greetingSpeakerId;
   if (!characterId) throw new Error('A conversation needs a character or a group');
+  // Quick characters exist only to be a guest speaker in someone else's chat ("Respond as"); a chat
+  // can't be opened with one directly. Promote it first. A group's roster is not checked here.
+  if (input.characterId && characterService.getCharacterById(input.characterId)?.isQuick) {
+    throw new Error('A quick character cannot start a chat. Promote it to the main Characters list first.');
+  }
 
   const built = promptBuilder.buildSystemPrompt(characterId, {
     personaName: persona?.name ?? null,

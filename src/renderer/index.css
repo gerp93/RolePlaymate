@@ -313,6 +313,8 @@ textarea {
 }
 
 .character-card-name {
+  /* The card is a <Link>, so without this the name takes the default link blue, unreadable on dark themes. */
+  color: var(--color-text);
   font-weight: 700;
   font-size: 15px;
   margin: 0 0 4px;

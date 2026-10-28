@@ -71,7 +71,8 @@ export default function GroupDetail() {
   if (group.isHidden && !hiddenUnlocked) return <LockedPlaceholder label="This group" />;
 
   const pickable = characters.filter(
-    (c) => hiddenUnlocked || !c.isHidden || group.members.some((m) => m.characterId === c.id)
+    (c) =>
+      group.members.some((m) => m.characterId === c.id) || (!c.isQuick && (hiddenUnlocked || !c.isHidden))
   );
 
   return (
