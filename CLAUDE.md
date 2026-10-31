@@ -13,7 +13,7 @@ half is a plain versioning tool, modeled on
 applied to character cards instead of lyrics. Roleplay chat is being added on
 top of it (see "Chat" below); it talks to a **local** Ollama server, so the app
 still ships no model and makes no network calls of its own, and the library
-stays fully usable with Ollama absent. Data is stored locally in a
+stays fully usable with Ollama absent. A separate library assistant (see "Library assistant") uses the same server. Data is stored locally in a
 SQLite file (WAL mode, foreign keys enforced) that the user can optionally
 encrypt as a whole (see "App encryption" below).
 
@@ -646,6 +646,56 @@ rejected memories, lore, tokens), with the bulky duplicates dropped. A run also 
 memory was extracted and the memory list at the end. Runs of a hidden character, persona or scenario
 are hidden from the list while the PIN is locked. **Export** (JSON or Markdown) writes a plain file
 via a save dialog -- the one deliberate decrypted copy.
+
+## Library assistant
+
+A free-form chat, separate from roleplay chat, with a local Ollama model that can read the library and **propose** edits to it
+(`/assistant`; `pages/Assistant.tsx`, `components/assistant/`). Same server and the same no-network rule as roleplay chat -- the
+renderer's CSP forbids connections out regardless. Its conversations are their own tables (`assistant_conversations`,
+`assistant_messages`, `assistant_proposals`; `assistantSchema.ts`), with no character, persona, memories or retention rules, and
+deleting one never touches the library.
+
+**The safety property: the model never writes.** `chat/assistantTools.ts`'s `executeTool` is pure -- it takes a lock-filtered
+`Library` snapshot (`assistantLibrary.ts`, rebuilt per tool call, not cached) and returns text for the model. The two `propose_*`
+tools return a *draft*, stored as a pending row in `assistant_proposals`; only `assistant:applyProposal` (the user's click) calls
+`assistantApply.ts`, which goes through the same service methods the editors use (`duplicateVersion` + `updateVersionContent` for
+character/persona text, `createVersion`/`createGreetingVersion` for scenarios), in one transaction. So "overriding" always means
+a new version -- the active version tracks the latest and the old text stays in history. A failed apply (limit, target deleted,
+hidden while locked) is recorded on the proposal as `failed` with the reason and can be retried. Do not add a tool that writes.
+
+**Tool calling** is `OllamaClient.chatWithTools` (tools in, `tool_calls` out, streamed text), deliberately separate from `chat()`:
+roleplay's role-alternation retry and `fitMessagesToContext` are written for plain user/assistant transcripts and would corrupt a tool
+exchange. `AssistantManager` (`chat/assistantSession.ts`) runs the loop (at most `MAX_TOOL_ROUNDS` model turns per message), stores each
+message as it completes (an error never leaves half a reply), and emits on the single `assistant:stream` channel with exactly one
+terminal event (`done` | `error` | `cancelled`), like `chat:stream`. Tools: `list_library`, `read_item`, `search_library`,
+`find_similar`, `propose_new_version`, `propose_create`, `update_notes`. Few, coarse tools on purpose -- small models call a handful
+reliably. Tool results are plain labelled text, not JSON. The assistant is refused during a speed test (`assertNoSpeedTest`).
+
+**Context strategy** (the "how does it remember" question): the library is never put in the prompt. The system prompt carries a names-only
+index (`renderLibraryIndex`) and the model reads what it needs with `read_item`. History is sent as whole *turns*
+(`buildRequestMessages`: a turn = a user message plus the tool calls and replies after it), newest first until the window is full, never
+cut inside a turn (a result without its call fails on some templates); tool results in older turns are shortened and the newest turn is
+always whole. What must outlive trimming goes in the conversation's **working notes** (`assistant_conversations.notes`): user-editable,
+and the model can rewrite them with `update_notes`; shown every turn. There is **no automatic summarisation** yet. The window is
+`assistantContextWindow` (default 16384), separate from roleplay chat's: a model reloads whenever its window changes, so a different
+assistant model or window costs a reload when switching between the two.
+
+**Form guidance** ("templates"): the Prompt Tuning templates are chat *system-prompt* wrappers, not card forms, so they are not fed to
+the assistant. What it gets instead (`assistantPrompt.ts`): how the library and a card are used, the real field limits (from
+`FIELD_LIMITS`, so they cannot drift from the editors), `{{char}}`/`{{user}}`, an instruction to read one of the user's existing cards
+with `read_item` before drafting (an example shows the form better than a description), and the user's own **style guide**
+(`assistantStyleGuide` in `app-config.json`, edited in the Context panel). The prompt is built in code, not a stored template, for the
+same reason the reply guidance is: stored templates never pick up changed defaults.
+
+**Hidden items.** Tools see only what the PIN lock allows (rows are left out while locked, so a locked assistant cannot confirm they
+exist), and the names-only index never lists a hidden item even when unlocked. Because tool results are stored, a conversation in which a
+tool returned a hidden item's text gets `touched_hidden = 1` and is itself hidden/unreadable/unsendable while locked.
+
+**`find_similar` is lexical** (word-set Jaccard over content words, plus a same-name boost): it finds copies and near-copies and misses
+paraphrases. The embedding route (`/api/embed`, as memory dedup does) is the obvious upgrade. Not built: editing lorebook entries or groups
+through proposals, deleting anything (deliberately), automatic summaries, and a cloud backend. Tests are in `chat/assistant.test.ts`
+(pure helpers, tools over a hand-built library, a real temporary DB for apply and hidden filtering, and the whole loop against a scripted
+fake Ollama server); none of it has run against a real model, so tool-calling quality per model is unmeasured.
 
 ## Lorebooks
 

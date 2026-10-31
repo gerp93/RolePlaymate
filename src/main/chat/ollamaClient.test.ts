@@ -136,3 +136,81 @@ test('an HTTP error that is not about roles is not retried, and does not claim t
     server.close();
   }
 });
+
+test('chatWithTools sends the tools and window, streams text, and collects tool calls', async () => {
+  let received: { tools?: unknown[]; options?: { num_ctx?: number }; stream?: boolean } = {};
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      received = JSON.parse(body);
+      res.write(JSON.stringify({ message: { role: 'assistant', content: 'Looking ' }, done: false }) + '\n');
+      res.write(
+        JSON.stringify({
+          message: {
+            role: 'assistant',
+            content: '',
+            // One call with object arguments (what Ollama sends), one with a JSON string (what some models do).
+            tool_calls: [
+              { function: { name: 'read_character', arguments: { name: 'Ada' } } },
+              { function: { name: 'search_library', arguments: '{"query":"harbour"}' } },
+            ],
+          },
+          done: false,
+        }) + '\n'
+      );
+      res.end(JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 7, eval_count: 3 }) + '\n');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const client = new OllamaClient(() => `http://127.0.0.1:${port}`, () => 8192);
+    const tokens: string[] = [];
+    const result = await client.chatWithTools({
+      model: 'm',
+      messages: [{ role: 'user', content: 'who is Ada?' }],
+      tools: [{ type: 'function', function: { name: 'read_character', description: 'd', parameters: { type: 'object' } } }],
+      options: { num_ctx: 20000 },
+      onToken: (t) => tokens.push(t),
+    });
+    assert.equal(received.tools?.length, 1);
+    assert.equal(received.options?.num_ctx, 20000, 'the assistant window beats the roleplay chat window');
+    assert.equal(received.stream, true);
+    assert.equal(result.content, 'Looking ');
+    assert.deepEqual(tokens, ['Looking ']);
+    assert.deepEqual(
+      result.toolCalls.map((c) => [c.function.name, c.function.arguments]),
+      [
+        ['read_character', { name: 'Ada' }],
+        ['search_library', { query: 'harbour' }],
+      ]
+    );
+    assert.equal(result.evalCount, 3);
+  } finally {
+    server.close();
+  }
+});
+
+test('chatWithTools falls back to the roleplay window when the caller sets none', async () => {
+  let numCtx: number | undefined;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      numCtx = JSON.parse(body).options.num_ctx;
+      res.end(JSON.stringify({ message: { content: 'ok' }, done: true }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const client = new OllamaClient(() => `http://127.0.0.1:${port}`, () => 6000);
+    const result = await client.chatWithTools({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [] });
+    assert.equal(numCtx, 6000);
+    assert.equal(result.content, 'ok');
+    assert.deepEqual(result.toolCalls, []);
+  } finally {
+    server.close();
+  }
+});

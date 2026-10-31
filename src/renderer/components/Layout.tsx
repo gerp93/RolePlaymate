@@ -26,6 +26,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/groups', label: 'Groups' },
       { to: '/personas', label: 'Personas' },
       { to: '/world-books', label: 'World Books' },
+      { to: '/assistant', label: 'Assistant' },
     ],
   },
   {
@@ -52,7 +53,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   // .main-content's normal 32px left padding is too generous for it, unlike every other page
   // here which relies on that padding for breathing room around a centered form/table.
   const { pathname } = useLocation();
-  const isChatRoute = pathname.startsWith('/chat');
+  const isChatRoute = pathname.startsWith('/chat') || pathname.startsWith('/assistant');
   const isHardpointRoute = pathname.startsWith('/hardpoint');
 
   return (
