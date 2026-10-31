@@ -7,6 +7,7 @@ import Settings from './pages/Settings';
 import PromptSettings from './pages/PromptSettings';
 import ModelTuning from './pages/ModelTuning';
 import Chat from './pages/Chat';
+import Assistant from './pages/Assistant';
 import PersonaList from './pages/PersonaList';
 import PersonaDetail from './pages/PersonaDetail';
 import WorldBookList from './pages/WorldBookList';
@@ -32,6 +33,8 @@ function App() {
               <Route path="/groups/:groupId" element={<GroupDetail />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/chat/:conversationId" element={<Chat />} />
+              <Route path="/assistant" element={<Assistant />} />
+              <Route path="/assistant/:conversationId" element={<Assistant />} />
               <Route path="/personas" element={<PersonaList />} />
               <Route path="/personas/:personaId" element={<PersonaDetail />} />
               <Route path="/world-books" element={<WorldBookList />} />
