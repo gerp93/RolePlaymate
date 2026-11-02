@@ -89,6 +89,9 @@ export function registerAssistantIpc(deps: AssistantIpcDeps): void {
     return manager.start(request.conversationId, request.content, emit);
   });
 
+  // Stop and undo: removes the latest exchange and hands the user's text back to put in the box.
+  ipcMain.handle('assistant:rollback', (_, id: string) => manager.rollbackLastTurn(id));
+
   ipcMain.handle('assistant:cancel', (_, id: string) => {
     accessible(id);
     manager.cancel(id);
