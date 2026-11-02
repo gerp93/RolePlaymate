@@ -118,6 +118,10 @@ export class AssistantManager {
   private finished = new Map<string, Promise<void>>();
   /** The working notes as they were when the latest turn began, so a rollback can undo `update_notes`. */
   private notesBeforeTurn = new Map<string, string>();
+  /** What a running turn has written but not yet stored (the reply still streaming, the tool in flight).
+   * The page keeps this only in its own state, so without it leaving the page and coming back shows the
+   * reply from that moment on instead of from its start. */
+  private live = new Map<string, { text: string; calls: AssistantToolCall[] }>();
 
   constructor(
     private store: AssistantService,
@@ -128,6 +132,37 @@ export class AssistantManager {
 
   isRunning(conversationId: string): boolean {
     return this.running.has(conversationId);
+  }
+
+  /** The in-progress text and the tools in flight for a running turn, or null when nothing is running. */
+  getLive(conversationId: string): { text: string; calls: AssistantToolCall[] } | null {
+    const live = this.live.get(conversationId);
+    return live ? { text: live.text, calls: [...live.calls] } : null;
+  }
+
+  /** Keeps `live` equal to what the window has been shown, event by event. */
+  private track(conversationId: string, event: AssistantStreamEvent): void {
+    const live = this.live.get(conversationId);
+    if (!live) return;
+    switch (event.type) {
+      case 'token':
+        live.text += event.text;
+        break;
+      case 'message':
+        live.text = ''; // now stored, and returned with the messages
+        break;
+      case 'toolCalls':
+        live.calls = event.calls;
+        break;
+      case 'toolResult':
+        live.calls = [];
+        break;
+      case 'done':
+      case 'error':
+      case 'cancelled':
+        this.live.delete(conversationId);
+        break;
+    }
   }
 
   cancel(conversationId: string): void {
@@ -170,6 +205,7 @@ export class AssistantManager {
     const controller = new AbortController();
     this.running.set(conversationId, controller);
     this.notesBeforeTurn.set(conversationId, conversation.notes);
+    this.live.set(conversationId, { text: '', calls: [] });
     const streamId = randomUUID();
     const done = this.run(conversationId, model, streamId, controller, emit);
     this.finished.set(conversationId, done);
@@ -216,6 +252,7 @@ export class AssistantManager {
     emit: (event: AssistantStreamEvent) => void
   ): Promise<void> {
     const send = (event: AssistantStreamEvent) => {
+      this.track(conversationId, event);
       try {
         emit(event);
       } catch {
@@ -284,6 +321,7 @@ export class AssistantManager {
       }
     } finally {
       this.running.delete(conversationId);
+      this.live.delete(conversationId); // also covers a run that ended without a terminal event
     }
   }
 

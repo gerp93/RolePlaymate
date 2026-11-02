@@ -25,6 +25,11 @@ const STARTERS = [
   'Check my characters for contradictions',
 ];
 
+/** The conversation last open, kept across the page being left and reopened (module scope outlives the
+ * component). Visiting /assistant with no id returns to it, so leaving mid-reply and coming back lands
+ * in the same conversation instead of an empty page. "New" and delete clear it. */
+let lastConversationId: string | null = null;
+
 const DEFAULT_SETTINGS: AssistantSettings = { model: '', contextWindow: DEFAULT_ASSISTANT_CONTEXT_WINDOW, styleGuide: '' };
 
 function AssistantInner() {
@@ -68,11 +73,15 @@ function AssistantInner() {
       setMessages(data.messages);
       setProposals(data.proposals);
       setRunning(data.running);
-      setLiveText('');
-      setStatus('');
+      // A run that was going while the page was away has written text no event will resend: pick it up
+      // here and the stream carries on from where this snapshot ends.
+      setLiveText(data.live?.text ?? '');
+      setStatus(data.live && data.live.calls.length > 0 ? `${data.live.calls.map(describeToolCall).join(', ')}...` : '');
       setError(null);
+      lastConversationId = id;
     } catch {
       // Gone, or hidden again since the link was made.
+      lastConversationId = null;
       setConversation(null);
       setMessages([]);
       setProposals([]);
@@ -98,6 +107,7 @@ function AssistantInner() {
       return;
     }
     if (conversationId) void load(conversationId);
+    else if (lastConversationId) navigate(`/assistant/${lastConversationId}`, { replace: true });
     else {
       setConversation(null);
       setMessages([]);
@@ -105,7 +115,7 @@ function AssistantInner() {
       setRunning(false);
       setLiveText('');
     }
-  }, [conversationId, load, hiddenUnlocked]);
+  }, [conversationId, load, hiddenUnlocked, navigate]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.assistant.onStream((event: AssistantStreamEvent) => {
@@ -156,6 +166,7 @@ function AssistantInner() {
     const created = await window.electronAPI.assistant.createConversation();
     activeId.current = created.id;
     justCreated.current = created.id;
+    lastConversationId = created.id;
     setConversation(created);
     navigate(`/assistant/${created.id}`, { replace: true });
     await refreshList();
@@ -223,6 +234,7 @@ function AssistantInner() {
   }, [running, queued]);
 
   const newConversation = () => {
+    lastConversationId = null;
     navigate('/assistant');
     setDraft('');
   };
@@ -231,6 +243,7 @@ function AssistantInner() {
     if (!window.confirm('Delete this conversation? Anything you already applied to the library stays.')) return;
     await window.electronAPI.assistant.deleteConversation(id);
     await refreshList();
+    if (lastConversationId === id) lastConversationId = null;
     if (conversation?.id === id) navigate('/assistant');
   };
 

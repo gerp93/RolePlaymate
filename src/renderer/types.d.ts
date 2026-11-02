@@ -22,6 +22,7 @@ import {
   AssistantProposal,
   AssistantSettings,
   AssistantStreamEvent,
+  AssistantToolCall,
 } from '../shared/types/assistant';
 import { PersonaImage } from '../shared/types/personaImage';
 import { ImageGenAspect, ImageGenResult, ImageGenSaveTarget, ImageGenStatus } from '../shared/types/imageGen';
@@ -475,6 +476,8 @@ declare global {
           proposals: AssistantProposal[];
           /** True when a run is still going (the page was left and reopened mid-run). */
           running: boolean;
+          /** What that run has written but not yet stored: the reply so far and the tools in flight. */
+          live: { text: string; calls: AssistantToolCall[] } | null;
         }>;
         renameConversation: (id: string, title: string) => Promise<AssistantConversation>;
         setModel: (id: string, model: string) => Promise<AssistantConversation>;

@@ -52,6 +52,9 @@ export function registerAssistantIpc(deps: AssistantIpcDeps): void {
       messages: store.getMessages(id),
       proposals: store.listProposals(id),
       running: manager.isRunning(id),
+      // What the running turn has written so far, so a page that was left and reopened can show the
+      // whole reply and carry on streaming from there.
+      live: manager.getLive(id),
     };
   });
 

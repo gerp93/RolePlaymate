@@ -559,3 +559,80 @@ test('a rollback is refused, and changes nothing, once a proposal from that exch
     model.close();
   }
 });
+
+// --- reconnecting to a run in progress -------------------------------------------------------
+
+test('a running reply can be read back from its start, for a page that was left and reopened', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let calls = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      calls++;
+      if (calls === 1) {
+        // Turn one: some text and a tool call. Its text is stored as its own message once the turn ends.
+        res.end(JSON.stringify({ message: { role: 'assistant', content: 'Let me look.', tool_calls: [{ function: { name: 'list_library', arguments: {} } }] }, done: true }));
+        return;
+      }
+      // Turn two streams in pieces and is still writing when the page reconnects.
+      res.write(JSON.stringify({ message: { content: 'Here is ' }, done: false }) + '\n');
+      res.write(JSON.stringify({ message: { content: 'what I found, ' }, done: false }) + '\n');
+      void gate.then(() => res.end(JSON.stringify({ message: { content: 'all of it.' }, done: true }) + '\n'));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    await withLibrary(async (s, store) => {
+      const settings: AssistantSettings = { model: 'm', contextWindow: 16384, styleGuide: '' };
+      const manager = new AssistantManager(store, new OllamaClient(() => `http://127.0.0.1:${port}`), s, () => settings);
+      const conversation = store.createConversation('m');
+
+      assert.equal(manager.getLive(conversation.id), null, 'nothing is live before a run');
+      const events: AssistantStreamEvent[] = [];
+      const finished = new Promise<void>((resolve) => {
+        manager.start(conversation.id, 'What do I have?', (event) => {
+          events.push(event);
+          if (event.type === 'done' || event.type === 'error') resolve();
+        });
+      });
+
+      for (let i = 0; i < 300 && !manager.getLive(conversation.id)?.text.includes('what I found, '); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      // This is what a reopened page is given: the reply from its first word, not just from now on, and
+      // none of the previous turn's text (that one is stored, and comes back with the messages).
+      const live = manager.getLive(conversation.id)!;
+      assert.equal(live.text, 'Here is what I found, ');
+      assert.deepEqual(live.calls, [], 'the earlier tool call has finished');
+      assert.equal(manager.isRunning(conversation.id), true);
+      assert.deepEqual(store.getMessages(conversation.id).map((m) => m.role), ['user', 'assistant', 'tool'], 'the earlier turn is stored');
+
+      release();
+      await finished;
+      assert.equal(manager.getLive(conversation.id), null, 'nothing is live once the run ends');
+      assert.equal(store.getMessages(conversation.id).at(-1)!.content, 'Here is what I found, all of it.');
+    });
+  } finally {
+    release();
+    server.close();
+  }
+});
+
+test('the tools in flight are readable while a turn runs, and clear when their results are in', async () => {
+  const model = await fakeOllama([null]); // the model never answers: the run stays in its first turn
+  try {
+    await withLibrary(async (s, store) => {
+      const settings: AssistantSettings = { model: 'm', contextWindow: 16384, styleGuide: '' };
+      const manager = new AssistantManager(store, new OllamaClient(() => `http://127.0.0.1:${model.port}`), s, () => settings);
+      const conversation = store.createConversation('m');
+      manager.start(conversation.id, 'hello', () => {});
+      assert.deepEqual(manager.getLive(conversation.id), { text: '', calls: [] });
+      await manager.rollbackLastTurn(conversation.id);
+      assert.equal(manager.getLive(conversation.id), null, 'cleared when the run is stopped');
+    });
+  } finally {
+    model.close();
+  }
+});
