@@ -3,6 +3,12 @@ import * as fs from 'fs';
 import { app, shell, dialog } from 'electron';
 import { DEFAULT_OLLAMA_HOST } from './chat/ollamaClient';
 import { DEFAULT_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW, MIN_CONTEXT_WINDOW } from './chat/contextBudget';
+import {
+  AssistantSettings,
+  DEFAULT_ASSISTANT_CONTEXT_WINDOW,
+  MAX_ASSISTANT_CONTEXT_WINDOW,
+  MIN_ASSISTANT_CONTEXT_WINDOW,
+} from '../shared/types/assistant';
 import { DEFAULT_CHATTERBOX_HOST } from './chat/chatterboxClient';
 import { DEFAULT_EMBEDDING_MODEL } from '../shared/embeddingModel';
 import { CharacterTtsVoice } from '../shared/types/tts';
@@ -40,6 +46,12 @@ interface AppConfig {
   contextWindow?: number;
   /** False turns off the after-reply check that offers to update a chat's scene note. Unset means on. */
   sceneSuggestions?: boolean;
+  /** Ollama model the library assistant uses. Unset until the user picks one (a roleplay model is usually the wrong choice). */
+  assistantModel?: string;
+  /** Context window (tokens) for assistant requests. Unset means DEFAULT_ASSISTANT_CONTEXT_WINDOW. */
+  assistantContextWindow?: number;
+  /** The user's own card style guide, given to the assistant as guidance on the form they want. */
+  assistantStyleGuide?: string;
   /** 0–N chat deletion rules. Missing or empty means keep forever. */
   chatRetentionRules?: unknown;
   chatRetentionLastRunAt?: string;
@@ -519,6 +531,43 @@ export function setContextWindow(value: number): void {
   if (clamped === DEFAULT_CONTEXT_WINDOW) delete config.contextWindow;
   else config.contextWindow = clamped;
   writeConfig(config);
+}
+
+/** The library assistant's settings. Its window is separate from roleplay chat's on purpose: the assistant
+ * carries a long working conversation plus tool results and wants far more than a chat turn does. */
+export function getAssistantSettings(): AssistantSettings {
+  const config = readConfig();
+  const window = config.assistantContextWindow;
+  return {
+    model: typeof config.assistantModel === 'string' ? config.assistantModel : '',
+    contextWindow:
+      typeof window === 'number' && Number.isFinite(window)
+        ? Math.min(Math.max(Math.round(window), MIN_ASSISTANT_CONTEXT_WINDOW), MAX_ASSISTANT_CONTEXT_WINDOW)
+        : DEFAULT_ASSISTANT_CONTEXT_WINDOW,
+    styleGuide: typeof config.assistantStyleGuide === 'string' ? config.assistantStyleGuide : '',
+  };
+}
+
+export function setAssistantSettings(partial: Partial<AssistantSettings>): AssistantSettings {
+  const config = readConfig();
+  if (partial.model !== undefined) {
+    if (partial.model.trim()) config.assistantModel = partial.model.trim();
+    else delete config.assistantModel;
+  }
+  if (partial.contextWindow !== undefined) {
+    const clamped = Math.min(
+      Math.max(Math.round(partial.contextWindow), MIN_ASSISTANT_CONTEXT_WINDOW),
+      MAX_ASSISTANT_CONTEXT_WINDOW
+    );
+    if (clamped === DEFAULT_ASSISTANT_CONTEXT_WINDOW) delete config.assistantContextWindow;
+    else config.assistantContextWindow = clamped;
+  }
+  if (partial.styleGuide !== undefined) {
+    if (partial.styleGuide.trim()) config.assistantStyleGuide = partial.styleGuide;
+    else delete config.assistantStyleGuide;
+  }
+  writeConfig(config);
+  return getAssistantSettings();
 }
 
 export function getSceneSuggestionsEnabled(): boolean {

@@ -59,6 +59,8 @@ import {
   setConciseReplies,
   getNarrationPov,
   setNarrationPov,
+  getAssistantSettings,
+  setAssistantSettings,
 } from './dbLocation';
 import { openWithRecovery } from './dbRecovery';
 import { migrateImagePathsToCanonicalDir } from './imagePathMigration';
@@ -113,6 +115,9 @@ import { pickPrunable } from './chat/memoryExtraction';
 import { AutomationRunner } from './chat/automationRunner';
 import { renderRunMarkdown } from './chat/automationExport';
 import { AutomationRunService } from './database/automationRunService';
+import { AssistantService } from './database/assistantService';
+import { AssistantManager } from './chat/assistantSession';
+import { registerAssistantIpc } from './assistantIpc';
 import { renderBenchmarkMarkdown, summariseModelRun } from './chat/benchmarkStats';
 import type {
   AutomationExportFormat,
@@ -451,6 +456,8 @@ let chatterboxClient: ChatterboxClient;
 let chatSessions: ChatSessionManager;
 let automationRunService: AutomationRunService;
 let automationRunner: AutomationRunner;
+let assistantService: AssistantService;
+let assistantManager: AssistantManager;
 let imageGen: ImageGenService;
 let lorebookService: LorebookService;
 let securityService: SecurityService;
@@ -984,8 +991,30 @@ app.whenReady().then(async () => {
     automationRunService,
     app.getVersion()
   );
+  assistantService = new AssistantService(db);
+  const libraryServices = {
+    db,
+    characters: characterService,
+    fields: fieldService,
+    fieldVersions: fieldVersionService,
+    conversations: conversationService,
+    personaVersions: personaFieldVersionService,
+    scenarios: scenarioService,
+    groups: groupService,
+    lorebooks: lorebookService,
+    security: securityService,
+  };
+  assistantManager = new AssistantManager(assistantService, ollamaClient, libraryServices, getAssistantSettings);
 
   registerIPCHandlers();
+  registerAssistantIpc({
+    store: assistantService,
+    manager: assistantManager,
+    library: libraryServices,
+    assertNoSpeedTest,
+    getSettings: getAssistantSettings,
+    setSettings: setAssistantSettings,
+  });
 
   startChatRetention({
     conversations: conversationService,

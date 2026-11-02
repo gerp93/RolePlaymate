@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getEffectiveDbPath } from '../dbLocation';
 import { CHAT_DDL } from './chatSchema';
 import { LOREBOOK_DDL } from './lorebookSchema';
+import { ASSISTANT_DDL } from './assistantSchema';
 import { hashPin } from './securityService';
 import { DEFAULT_TEMPLATES } from '../chat/promptTemplates';
 import { TEMPLATE_FIELD_KEYS } from '../../shared/types/promptTemplates';
@@ -293,6 +294,7 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
 
   db.exec(CHAT_DDL);
   db.exec(LOREBOOK_DDL);
+  db.exec(ASSISTANT_DDL);
 
   ensureColumn(db, 'characters', 'description', 'TEXT');
   // Which speed test (automation_benchmarks) a run belongs to; null for an ordinary automated run.

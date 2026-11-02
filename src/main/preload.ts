@@ -409,6 +409,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (id: string) => ipcRenderer.invoke('personaFieldVersions:delete', id),
   },
 
+  assistant: {
+    getSettings: () => ipcRenderer.invoke('assistant:getSettings'),
+    setSettings: (partial: unknown) => ipcRenderer.invoke('assistant:setSettings', partial),
+    listConversations: () => ipcRenderer.invoke('assistant:listConversations'),
+    createConversation: () => ipcRenderer.invoke('assistant:createConversation'),
+    getConversation: (id: string) => ipcRenderer.invoke('assistant:getConversation', id),
+    renameConversation: (id: string, title: string) => ipcRenderer.invoke('assistant:renameConversation', id, title),
+    setModel: (id: string, model: string) => ipcRenderer.invoke('assistant:setModel', id, model),
+    setNotes: (id: string, notes: string) => ipcRenderer.invoke('assistant:setNotes', id, notes),
+    deleteConversation: (id: string) => ipcRenderer.invoke('assistant:deleteConversation', id),
+    send: (request: unknown) => ipcRenderer.invoke('assistant:send', request),
+    cancel: (id: string) => ipcRenderer.invoke('assistant:cancel', id),
+    applyProposal: (id: string) => ipcRenderer.invoke('assistant:applyProposal', id),
+    rejectProposal: (id: string) => ipcRenderer.invoke('assistant:rejectProposal', id),
+    // Returns an unsubscribe closure -- call it on effect teardown or every remount leaks a listener.
+    onStream: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('assistant:stream', handler);
+      return () => ipcRenderer.removeListener('assistant:stream', handler);
+    },
+  },
+
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },

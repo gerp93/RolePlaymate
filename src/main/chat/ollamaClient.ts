@@ -76,6 +76,54 @@ export interface ChatRequest {
   signal?: AbortSignal;
 }
 
+/** A function the model may ask the app to run (Ollama's `tools` request field). */
+export interface OllamaToolDefinition {
+  type: 'function';
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+export interface OllamaToolCall {
+  function: { name: string; arguments: Record<string, unknown> };
+}
+
+/** Messages of a tool-using conversation. Separate from OllamaChatMessage on purpose: roleplay chat
+ * only ever has system/user/assistant, and its role-alternation and context-fitting helpers are
+ * written for exactly that. */
+export type OllamaAgentMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string; tool_calls?: OllamaToolCall[] }
+  | { role: 'tool'; content: string; tool_name?: string };
+
+export interface ToolChatRequest {
+  model: string;
+  messages: OllamaAgentMessage[];
+  tools: OllamaToolDefinition[];
+  options?: OllamaOptions;
+  onToken?: (text: string) => void;
+  signal?: AbortSignal;
+}
+
+export interface ToolChatResult {
+  content: string;
+  toolCalls: OllamaToolCall[];
+  promptEvalCount: number | null;
+  evalCount: number | null;
+}
+
+/** Ollama sends arguments as an object, but some models/versions hand back a JSON string. */
+export function normaliseToolArguments(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {
+      // Malformed arguments: treated as none, and the tool reports which argument is missing.
+    }
+  }
+  return {};
+}
+
 export class OllamaClient {
   constructor(
     private hostProvider: () => string = () => DEFAULT_OLLAMA_HOST,
@@ -263,6 +311,66 @@ export class OllamaClient {
   }
 
   /**
+   * One turn of a tool-using conversation (the library assistant). Sends `tools`, streams text
+   * when `onToken` is given, and returns whatever tool calls the model made.
+   *
+   * It does not go through `chat()`: no role-alternation retry (that rewrites a roleplay
+   * transcript and would corrupt a tool exchange) and no message dropping -- the caller owns the
+   * history budget, because dropping a tool result from the middle would leave a dangling call.
+   * The context window is `options.num_ctx` when the caller sets it (the assistant has its own),
+   * else the roleplay chat's.
+   */
+  async chatWithTools(request: ToolChatRequest): Promise<ToolChatResult> {
+    const stream = typeof request.onToken === 'function';
+    const response = await this.request(
+      '/api/chat',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          tools: request.tools,
+          stream,
+          think: false,
+          options: { ...request.options, num_ctx: request.options?.num_ctx ?? this.contextProvider() },
+        }),
+        signal: request.signal,
+      },
+      CHAT_TIMEOUT_MS
+    );
+
+    let content = '';
+    const toolCalls: OllamaToolCall[] = [];
+    let promptEvalCount: number | null = null;
+    let evalCount: number | null = null;
+
+    const take = (chunk: OllamaChatChunk) => {
+      if (chunk.error) throw new OllamaUnavailableError(this.host, chunk.error);
+      const delta = chunk.message?.content ?? '';
+      if (delta) {
+        content += delta;
+        request.onToken?.(delta);
+      }
+      for (const call of chunk.message?.tool_calls ?? []) {
+        const name = call.function?.name;
+        if (name) toolCalls.push({ function: { name, arguments: normaliseToolArguments(call.function?.arguments) } });
+      }
+      if (chunk.done) {
+        promptEvalCount = chunk.prompt_eval_count ?? null;
+        evalCount = chunk.eval_count ?? null;
+      }
+    };
+
+    if (stream) {
+      for await (const chunk of readNdjson<OllamaChatChunk>(response)) take(chunk);
+    } else {
+      take((await response.json()) as OllamaChatChunk);
+    }
+    return { content, toolCalls, promptEvalCount, evalCount };
+  }
+
+  /**
    * Embeddings for memory retrieval. This replaces KVGenius's in-process
    * sentence-transformers model, which also removes the torch dependency and the
    * Blackwell/sm_120 SDPA workaround its semantic_index.py had to carry.
@@ -346,7 +454,7 @@ interface OllamaTagsModel {
 }
 
 interface OllamaChatChunk {
-  message?: { role?: string; content?: string };
+  message?: { role?: string; content?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] };
   done?: boolean;
   prompt_eval_count?: number;
   eval_count?: number;
