@@ -3,6 +3,12 @@ import LimitedTextarea from '../LimitedTextarea';
 import { FIELD_LIMITS } from '../../../shared/fieldLimits';
 import { formatResponseTime } from '../../utils/formatResponseTime';
 
+/** A drafted persona line; `starred` marks a keeper while paging through the others. */
+interface Suggestion {
+  text: string;
+  starred: boolean;
+}
+
 interface Props {
   disabled: boolean;
   isGenerating: boolean;
@@ -55,7 +61,7 @@ export default function Composer({
 
   // Drafts for "what might my persona say next". Use this sends the shown text as the next
   // turn; Edit lets you change it in this card first. The composer box is left alone.
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [suggesting, setSuggesting] = useState(false);
   const [editingSuggestion, setEditingSuggestion] = useState(false);
@@ -94,7 +100,7 @@ export default function Composer({
     try {
       const suggestion = await onSuggest();
       setSuggestions((current) => {
-        const next = [...current, suggestion];
+        const next = [...current, { text: suggestion, starred: false }];
         setSuggestionIndex(next.length - 1);
         return next;
       });
@@ -108,7 +114,12 @@ export default function Composer({
     setSuggestionIndex((i) => (i + delta + suggestions.length) % suggestions.length);
   };
 
-  const currentSuggestion = suggestions[suggestionIndex] ?? '';
+  const currentSuggestion = suggestions[suggestionIndex]?.text ?? '';
+  const starredSuggestions = suggestions.flatMap((s, i) => (s.starred ? [i] : []));
+
+  const toggleSuggestionStar = () => {
+    setSuggestions((current) => current.map((s, i) => (i === suggestionIndex ? { ...s, starred: !s.starred } : s)));
+  };
 
   const sendSuggestion = () => {
     const text = currentSuggestion.trim();
@@ -182,13 +193,23 @@ export default function Composer({
               autoFocus
               onChange={(e) => {
                 const next = e.target.value;
-                setSuggestions((current) => current.map((s, i) => (i === suggestionIndex ? next : s)));
+                setSuggestions((current) => current.map((s, i) => (i === suggestionIndex ? { ...s, text: next } : s)));
               }}
             />
           ) : (
             <p className="chat-suggestion-text">{currentSuggestion}</p>
           )}
           <div className="chat-suggestion-actions">
+            <button
+              type="button"
+              className={`chat-variant-btn chat-variant-star-btn${suggestions[suggestionIndex]?.starred ? ' chat-variant-star-btn-active' : ''}`}
+              onClick={toggleSuggestionStar}
+              title={suggestions[suggestionIndex]?.starred ? 'Unstar this suggestion' : 'Star this suggestion'}
+              aria-label={suggestions[suggestionIndex]?.starred ? 'Unstar this suggestion' : 'Star this suggestion'}
+              aria-pressed={Boolean(suggestions[suggestionIndex]?.starred)}
+            >
+              {suggestions[suggestionIndex]?.starred ? '★' : '☆'}
+            </button>
             {suggestions.length > 1 && (
               <>
                 <button type="button" className="chat-variant-btn" onClick={() => stepSuggestion(-1)} aria-label="Previous suggestion">
@@ -201,6 +222,24 @@ export default function Composer({
                   ›
                 </button>
               </>
+            )}
+            {starredSuggestions.length > 0 && (
+              <div className="chat-variant-star-chips">
+                {starredSuggestions.map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`chat-variant-star-chip${i === suggestionIndex ? ' chat-variant-star-chip-active' : ''}`}
+                    onClick={() => {
+                      setSuggestionIndex(i);
+                      setEditingSuggestion(false);
+                    }}
+                    title="Jump to this starred suggestion"
+                  >
+                    ★ {i + 1}
+                  </button>
+                ))}
+              </div>
             )}
             <button type="button" className="btn" disabled={suggesting} onClick={() => void requestSuggestion()}>
               {suggesting ? 'Thinking…' : 'Another…'}

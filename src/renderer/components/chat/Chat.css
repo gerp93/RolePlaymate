@@ -1912,6 +1912,7 @@
 .chat-suggestion-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1934,10 +1935,9 @@
   gap: 8px;
 }
 
-/* "Respond as" sits between the transcript and the composer, lined up under the "Continue as ..."
-   links (same left inset) and above the composer's divider. */
+/* "Respond as" sits under the composer, after the message is written. */
 .chat-respond-as-bar {
-  padding: 4px 16px 10px 74px;
+  padding: 8px 0 0;
 }
 
 .chat-respond-as {
@@ -1947,18 +1947,46 @@
   gap: 8px;
 }
 
-.chat-respond-as-field {
-  display: inline-flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
+.chat-respond-as-label,
+.chat-respond-as-lead {
   font-size: 12px;
   color: var(--color-text-muted);
 }
 
-.chat-respond-as select.chat-respond-as-active {
+.chat-respond-as-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* A guest on the row: a checkbox pill, filled while it is the one answering next. */
+.chat-respond-as-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-respond-as-chip-on {
   border-color: var(--color-primary-action);
   font-weight: 600;
+}
+
+.chat-respond-as-unpin {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.chat-respond-as-unpin:hover {
+  color: var(--color-text);
 }
 
 .chat-respond-as-new {
