@@ -25,6 +25,11 @@ const STARTERS = [
   'Check my characters for contradictions',
 ];
 
+/** The conversation last open, kept across the page being left and reopened (module scope outlives the
+ * component). Visiting /assistant with no id returns to it, so leaving mid-reply and coming back lands
+ * in the same conversation instead of an empty page. "New" and delete clear it. */
+let lastConversationId: string | null = null;
+
 const DEFAULT_SETTINGS: AssistantSettings = { model: '', contextWindow: DEFAULT_ASSISTANT_CONTEXT_WINDOW, styleGuide: '' };
 
 function AssistantInner() {
@@ -43,6 +48,8 @@ function AssistantInner() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // A message typed while a reply is still being written: sent when that reply finishes.
+  const [queued, setQueued] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(true);
 
   // The stream listener is attached once, so it reads the current conversation through a ref.
@@ -51,6 +58,9 @@ function AssistantInner() {
   // A conversation this page just created is already in state; reloading it as the route changes could
   // overwrite a run that has begun by then.
   const justCreated = useRef<string | null>(null);
+  // How the last run ended, so a queued message is only sent after a clean finish -- never after a
+  // Stop or an error, where the user would not expect it to go out.
+  const outcomeRef = useRef<'done' | 'error' | 'cancelled' | null>(null);
 
   const refreshList = useCallback(async () => {
     setConversations(await window.electronAPI.assistant.listConversations());
@@ -63,11 +73,15 @@ function AssistantInner() {
       setMessages(data.messages);
       setProposals(data.proposals);
       setRunning(data.running);
-      setLiveText('');
-      setStatus('');
+      // A run that was going while the page was away has written text no event will resend: pick it up
+      // here and the stream carries on from where this snapshot ends.
+      setLiveText(data.live?.text ?? '');
+      setStatus(data.live && data.live.calls.length > 0 ? `${data.live.calls.map(describeToolCall).join(', ')}...` : '');
       setError(null);
+      lastConversationId = id;
     } catch {
       // Gone, or hidden again since the link was made.
+      lastConversationId = null;
       setConversation(null);
       setMessages([]);
       setProposals([]);
@@ -93,6 +107,7 @@ function AssistantInner() {
       return;
     }
     if (conversationId) void load(conversationId);
+    else if (lastConversationId) navigate(`/assistant/${lastConversationId}`, { replace: true });
     else {
       setConversation(null);
       setMessages([]);
@@ -100,7 +115,7 @@ function AssistantInner() {
       setRunning(false);
       setLiveText('');
     }
-  }, [conversationId, load, hiddenUnlocked]);
+  }, [conversationId, load, hiddenUnlocked, navigate]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.assistant.onStream((event: AssistantStreamEvent) => {
@@ -108,6 +123,7 @@ function AssistantInner() {
       const terminal = event.type === 'done' || event.type === 'error' || event.type === 'cancelled';
       if (terminal) void refreshList();
       if (!mine) return;
+      if (terminal) outcomeRef.current = event.type as 'done' | 'error' | 'cancelled';
 
       switch (event.type) {
         case 'token':
@@ -150,29 +166,75 @@ function AssistantInner() {
     const created = await window.electronAPI.assistant.createConversation();
     activeId.current = created.id;
     justCreated.current = created.id;
+    lastConversationId = created.id;
     setConversation(created);
     navigate(`/assistant/${created.id}`, { replace: true });
     await refreshList();
     return created;
   };
 
-  const send = async () => {
-    const content = draft.trim();
-    if (!content || running) return;
+  const submit = async (content: string, fromDraft: boolean) => {
     setError(null);
+    outcomeRef.current = null;
     try {
       const target = await ensureConversation();
       setRunning(true);
-      setDraft('');
+      if (fromDraft) setDraft('');
       const result = await window.electronAPI.assistant.send({ conversationId: target.id, content });
       setMessages((list) => (list.some((m) => m.id === result.userMessage.id) ? list : [...list, result.userMessage]));
     } catch (e) {
       setRunning(false);
       setError(e instanceof Error ? e.message : String(e));
+      // A queued message that could not go out is given back, not lost.
+      if (!fromDraft) setDraft((d) => (d.trim() ? `${content}\n\n${d}` : content));
     }
   };
 
+  /** Sends now, or -- while a reply is still being written -- queues it behind that reply. */
+  const send = () => {
+    const content = draft.trim();
+    if (!content) return;
+    if (running) {
+      setQueued((q) => (q ? `${q}\n\n${content}` : content));
+      setDraft('');
+      return;
+    }
+    void submit(content, true);
+  };
+
+  /** Stop and undo: removes this exchange (your message, its tool results and proposals) and puts your
+   * text back in the box so you can steer it differently. Nothing in the library is touched. */
+  const rollback = async () => {
+    if (!conversation) return;
+    try {
+      const { content } = await window.electronAPI.assistant.rollback(conversation.id);
+      await load(conversation.id);
+      setDraft((d) => (d.trim() ? `${content}\n\n${d}` : content));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const takeBackQueued = () => {
+    if (queued) setDraft((d) => (d.trim() ? `${queued}\n\n${d}` : queued));
+    setQueued(null);
+  };
+
+  // When a run ends: a clean finish sends what was queued; anything else (Stop, error, leaving the
+  // conversation) puts it back in the box for the user to decide.
+  useEffect(() => {
+    if (running || !queued) return;
+    const text = queued;
+    const outcome = outcomeRef.current;
+    setQueued(null);
+    outcomeRef.current = null;
+    if (outcome === 'done') void submit(text, false);
+    else setDraft((d) => (d.trim() ? `${text}\n\n${d}` : text));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, queued]);
+
   const newConversation = () => {
+    lastConversationId = null;
     navigate('/assistant');
     setDraft('');
   };
@@ -181,6 +243,7 @@ function AssistantInner() {
     if (!window.confirm('Delete this conversation? Anything you already applied to the library stays.')) return;
     await window.electronAPI.assistant.deleteConversation(id);
     await refreshList();
+    if (lastConversationId === id) lastConversationId = null;
     if (conversation?.id === id) navigate('/assistant');
   };
 
@@ -250,17 +313,28 @@ function AssistantInner() {
             </p>
           )}
           {error && <p className="field-error" style={{ marginTop: 0 }}>{error}</p>}
+          {queued && (
+            <div className="assistant-queued">
+              <span className="text-muted">Queued, sends when the reply finishes: {queued.length > 90 ? `${queued.slice(0, 90)}…` : queued}</span>
+              <button type="button" className="btn" onClick={takeBackQueued}>
+                Take back
+              </button>
+            </div>
+          )}
           <LimitedTextarea
             limit={FIELD_LIMITS.chatMessage}
             rows={3}
             value={draft}
-            disabled={running}
-            placeholder="Ask for ideas, ask what's in your library, or ask for a draft. Enter sends, Shift+Enter adds a line."
+            placeholder={
+              running
+                ? 'Type your next message. Enter queues it until the reply finishes.'
+                : "Ask for ideas, ask what's in your library, or ask for a draft. Enter sends, Shift+Enter adds a line."
+            }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                void send();
+                send();
               }
             }}
           />
@@ -268,15 +342,31 @@ function AssistantInner() {
             <span className="text-muted" style={{ fontSize: 12 }}>
               {conversation?.model || settings.model || 'No model chosen'}
             </span>
-            {running ? (
-              <button type="button" className="btn btn-danger" onClick={() => conversation && void window.electronAPI.assistant.cancel(conversation.id)}>
-                Stop
+            <span className="assistant-composer-buttons">
+              {running && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    title="Stop and remove this exchange, putting your message back in the box. Nothing in the library is changed."
+                    onClick={() => void rollback()}
+                  >
+                    Stop &amp; roll back
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    title="Stop here and keep what has been said so far."
+                    onClick={() => conversation && void window.electronAPI.assistant.cancel(conversation.id)}
+                  >
+                    Stop
+                  </button>
+                </>
+              )}
+              <button type="button" className="btn btn-primary" disabled={!draft.trim() || noModel} onClick={send}>
+                {running ? 'Queue next' : 'Send'}
               </button>
-            ) : (
-              <button type="button" className="btn btn-primary" disabled={!draft.trim() || noModel} onClick={() => void send()}>
-                Send
-              </button>
-            )}
+            </span>
           </div>
         </div>
       </div>

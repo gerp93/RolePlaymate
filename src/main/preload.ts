@@ -421,6 +421,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteConversation: (id: string) => ipcRenderer.invoke('assistant:deleteConversation', id),
     send: (request: unknown) => ipcRenderer.invoke('assistant:send', request),
     cancel: (id: string) => ipcRenderer.invoke('assistant:cancel', id),
+    rollback: (id: string) => ipcRenderer.invoke('assistant:rollback', id),
     applyProposal: (id: string) => ipcRenderer.invoke('assistant:applyProposal', id),
     rejectProposal: (id: string) => ipcRenderer.invoke('assistant:rejectProposal', id),
     // Returns an unsubscribe closure -- call it on effect teardown or every remount leaks a listener.

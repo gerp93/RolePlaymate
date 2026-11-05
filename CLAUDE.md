@@ -671,6 +671,23 @@ terminal event (`done` | `error` | `cancelled`), like `chat:stream`. Tools: `lis
 `find_similar`, `propose_new_version`, `propose_create`, `update_notes`. Few, coarse tools on purpose -- small models call a handful
 reliably. Tool results are plain labelled text, not JSON. The assistant is refused during a speed test (`assertNoSpeedTest`).
 
+**Composer while a reply is running.** The box is never locked. Enter *queues* the message (`queued` in `Assistant.tsx`) and it is
+sent when the run ends -- but only after a clean `done`; after a Stop, an error, or leaving the conversation it goes back into the box
+instead, so nothing is sent the user did not expect. **Stop** halts generation and keeps what was said. **Stop & roll back**
+(`assistant:rollback` -> `AssistantManager.rollbackLastTurn`) cancels, waits for the run to finish writing, then deletes the latest user
+message and everything after it (replies, tool results, and their proposals -- explicitly, since `message_id` is `ON DELETE SET NULL`),
+restores the working notes to what they were when the turn began (`notesBeforeTurn`, in memory), and returns the user's text for the
+box. It never touches the library; if a proposal from that exchange was already applied it refuses and changes nothing (the change
+stays in the version history regardless).
+
+**Leaving the page mid-reply.** A run lives in the main process, so it survives the page unmounting, but the text it is writing is
+only stored when the turn completes and the page held it in its own state. `AssistantManager` therefore tracks what has been shown
+(`live`: the streaming text since the last stored message, plus the tools in flight, updated in `track` as events pass through
+`send`), and `assistant:getConversation` returns it as `live` next to `messages` and `running`. `load()` seeds the page with it, and
+the stream carries on from there; without it a reopened page showed the reply only from that moment on. `/assistant` with no id
+returns to the conversation last open (`lastConversationId`, module scope in `Assistant.tsx`), so the nav link does not land on an
+empty page; "+ New" and deleting that conversation clear it.
+
 **Context strategy** (the "how does it remember" question): the library is never put in the prompt. The system prompt carries a names-only
 index (`renderLibraryIndex`) and the model reads what it needs with `read_item`. History is sent as whole *turns*
 (`buildRequestMessages`: a turn = a user message plus the tool calls and replies after it), newest first until the window is full, never

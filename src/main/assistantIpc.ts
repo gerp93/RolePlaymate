@@ -52,6 +52,9 @@ export function registerAssistantIpc(deps: AssistantIpcDeps): void {
       messages: store.getMessages(id),
       proposals: store.listProposals(id),
       running: manager.isRunning(id),
+      // What the running turn has written so far, so a page that was left and reopened can show the
+      // whole reply and carry on streaming from there.
+      live: manager.getLive(id),
     };
   });
 
@@ -88,6 +91,9 @@ export function registerAssistantIpc(deps: AssistantIpcDeps): void {
     };
     return manager.start(request.conversationId, request.content, emit);
   });
+
+  // Stop and undo: removes the latest exchange and hands the user's text back to put in the box.
+  ipcMain.handle('assistant:rollback', (_, id: string) => manager.rollbackLastTurn(id));
 
   ipcMain.handle('assistant:cancel', (_, id: string) => {
     accessible(id);

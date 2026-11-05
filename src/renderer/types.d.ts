@@ -22,6 +22,7 @@ import {
   AssistantProposal,
   AssistantSettings,
   AssistantStreamEvent,
+  AssistantToolCall,
 } from '../shared/types/assistant';
 import { PersonaImage } from '../shared/types/personaImage';
 import { ImageGenAspect, ImageGenResult, ImageGenSaveTarget, ImageGenStatus } from '../shared/types/imageGen';
@@ -475,6 +476,8 @@ declare global {
           proposals: AssistantProposal[];
           /** True when a run is still going (the page was left and reopened mid-run). */
           running: boolean;
+          /** What that run has written but not yet stored: the reply so far and the tools in flight. */
+          live: { text: string; calls: AssistantToolCall[] } | null;
         }>;
         renameConversation: (id: string, title: string) => Promise<AssistantConversation>;
         setModel: (id: string, model: string) => Promise<AssistantConversation>;
@@ -482,6 +485,8 @@ declare global {
         deleteConversation: (id: string) => Promise<{ success: true }>;
         send: (request: { conversationId: string; content: string }) => Promise<{ streamId: string; userMessage: AssistantMessage }>;
         cancel: (id: string) => Promise<{ success: true }>;
+        /** Stops any run, removes the latest exchange, and returns the user's text to put back in the box. */
+        rollback: (id: string) => Promise<{ content: string }>;
         /** A failed apply resolves with the proposal marked `failed` and the reason, rather than rejecting. */
         applyProposal: (id: string) => Promise<{ proposal: AssistantProposal; message: string }>;
         rejectProposal: (id: string) => Promise<AssistantProposal>;

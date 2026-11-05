@@ -279,6 +279,23 @@
   padding-top: 10px;
 }
 
+.assistant-queued {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.assistant-composer-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .assistant-composer-row {
   display: flex;
   justify-content: space-between;

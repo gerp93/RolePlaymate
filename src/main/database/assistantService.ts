@@ -190,6 +190,29 @@ export class AssistantService {
     });
   }
 
+  /**
+   * Removes every message from `seq` on, and the proposals made in them. Throws (changing nothing) if one
+   * of those proposals was already applied: the library change stays in the version history either way,
+   * and deleting its card would only hide that it happened. Returns how many messages were removed.
+   */
+  rollbackFrom(conversationId: string, seq: number): number {
+    return transaction(this.db, () => {
+      const ids = this.getMessages(conversationId).filter((m) => m.seq >= seq).map((m) => m.id);
+      const proposals = this.listProposals(conversationId).filter((p) => p.messageId && ids.includes(p.messageId));
+      if (proposals.some((p) => p.status === 'applied')) {
+        throw new Error(
+          'A change from this exchange was already applied to the library, so it cannot be rolled back here. It stays in that item\'s version history.'
+        );
+      }
+      // Proposals first: their message link is ON DELETE SET NULL, so deleting the messages alone would
+      // leave them behind with nothing to show them.
+      for (const proposal of proposals) this.db.prepare(`DELETE FROM assistant_proposals WHERE id = ?`).run(proposal.id);
+      this.db.prepare(`DELETE FROM assistant_messages WHERE conversation_id = ? AND seq >= ?`).run(conversationId, seq);
+      this.db.prepare(`UPDATE assistant_conversations SET updated_at = ? WHERE id = ?`).run(new Date().toISOString(), conversationId);
+      return ids.length;
+    });
+  }
+
   // --- proposals -------------------------------------------------------------------------
 
   createProposal(conversationId: string, messageId: string | null, draft: ProposalDraft): AssistantProposal {

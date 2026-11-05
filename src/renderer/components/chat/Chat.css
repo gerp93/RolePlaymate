@@ -489,7 +489,10 @@
   align-items: center;
   gap: 4px;
   flex: 1 1 160px;
-  min-width: 0;
+  /* Never smaller than what is inside it. With min-width: 0 the tray shrank to nothing while its
+     control (min-width 140px) and speech button kept their size and overflowed it, ending up underneath
+     the buttons that follow. */
+  min-width: min-content;
 }
 
 .chat-tts-control {
@@ -1700,6 +1703,9 @@
 
 .chat-message-footer {
   display: flex;
+  /* Wrap rather than squeeze: on a narrow bubble the buttons used to be shrunk past their contents and
+     painted over one another (Branch covering the speech button). */
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin-top: 8px;

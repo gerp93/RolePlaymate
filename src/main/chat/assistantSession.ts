@@ -114,6 +114,14 @@ export class AssistantBusyError extends Error {
 
 export class AssistantManager {
   private running = new Map<string, AbortController>();
+  /** Settles when a conversation's run has fully wound down, so a rollback can wait for it. */
+  private finished = new Map<string, Promise<void>>();
+  /** The working notes as they were when the latest turn began, so a rollback can undo `update_notes`. */
+  private notesBeforeTurn = new Map<string, string>();
+  /** What a running turn has written but not yet stored (the reply still streaming, the tool in flight).
+   * The page keeps this only in its own state, so without it leaving the page and coming back shows the
+   * reply from that moment on instead of from its start. */
+  private live = new Map<string, { text: string; calls: AssistantToolCall[] }>();
 
   constructor(
     private store: AssistantService,
@@ -124,6 +132,37 @@ export class AssistantManager {
 
   isRunning(conversationId: string): boolean {
     return this.running.has(conversationId);
+  }
+
+  /** The in-progress text and the tools in flight for a running turn, or null when nothing is running. */
+  getLive(conversationId: string): { text: string; calls: AssistantToolCall[] } | null {
+    const live = this.live.get(conversationId);
+    return live ? { text: live.text, calls: [...live.calls] } : null;
+  }
+
+  /** Keeps `live` equal to what the window has been shown, event by event. */
+  private track(conversationId: string, event: AssistantStreamEvent): void {
+    const live = this.live.get(conversationId);
+    if (!live) return;
+    switch (event.type) {
+      case 'token':
+        live.text += event.text;
+        break;
+      case 'message':
+        live.text = ''; // now stored, and returned with the messages
+        break;
+      case 'toolCalls':
+        live.calls = event.calls;
+        break;
+      case 'toolResult':
+        live.calls = [];
+        break;
+      case 'done':
+      case 'error':
+      case 'cancelled':
+        this.live.delete(conversationId);
+        break;
+    }
   }
 
   cancel(conversationId: string): void {
@@ -165,9 +204,44 @@ export class AssistantManager {
 
     const controller = new AbortController();
     this.running.set(conversationId, controller);
+    this.notesBeforeTurn.set(conversationId, conversation.notes);
+    this.live.set(conversationId, { text: '', calls: [] });
     const streamId = randomUUID();
-    void this.run(conversationId, model, streamId, controller, emit);
+    const done = this.run(conversationId, model, streamId, controller, emit);
+    this.finished.set(conversationId, done);
+    void done.finally(() => {
+      if (this.finished.get(conversationId) === done) this.finished.delete(conversationId);
+    });
     return { streamId, userMessage };
+  }
+
+  /**
+   * Undoes the latest exchange: stops the run if one is going, then removes the user's message and
+   * everything the model did after it (replies, tool results, proposals) and restores the working
+   * notes. Returns the user's text so the caller can put it back in the box to try again.
+   *
+   * It only ever touches the assistant's own conversation. Nothing in the library is changed here, and
+   * nothing from the turn can have been applied unless the user clicked Apply mid-run -- in which case
+   * the rollback is refused, because that change stays in the version history regardless.
+   */
+  async rollbackLastTurn(conversationId: string): Promise<{ content: string }> {
+    this.assertAccessible(this.store.getConversation(conversationId));
+    if (this.running.has(conversationId)) {
+      this.cancel(conversationId);
+      await this.finished.get(conversationId); // let the run finish writing before anything is deleted
+    }
+    const lastUser = [...this.store.getMessages(conversationId)].reverse().find((m) => m.role === 'user');
+    if (!lastUser) throw new Error('There is nothing to roll back.');
+
+    const removed = this.store.rollbackFrom(conversationId, lastUser.seq);
+    const notes = this.notesBeforeTurn.get(conversationId);
+    if (notes !== undefined) this.store.setNotes(conversationId, notes);
+    this.notesBeforeTurn.delete(conversationId);
+    // A conversation rolled back to nothing is untitled again, so the next message names it.
+    if (removed > 0 && this.store.getMessages(conversationId).length === 0) {
+      this.store.renameConversation(conversationId, DEFAULT_ASSISTANT_TITLE);
+    }
+    return { content: lastUser.content };
   }
 
   private async run(
@@ -178,6 +252,7 @@ export class AssistantManager {
     emit: (event: AssistantStreamEvent) => void
   ): Promise<void> {
     const send = (event: AssistantStreamEvent) => {
+      this.track(conversationId, event);
       try {
         emit(event);
       } catch {
@@ -246,6 +321,7 @@ export class AssistantManager {
       }
     } finally {
       this.running.delete(conversationId);
+      this.live.delete(conversationId); // also covers a run that ended without a terminal event
     }
   }
 
