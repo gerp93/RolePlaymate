@@ -354,8 +354,9 @@ owner's. `getSession`/`reconstructGroupPending` use the same test on a cold star
 `assertHiddenContentAccessible` refuses a conversation with a hidden guest while locked, like a
 group's hidden member.
 
-The "Respond as" picker sits between the transcript and the composer, under the "Continue as"
-links and above the composer's divider, and resets after each send. Under the last message,
+The "Respond as" picker sits **under the composer**. Guests who already have a line in the chat, plus ones pinned by hand
+(a quick character is pinned when created; per-conversation `respondAsPins:<id>` in localStorage), show as checkboxes --
+one at a time, since a reply has one speaker; the "＋ Add..." dropdown pins others. The pick resets after each send, the pins stay. Under the last message,
 "Continue as <owner>" stays as it always was and gains a second link for whoever the picker
 currently holds (`continueOptions` in `Chat.tsx`; `handleContinue` takes an optional speaker that
 beats the picker).

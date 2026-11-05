@@ -166,6 +166,32 @@ export default function Chat() {
   useEffect(() => {
     setRespondAsId('');
   }, [conversationId]);
+  // Guests pinned by hand to the "Respond as" row, per conversation (a per-viewer convenience, so
+  // localStorage rather than the database). Guests who have spoken in the chat show regardless.
+  const pinStorageKey = `respondAsPins:${conversationId ?? 'new'}`;
+  const [pinnedGuestIds, setPinnedGuestIds] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(pinStorageKey) ?? '[]');
+      setPinnedGuestIds(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      setPinnedGuestIds([]);
+    }
+  }, [pinStorageKey]);
+  const savePinnedGuests = useCallback(
+    (update: (current: string[]) => string[]) => {
+      setPinnedGuestIds((current) => {
+        const next = update(current);
+        try {
+          localStorage.setItem(pinStorageKey, JSON.stringify(next));
+        } catch {
+          // Pins just won't outlive the page.
+        }
+        return next;
+      });
+    },
+    [pinStorageKey]
+  );
   const [groups, setGroups] = useState<GroupWithMembers[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [scenarioId, setScenarioId] = useState('');
@@ -917,6 +943,27 @@ export default function Chat() {
     [characters, characterId, hiddenUnlocked]
   );
 
+  // The "Respond as" row: guests who already have a line in this chat (always shown), then the ones
+  // pinned by hand. Everyone else is in the picker's dropdown.
+  const { pinnedGuests, removablePinIds, otherGuests } = useMemo(() => {
+    const spoken = new Set<string>();
+    for (const message of session.messages) {
+      if (message.role === 'assistant' && message.speakerCharacterId) spoken.add(message.speakerCharacterId);
+    }
+    const order = [...spoken, ...pinnedGuestIds.filter((id) => !spoken.has(id))];
+    const byId = new Map(guestCharacters.map((c) => [c.id, c]));
+    const pinned = order.flatMap((id) => {
+      const guest = byId.get(id);
+      return guest ? [guest] : [];
+    });
+    const pinnedIds = new Set(pinned.map((c) => c.id));
+    return {
+      pinnedGuests: pinned,
+      removablePinIds: new Set(pinned.filter((c) => !spoken.has(c.id)).map((c) => c.id)),
+      otherGuests: guestCharacters.filter((c) => !pinnedIds.has(c.id)),
+    };
+  }, [session.messages, pinnedGuestIds, guestCharacters]);
+
   // The "Continue as ..." links under the last message: always the conversation's own character
   // (in a group, whoever is up next), plus the guest currently picked in "Respond as", if any.
   const continueOptions = (() => {
@@ -1582,9 +1629,6 @@ export default function Chat() {
                   }
                 />
 
-              {/* Under the "Continue as ..." links and above the composer's divider line, so the
-                  speaker is picked right where a reply or a Continue is about to be asked for. A
-                  group's roster bar already does this job, so it isn't shown there. */}
               {sceneSuggestion &&
                 sceneSuggestion.conversationId === conversationId &&
                 sceneSuggestion.messageId === latestAssistantMessage?.id &&
@@ -1597,19 +1641,6 @@ export default function Chat() {
                     onDismiss={() => setSceneSuggestion(null)}
                   />
                 )}
-
-              {canChat && !groupId && character && (
-                <div className="chat-respond-as-bar">
-                  <RespondAsPicker
-                    leadName={character.name}
-                    guests={guestCharacters}
-                    value={respondAsId}
-                    onChange={setRespondAsId}
-                    onCreate={handleCreateGuest}
-                    disabled={session.isGenerating}
-                  />
-                </div>
-              )}
 
               <AutomationLock
                 locked={automation.automatingHere || speedTest.running}
@@ -1726,6 +1757,25 @@ export default function Chat() {
                 }
               />
               </AutomationLock>
+
+              {/* Below the composer, so who answers is picked after the message is written. A
+                  group's roster bar already does this job, so it isn't shown there. */}
+              {canChat && !groupId && character && (
+                <div className="chat-respond-as-bar">
+                  <RespondAsPicker
+                    leadName={character.name}
+                    pinned={pinnedGuests}
+                    removableIds={removablePinIds}
+                    others={otherGuests}
+                    value={respondAsId}
+                    onChange={setRespondAsId}
+                    onPin={(id) => savePinnedGuests((current) => (current.includes(id) ? current : [...current, id]))}
+                    onUnpin={(id) => savePinnedGuests((current) => current.filter((x) => x !== id))}
+                    onCreate={handleCreateGuest}
+                    disabled={session.isGenerating}
+                  />
+                </div>
+              )}
 
               {tts.error && (
                 <p className="chat-tts-error text-muted">
