@@ -31,6 +31,13 @@ some read paths write (`getVersionsByField` self-heals the active-version
 invariant). Because WAL keeps recent commits in a `-wal` sidecar, anything that
 copies the database file must close it first -- see `dbLocation.setDbPath`.
 
+**Index every foreign-key child column.** SQLite enforces `ON DELETE CASCADE` / `SET NULL` by looking up child rows
+for each parent row removed; with no index on the child column that lookup scans the whole table. Deleting a conversation
+(retention, delete chat) used to cost rows-deleted x rows-in-library because `messages.selected_variant_id` and
+`conversation_memories.message_id` had none, which froze the main process for minutes. A new FK column needs its index
+in `schema.ts` (`deleteConversation.test.ts` pins these two and times a delete beside a large bystander chat), and
+`chatRetention.ts` yields to the event loop between deletions so a long cleanup cannot block input.
+
 ## Commands
 
 ```bash

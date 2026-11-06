@@ -753,7 +753,10 @@ export class ConversationService {
    * unlinked first -- CASCADE only drops the rows, not the files beside the database. */
   deleteConversation(id: string): void {
     this.deleteTtsFilesForConversation(id);
-    this.db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+    // One transaction: without it every cascaded row is its own committed write (and WAL sync).
+    transaction(this.db, () => {
+      this.db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+    });
   }
 
   private deleteTtsFilesForConversation(conversationId: string): void {

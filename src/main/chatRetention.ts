@@ -25,6 +25,7 @@ export interface ChatRetentionRuntime {
 
 let runtime: ChatRetentionRuntime | null = null;
 let midnightTimer: ReturnType<typeof setTimeout> | null = null;
+let running = false;
 /** Conversation currently on the Chat page. Skipped by in-session cleanup so the user isn't
  * yanked out of a thread they're looking at. Null on launch (nothing is open yet). */
 let activeConversationId: string | null = null;
@@ -35,7 +36,7 @@ export function setRetentionActiveConversation(id: string | null): void {
 
 export function startChatRetention(next: ChatRetentionRuntime): void {
   runtime = next;
-  runChatRetention('auto');
+  void runAutoRetention();
   scheduleNextMidnightRun();
 }
 
@@ -53,9 +54,14 @@ export function saveChatRetentionRules(rules: unknown): { rules: ChatRetentionRu
 
 /** `auto` uses only rules with automatic cleanup enabled. `now` uses every rule.
  * Pass `ruleId` to run a single saved rule (manual, ignores that rule's autoRun flag). */
-export function runChatRetention(trigger: 'auto' | 'now' = 'auto', ruleId?: string): ChatRetentionRunResult {
+export async function runChatRetention(
+  trigger: 'auto' | 'now' = 'auto',
+  ruleId?: string
+): Promise<ChatRetentionRunResult> {
   const empty: ChatRetentionRunResult = { deletedIds: [], deletedCount: 0 };
   if (!runtime) return empty;
+  // One pass at a time: a second would list the same candidates and race the first's deletes.
+  if (running) return empty;
 
   const saved = getChatRetentionState().rules;
   const rules = ruleId
@@ -65,10 +71,28 @@ export function runChatRetention(trigger: 'auto' | 'now' = 'auto', ruleId?: stri
     return empty;
   }
 
-  return applyRetentionRules(rules);
+  running = true;
+  try {
+    return await applyRetentionRules(rules);
+  } finally {
+    running = false;
+  }
 }
 
-function applyRetentionRules(rules: ChatRetentionRule[]): ChatRetentionRunResult {
+async function runAutoRetention(): Promise<void> {
+  try {
+    await runChatRetention('auto');
+  } catch (error) {
+    console.error('Chat retention failed:', error);
+  }
+}
+
+/** Deleting is synchronous SQLite work on the main process, which also pumps every window's input.
+ * Hand control back to the event loop whenever a slice runs long so a big cleanup cannot freeze the UI. */
+const YIELD_AFTER_MS = 40;
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function applyRetentionRules(rules: ChatRetentionRule[]): Promise<ChatRetentionRunResult> {
   const empty: ChatRetentionRunResult = { deletedIds: [], deletedCount: 0 };
   if (!runtime) return empty;
 
@@ -78,18 +102,29 @@ function applyRetentionRules(rules: ChatRetentionRule[]): ChatRetentionRunResult
 
   const deletedIds: string[] = [];
   const candidates = listEnrichedCandidates();
-  for (const candidate of candidates) {
-    if (skip.has(candidate.id)) continue;
-    if (runtime.isGenerating(candidate.id)) continue;
-    if (!conversationMatchesAnyRule(candidate, rules, nowMs)) continue;
-    runtime.dropSession(candidate.id);
-    runtime.conversations.deleteConversation(candidate.id);
-    deletedIds.push(candidate.id);
-  }
-
-  recordChatRetentionRun(deletedIds.length);
-  if (deletedIds.length > 0) {
-    runtime.broadcastDeleted(deletedIds);
+  let sliceStart = Date.now();
+  try {
+    for (const candidate of candidates) {
+      // Awaiting lets the app carry on, so re-check that the runtime and the conversation are still valid.
+      if (!runtime) break;
+      if (skip.has(candidate.id)) continue;
+      if (candidate.id === activeConversationId) continue;
+      if (runtime.isGenerating(candidate.id)) continue;
+      if (!conversationMatchesAnyRule(candidate, rules, nowMs)) continue;
+      runtime.dropSession(candidate.id);
+      runtime.conversations.deleteConversation(candidate.id);
+      deletedIds.push(candidate.id);
+      if (Date.now() - sliceStart > YIELD_AFTER_MS) {
+        await yieldToEventLoop();
+        sliceStart = Date.now();
+      }
+    }
+  } finally {
+    // Report what was deleted even if one delete threw, so the renderer drops those chats.
+    if (runtime) {
+      recordChatRetentionRun(deletedIds.length);
+      if (deletedIds.length > 0) runtime.broadcastDeleted(deletedIds);
+    }
   }
   return { deletedIds, deletedCount: deletedIds.length };
 }
@@ -138,7 +173,7 @@ function msUntilNextLocalMidnight(): number {
 function scheduleNextMidnightRun(): void {
   if (midnightTimer) clearTimeout(midnightTimer);
   midnightTimer = setTimeout(() => {
-    runChatRetention('auto');
+    void runAutoRetention();
     scheduleNextMidnightRun();
   }, msUntilNextLocalMidnight());
 }
