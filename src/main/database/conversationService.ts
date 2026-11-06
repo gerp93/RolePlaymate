@@ -759,6 +759,25 @@ export class ConversationService {
     });
   }
 
+  /**
+   * Same outcome as {@link deleteConversation}, but in small committed steps so a caller can let the app
+   * breathe between them (retention, with a progress bar). Each step removes up to `chunk` messages -- their
+   * variants and extracted memories cascade with them -- and yields how many went; the conversation row
+   * goes last. Stopping part-way leaves a shorter conversation, never a broken one.
+   */
+  *deleteConversationSteps(id: string, chunk = 100): Generator<number, void, void> {
+    this.deleteTtsFilesForConversation(id);
+    const removeSome = this.db.prepare(
+      `DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE conversation_id = ? LIMIT ?)`
+    );
+    for (;;) {
+      const removed = Number(removeSome.run(id, chunk).changes);
+      if (removed === 0) break;
+      yield removed;
+    }
+    this.db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+  }
+
   private deleteTtsFilesForConversation(conversationId: string): void {
     const messagePaths = this.db
       .prepare(`SELECT tts_audio_path as path FROM messages WHERE conversation_id = ? AND tts_audio_path IS NOT NULL`)

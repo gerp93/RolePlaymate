@@ -68,6 +68,27 @@ export interface ChatRetentionRunResult {
   deletedCount: number;
 }
 
+/** Live state of a cleanup, pushed to Settings so the rule can show a progress bar. Units are messages
+ * (plus one per chat), so a bar over a few huge chats moves as smoothly as one over many small ones. */
+export interface ChatRetentionProgress {
+  running: boolean;
+  /** The single rule being run, or null when every rule (or the automatic pass) is. */
+  ruleId: string | null;
+  chatsDone: number;
+  chatsTotal: number;
+  unitsDone: number;
+  unitsTotal: number;
+}
+
+export const IDLE_RETENTION_PROGRESS: ChatRetentionProgress = {
+  running: false,
+  ruleId: null,
+  chatsDone: 0,
+  chatsTotal: 0,
+  unitsDone: 0,
+  unitsTotal: 0,
+};
+
 /** One conversation row as the matcher sees it — timestamps are ISO-8601. */
 export interface RetentionCandidate {
   id: string;

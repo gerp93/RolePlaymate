@@ -362,6 +362,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setRules: (rules: unknown) => ipcRenderer.invoke('retention:setRules', rules),
     runNow: (ruleId?: string) => ipcRenderer.invoke('retention:runNow', ruleId),
     preview: (rules: unknown) => ipcRenderer.invoke('retention:preview', rules),
+    getProgress: () => ipcRenderer.invoke('retention:getProgress'),
+    onProgress: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('retention:progress', handler);
+      return () => ipcRenderer.removeListener('retention:progress', handler);
+    },
     setActiveConversation: (id: string | null) =>
       ipcRenderer.invoke('retention:setActiveConversation', id),
     onCleaned: (callback: (payload: unknown) => void) => {

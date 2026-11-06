@@ -109,3 +109,34 @@ test('deleting chats stays fast when the library holds many other messages', () 
     assert.ok(elapsed < 2000, `delete took ${elapsed} ms`);
   });
 });
+
+test('deleteConversationSteps removes the same rows in small steps and reports each step', () => {
+  withService((conversations, characterId, db) => {
+    const make = () => {
+      const c = conversations.createConversation({ characterId, model: 'm', greeting: 'Hello' });
+      for (let i = 0; i < 7; i++) {
+        conversations.appendMessage({ conversationId: c.id, role: 'user', content: `u${i}` });
+        const reply = conversations.appendAssistantMessage(c.id, `r${i}`, 'm', {} as never, 10).message;
+        conversations.addMemory({ conversationId: c.id, content: `fact ${i}`, source: 'auto', messageId: reply.id });
+      }
+      conversations.addMemory({ conversationId: c.id, content: 'pinned', source: 'manual' });
+      return c;
+    };
+    const doomed = make();
+    const kept = make();
+    const total = conversations.getMessages(doomed.id).length;
+    const keptMessages = conversations.getMessages(kept.id).length;
+
+    const steps = [...conversations.deleteConversationSteps(doomed.id, 4)];
+
+    assert.ok(steps.length > 1, 'should take more than one step');
+    assert.ok(steps.every((n) => n > 0 && n <= 4));
+    assert.equal(steps.reduce((a, b) => a + b, 0), total);
+    assert.equal(conversations.getConversation(doomed.id), null);
+    assert.equal(conversations.listMemories(doomed.id).length, 0);
+    // Only the kept chat's 7 replies still have variants (its greeting has none).
+    assert.equal(count(db, 'message_variants'), 7);
+    assert.equal(conversations.getMessages(kept.id).length, keptMessages);
+    assert.equal(conversations.listMemories(kept.id).length, 8);
+  });
+});

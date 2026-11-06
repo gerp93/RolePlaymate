@@ -84,6 +84,7 @@ import {
   stopChatRetention,
   saveChatRetentionRules,
   runChatRetention,
+  getRetentionProgress,
   previewRetentionMatches,
   setRetentionActiveConversation,
 } from './chatRetention';
@@ -1025,6 +1026,13 @@ app.whenReady().then(async () => {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
           win.webContents.send('conversations:retention-cleaned', { deletedIds });
+        }
+      }
+    },
+    broadcastProgress: (progress) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('retention:progress', progress);
         }
       }
     },
@@ -2116,6 +2124,7 @@ function registerIPCHandlers() {
   ipcMain.handle('retention:runNow', (_, ruleId?: unknown) =>
     typeof ruleId === 'string' && ruleId ? runChatRetention('now', ruleId) : runChatRetention('now')
   );
+  ipcMain.handle('retention:getProgress', () => getRetentionProgress());
   ipcMain.handle('retention:preview', (_, rules: unknown) => previewRetentionMatches(rules));
   ipcMain.handle('retention:setActiveConversation', (_, id: string | null) => {
     setRetentionActiveConversation(typeof id === 'string' ? id : null);
