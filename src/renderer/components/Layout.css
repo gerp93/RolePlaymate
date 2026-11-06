@@ -249,6 +249,29 @@
   box-shadow: 0 0 0 1px var(--color-accent-red);
 }
 
+.settings-retention-progress {
+  margin: 8px 0;
+}
+
+.settings-retention-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.settings-retention-progress-fill {
+  height: 100%;
+  background: var(--color-accent-green);
+  transition: width 120ms linear;
+}
+
+.settings-retention-progress-label {
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .settings-retention-unsaved-msg {
   color: var(--color-accent-red);
   font-size: 13px;

@@ -45,7 +45,7 @@ import {
   PersonaBackgroundVersion,
 } from '../shared/types/userPersona';
 import { Conversation, ConversationListItem, CreateConversationInput, ImageMode } from '../shared/types/conversation';
-import { ChatRetentionRule, ChatRetentionState, ChatRetentionRunResult } from '../shared/retention';
+import { ChatRetentionProgress, ChatRetentionRule, ChatRetentionState, ChatRetentionRunResult } from '../shared/retention';
 import {
   Scenario,
   ScenarioVersion,
@@ -440,6 +440,8 @@ declare global {
         setRules: (rules: ChatRetentionRule[]) => Promise<{ rules: ChatRetentionRule[] }>;
         runNow: (ruleId?: string) => Promise<ChatRetentionRunResult>;
         preview: (rules: ChatRetentionRule[]) => Promise<Record<string, number>>;
+        getProgress: () => Promise<ChatRetentionProgress>;
+        onProgress: (callback: (progress: ChatRetentionProgress) => void) => () => void;
         setActiveConversation: (id: string | null) => Promise<{ success: true }>;
         onCleaned: (callback: (payload: { deletedIds: string[] }) => void) => () => void;
       };

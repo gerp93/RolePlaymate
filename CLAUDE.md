@@ -36,7 +36,11 @@ for each parent row removed; with no index on the child column that lookup scans
 (retention, delete chat) used to cost rows-deleted x rows-in-library because `messages.selected_variant_id` and
 `conversation_memories.message_id` had none, which froze the main process for minutes. A new FK column needs its index
 in `schema.ts` (`deleteConversation.test.ts` pins these two and times a delete beside a large bystander chat), and
-`chatRetention.ts` yields to the event loop between deletions so a long cleanup cannot block input.
+retention deletes through `ConversationService.deleteConversationSteps` (100 messages per committed step) and
+`chatRetention.ts` yields to the event loop between steps, so a long cleanup cannot block input and reports
+`ChatRetentionProgress` on `retention:progress` (also readable via `retention:getProgress` for a Settings page opened
+mid-run); the rule shows a progress bar and the panel stays usable. Units are messages, not chats. A run stopped
+part-way (crash) leaves a shorter chat, never a broken one.
 
 ## Commands
 

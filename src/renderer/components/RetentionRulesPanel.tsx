@@ -1,7 +1,9 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChatRetentionProgress,
   ChatRetentionRule,
   ChatRetentionState,
+  IDLE_RETENTION_PROGRESS,
   MAX_RETENTION_RULES,
   RETENTION_AGE_DAYS,
   RETENTION_AGE_LABELS,
@@ -60,7 +62,10 @@ export default function RetentionRulesPanel({
   const { hiddenUnlocked } = useSecurity();
   const [state, setState] = useState<ChatRetentionState | null>(null);
   const [drafts, setDrafts] = useState<RetentionRuleDraft[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [progress, setProgress] = useState<ChatRetentionProgress>(IDLE_RETENTION_PROGRESS);
+  // Busy while a cleanup runs, whoever started it (this panel, or the automatic pass at launch/midnight).
+  const busy = starting || progress.running;
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scopeByRuleId, setScopeByRuleId] = useState<Record<string, number>>({});
@@ -244,7 +249,7 @@ export default function RetentionRulesPanel({
     ) {
       return;
     }
-    setBusy(true);
+    setStarting(true);
     setError(null);
     try {
       const result = await window.electronAPI.retention.runNow(ruleId);
@@ -254,9 +259,32 @@ export default function RetentionRulesPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cleanup failed.');
     } finally {
-      setBusy(false);
+      setStarting(false);
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const off = window.electronAPI.retention.onProgress((next) => {
+      if (!cancelled) setProgress(next);
+    });
+    void window.electronAPI.retention.getProgress().then((current) => {
+      if (!cancelled) setProgress((prev) => (prev.running ? prev : current));
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  // A pass that ended (automatic ones too) changes what the saved state and the live counts say.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !progress.running) {
+      void window.electronAPI.retention.get().then(setState);
+    }
+    wasRunning.current = progress.running;
+  }, [progress.running]);
 
   const scopeKey = state
     ? `${JSON.stringify(state.rules)}\0${state.lastRunAt ?? ''}\0${state.lastDeletedCount}`
@@ -370,6 +398,7 @@ export default function RetentionRulesPanel({
                       </button>
                     </div>
                   </div>
+                  {progress.running && progress.ruleId === rule.id && <CleanupProgress progress={progress} />}
                   {unsaved ? (
                     <p className="settings-retention-unsaved-msg">
                       This rule isn&apos;t saved. Set every field before it can run.
@@ -439,6 +468,7 @@ export default function RetentionRulesPanel({
           </button>
         )}
       </div>
+      {progress.running && progress.ruleId === null && <CleanupProgress progress={progress} />}
       {rules.length > 0 && (
         <>
           <p className="text-muted settings-subsection-notice">{formatLastRun(state)}</p>
@@ -449,6 +479,29 @@ export default function RetentionRulesPanel({
         <p style={{ color: 'var(--color-accent-red)', fontSize: 13, marginTop: 8, marginBottom: 0 }}>{error}</p>
       )}
     </>
+  );
+}
+
+function CleanupProgress({ progress }: { progress: ChatRetentionProgress }) {
+  const percent =
+    progress.unitsTotal > 0 ? Math.min(100, Math.floor((progress.unitsDone / progress.unitsTotal) * 100)) : 0;
+  const chats = progress.chatsTotal === 1 ? '1 chat' : `${progress.chatsTotal} chats`;
+  return (
+    <div className="settings-retention-progress" role="status" aria-live="polite">
+      <div
+        className="settings-retention-progress-bar"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-label="Cleanup progress"
+      >
+        <div className="settings-retention-progress-fill" style={{ width: `${percent}%` }} />
+      </div>
+      <span className="text-muted settings-retention-progress-label">
+        Deleting… {progress.chatsDone} of {chats} ({percent}%). You can keep using the app.
+      </span>
+    </div>
   );
 }
 
