@@ -357,6 +357,12 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   migrateScenariosToNullableOwner(db);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_group ON conversations(group_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_speaker ON messages(speaker_character_id)`);
+  // Foreign-key children that were never indexed. SQLite enforces ON DELETE CASCADE / SET NULL by looking
+  // up child rows for every parent row removed; with no index each lookup is a scan of the whole child
+  // table, so deleting a conversation (retention, "Delete chat") cost messages x memories plus
+  // variants x messages -- minutes of a frozen main process on a library with a few thousand messages.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_selected_variant ON messages(selected_variant_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_message ON conversation_memories(message_id)`);
   // The non-static mode was originally called 'random' (reroll per message); it's since become
   // 'carousel' (auto-cycle every 10s in the margin portraits). ensureColumn only sets the
   // DEFAULT for brand-new databases, so existing rows written under the old default need a
