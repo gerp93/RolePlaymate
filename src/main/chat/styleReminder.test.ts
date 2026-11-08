@@ -23,6 +23,17 @@ test('directions, the scene note and the memory-continuity rule appear only when
   assert.match(full, /Scene continuity/);
 });
 
+test('a mood appears only when set, names the speaker, and is framed as holding until changed', () => {
+  assert.doesNotMatch(buildStyleReminder(base), /mood/i);
+  assert.doesNotMatch(buildStyleReminder({ ...base, mood: '   ' }), /mood/i);
+  assert.doesNotMatch(buildStyleReminder({ ...base, mood: null }), /mood/i);
+
+  const text = buildStyleReminder({ ...base, mood: ' guarded and a little hurt ' });
+  assert.match(text, /Mara's current mood \(set by the user; it holds until they change it\): guarded and a little hurt\./);
+  // It colors the personality rather than replacing it.
+  assert.match(text, /staying true to Mara's personality/);
+});
+
 test('a redo made for overused wording names what was reused', () => {
   const text = buildStyleReminder({ ...base, retryAvoid: ['heart pounding'] });
   assert.match(text, /"heart pounding"/);

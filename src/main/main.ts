@@ -184,6 +184,7 @@ import {
   guardChatMessage,
   guardDirections,
   guardSceneNote,
+  guardMood,
   guardMemory,
   guardStopPhrasesUpdate,
   guardUrl,
@@ -2075,6 +2076,13 @@ function registerIPCHandlers() {
     guardSceneNote(note);
     assertNotAutomating(id);
     return conversationService.setSceneNote(id, note);
+  });
+
+  // One speaker's mood (what they feel right now), shown to the model on every turn they reply. Empty clears it.
+  ipcMain.handle('conversations:setMood', (_, id: string, speakerId: string, mood: string | null) => {
+    guardMood(mood);
+    assertNotAutomating(id);
+    return conversationService.setMood(id, speakerId, mood);
   });
 
   ipcMain.handle('conversations:setKeepForever', (_, id: string, keepForever: boolean) =>

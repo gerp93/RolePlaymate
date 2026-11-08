@@ -25,6 +25,13 @@ interface Props {
   onDirectionsChange: (value: string) => void;
   directionsOpen: boolean;
   onDirectionsOpenChange: (open: boolean) => void;
+  /** The next speaker's persistent mood. Unlike directions it is saved on the conversation and kept from
+   * message to message until changed. Hidden when omitted (no conversation yet). */
+  mood?: {
+    speakerName: string;
+    value: string;
+    onSave: (value: string) => void;
+  };
   /** Model picker rendered on the same row as Send, under the textarea. */
   modelPicker: ReactNode;
   messageCount?: ReactNode;
@@ -39,7 +46,8 @@ interface Props {
  * right sidebar's Settings tab -- see ChatSettingsPanel.
  *
  * Directions are transient by design: they are injected into this turn's system prompt and
- * then cleared, never stored on the conversation.
+ * then cleared, never stored on the conversation. Mood is their persistent sibling: saved on the
+ * conversation (per speaker) and sent with every reply until the user changes it.
  */
 export default function Composer({
   disabled,
@@ -52,12 +60,20 @@ export default function Composer({
   onDirectionsChange,
   directionsOpen,
   onDirectionsOpenChange,
+  mood,
   modelPicker,
   messageCount,
   onSkipDialogue,
   skipDialogueReady,
 }: Props) {
   const [message, setMessage] = useState('');
+
+  // Mood is edited locally and saved when the field loses focus, so typing is not a save per keystroke.
+  // Reset whenever the saved value changes -- including when the next speaker changes in a group.
+  const [moodOpen, setMoodOpen] = useState(false);
+  const savedMood = mood?.value ?? '';
+  const [moodDraft, setMoodDraft] = useState(savedMood);
+  useEffect(() => setMoodDraft(savedMood), [savedMood, mood?.speakerName]);
 
   // Drafts for "what might my persona say next". Use this sends the shown text as the next
   // turn; Edit lets you change it in this card first. The composer box is left alone.
@@ -164,7 +180,35 @@ export default function Composer({
         >
           🎬 Directions{directions.trim() ? ' •' : ''}
         </button>
+        {mood && (
+          <button
+            type="button"
+            className={`btn chat-mood-toggle${moodOpen ? ' active' : ''}`}
+            title={`${mood.speakerName}'s mood: kept and sent with every reply until you change it`}
+            onClick={() => setMoodOpen(!moodOpen)}
+          >
+            🎭 Mood{savedMood.trim() ? ' •' : ''}
+          </button>
+        )}
       </div>
+
+      {mood && moodOpen && (
+        <LimitedTextarea
+          className="chat-directions chat-mood"
+          limit={FIELD_LIMITS.mood}
+          compactCount
+          fieldClassName="chat-directions-field"
+          placeholder={`How ${mood.speakerName} feels right now — kept for every reply until you change it. e.g. guarded and a little hurt, trying not to show it.`}
+          aria-label={`${mood.speakerName}'s mood`}
+          value={moodDraft}
+          disabled={disabled}
+          onChange={(e) => setMoodDraft(e.target.value)}
+          onBlur={() => {
+            if (moodDraft.trim() !== savedMood.trim()) mood.onSave(moodDraft);
+          }}
+          rows={2}
+        />
+      )}
 
       {directionsOpen && (
         <LimitedTextarea

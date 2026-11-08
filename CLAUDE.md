@@ -418,6 +418,30 @@ second model call competing with the next reply for the GPU, which is why it is 
 setting matters. **Automated runs and speed tests pass `suggestScene: false`** (no one to answer, and it would add a call to
 every timing); the scene note itself still applies to a run, and its Scene section is locked while one is going.
 
+## Mood
+
+The persistent sibling of per-message directions. The composer's **🎭 Mood** button (beside 🎬 Directions) opens a
+box for how the *next speaker* feels right now -- "guarded and a little hurt, trying not to show it" -- which is kept
+from message to message until the user changes it, so a character cannot wander into a feeling their personality and
+the moment do not support. Directions are for this reply only and are cleared on send; a mood is saved.
+
+It is stored per **speaker**, not per conversation: `conversations.moods` is a JSON object of character id -> text
+(`shared/utils/mood.ts`: `parseMoods` / `withMood` / `serializeMoods`, pure and tested; a bad column reads as no moods, never a
+throw). One shared mood would make every character in a group, or a guest from "Respond as", feel the same. A JSON
+column rather than a table means no foreign key to index and nothing to cascade when a character is deleted; a deleted
+character's entry is simply never read. The composer edits `moodSpeakerId` in `Chat.tsx` -- `(!groupId && respondAsId) ||
+characterId`, the same pick send/continue use -- so the box follows the group's round-robin and the "Respond as" picker.
+
+It reaches the model the way the scene note does, and for the same reason: `buildStyleReminder`'s `mood` line at the very
+end of the request (the system prompt is too far from the reply to hold a 12B model), placed right after directions and
+before the scene note. It is code-built, not a prompt template, so an existing install gets it and a redo picks up an edit
+(`ChatSessionManager.moodFor` reads the row fresh in send, redo, edit-and-regenerate and continue; a redo uses
+`pending.speakerId`). The wording says it colors the personality rather than replacing it, and not to change state without
+a reason in the scene. It is capped at `FIELD_LIMITS.mood` (300), saved on blur through `conversations:setMood` (refused
+during an automated run, like the scene note), and does not bump `updated_at`. A whole-chat branch copies the moods; a
+branch cut at an earlier message does not, same as the scene note, since a mood describes now. Not done: suggesting a
+mood from the transcript (the scene check could do it), and putting it in the persona-reply drafter.
+
 ## Branching a conversation
 
 Every message has a "Branch" button in its footer (`MessageList`'s `onBranchFrom`, hidden while generating), and the

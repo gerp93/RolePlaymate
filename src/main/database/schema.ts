@@ -344,6 +344,10 @@ export function initDatabase(dbPath?: string, password?: string): DatabaseSync {
   // Where the story is now and what is happening, in a sentence or two; shown to the model on every
   // turn until it is changed. Per conversation, edited by the user (or accepted from a suggestion).
   ensureColumn(db, 'conversations', 'scene_note', 'TEXT');
+  // What each speaker is feeling, as a JSON object of character id -> mood text (shared/utils/mood.ts).
+  // Not a table: it is a handful of short strings read with the conversation row, and keying by id in
+  // JSON means no foreign key to index and nothing to cascade when a character is deleted.
+  ensureColumn(db, 'conversations', 'moods', 'TEXT');
   // Seconds the user was actually active in this chat (see shared/utils/activeTimeClock.ts), added to
   // by the chat page every few seconds. Not message timestamps: it excludes time away from the chat.
   ensureColumn(db, 'conversations', 'active_seconds', 'INTEGER NOT NULL DEFAULT 0');

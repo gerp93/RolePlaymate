@@ -213,6 +213,7 @@ export function withStyleReminder(
   directions?: string,
   hasMemories = false,
   sceneNote?: string | null,
+  mood?: string | null,
   retryAvoid?: string[]
 ): OllamaChatMessage[] {
   const reminder = buildStyleReminder({
@@ -224,6 +225,7 @@ export function withStyleReminder(
     directions,
     hasMemories,
     sceneNote,
+    mood,
     retryAvoid,
   });
 
@@ -695,6 +697,14 @@ export class ChatSessionManager {
     return this.conversations.getConversation(conversationId)?.sceneNote ?? null;
   }
 
+  /** The mood the user set for this speaker (null when none) -- read fresh every time, like the scene note, so a
+   * redo after editing it uses the new text. The reply's speaker, not the conversation's owner: in a group or
+   * with a guest speaker each character feels their own. */
+  private moodFor(conversationId: string, speakerId: string | null | undefined): string | null {
+    if (!speakerId) return null;
+    return this.conversations.getConversation(conversationId)?.moods[speakerId] ?? null;
+  }
+
   /** Asks Ollama to drop a model from memory (best effort). A speed test does this between models so
    * each one is timed from a cold start, with the GPU to itself. */
   unloadModel(model: string): Promise<void> {
@@ -852,7 +862,8 @@ export class ChatSessionManager {
       groupTurn?.otherNames,
       request.directions,
       memoryTexts.length > 0,
-      this.sceneNoteFor(request.conversationId)
+      this.sceneNoteFor(request.conversationId),
+      this.moodFor(request.conversationId, request.characterId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1033,6 +1044,7 @@ export class ChatSessionManager {
       pending.directions,
       systemPrompt.includes(`[${TEMPLATE_TAGS.memory}]`),
       this.sceneNoteFor(conversationId),
+      this.moodFor(conversationId, pending.speakerId),
       retryAvoid
     );
 
@@ -1248,7 +1260,8 @@ export class ChatSessionManager {
       groupTurn?.otherNames,
       request.directions,
       memoryTexts.length > 0,
-      this.sceneNoteFor(request.conversationId)
+      this.sceneNoteFor(request.conversationId),
+      this.moodFor(request.conversationId, speakerId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);
@@ -1453,7 +1466,8 @@ export class ChatSessionManager {
       groupTurn?.otherNames,
       directions,
       memoryTexts.length > 0,
-      this.sceneNoteFor(request.conversationId)
+      this.sceneNoteFor(request.conversationId),
+      this.moodFor(request.conversationId, request.characterId)
     );
     const concise = getConciseReplies();
     const options = capForConcise(toOllamaOptions(samplers, built.stopPhrases), concise);

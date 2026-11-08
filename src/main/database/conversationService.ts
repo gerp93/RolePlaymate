@@ -15,6 +15,7 @@ import {
   UpdateUserPersonaInput,
 } from '../../shared/types/userPersona';
 import { parseTtsVoice } from '../../shared/types/tts';
+import { parseMoods, serializeMoods, withMood } from '../../shared/utils/mood';
 import { transaction } from './schema';
 import { SecurityService } from './securityService';
 import { PersonaFieldVersionService } from './personaFieldVersionService';
@@ -38,6 +39,7 @@ const CONVERSATION_COLUMNS = `
   persona_image_id as personaImageId,
   keep_forever as keepForever,
   scene_note as sceneNote,
+  moods,
   active_seconds as activeSeconds,
   created_at as createdAt,
   updated_at as updatedAt
@@ -58,6 +60,7 @@ const CONVERSATION_COLUMNS_FROM_C = `
   c.persona_image_id as personaImageId,
   c.keep_forever as keepForever,
   c.scene_note as sceneNote,
+  c.moods as moods,
   c.active_seconds as activeSeconds,
   c.created_at as createdAt,
   c.updated_at as updatedAt
@@ -148,6 +151,7 @@ function rowToConversation(row: Record<string, unknown>): Conversation {
     personaImageId: (row.personaImageId as string | null) ?? null,
     keepForever: !!row.keepForever,
     sceneNote: (row.sceneNote as string | null) ?? null,
+    moods: parseMoods(row.moods as string | null),
     activeSeconds: Number(row.activeSeconds ?? 0),
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
@@ -481,8 +485,8 @@ export class ConversationService {
           `INSERT INTO conversations
              (id, title, model, character_id, group_id, user_persona_id, scenario_id,
               character_image_mode, character_image_id, scenario_image_id,
-              persona_image_mode, persona_image_id, keep_forever, scene_note, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              persona_image_mode, persona_image_id, keep_forever, scene_note, moods, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           newId,
@@ -502,6 +506,8 @@ export class ConversationService {
           // keeps the whole transcript; one cut earlier starts without it rather than with a
           // description of events it no longer contains.
           upToMessageId ? '' : source.sceneNote,
+          // Moods follow the same rule as the scene note: they describe where the story is now.
+          upToMessageId ? null : serializeMoods(source.moods),
           now,
           now
         );
@@ -678,6 +684,16 @@ export class ConversationService {
     if (!this.getConversation(id)) throw new Error(`Conversation with id ${id} not found`);
     const trimmed = note?.trim() || null;
     this.db.prepare(`UPDATE conversations SET scene_note = ? WHERE id = ?`).run(trimmed, id);
+    return this.getConversation(id)!;
+  }
+
+  /** Sets or clears (empty or whitespace) one speaker's mood in the chat. Other speakers' moods are untouched.
+   * Not activity, so `updated_at` is left alone. */
+  setMood(id: string, speakerId: string, mood: string | null): Conversation {
+    const conversation = this.getConversation(id);
+    if (!conversation) throw new Error(`Conversation with id ${id} not found`);
+    const next = serializeMoods(withMood(conversation.moods, speakerId, mood));
+    this.db.prepare(`UPDATE conversations SET moods = ? WHERE id = ?`).run(next, id);
     return this.getConversation(id)!;
   }
 

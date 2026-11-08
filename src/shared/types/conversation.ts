@@ -40,6 +40,9 @@ export interface Conversation {
   /** Where the story is now and what is happening -- a sentence or two the model is reminded of on
    * every turn until it changes. Null when unset. See ChatSessionManager.sceneNoteFor. */
   sceneNote: string | null;
+  /** What each speaker is feeling right now, keyed by character id, until the user changes it. Only speakers
+   * with a mood appear. See shared/utils/mood.ts and ChatSessionManager.moodFor. */
+  moods: Record<string, string>;
   /** Seconds the user spent actively in this chat (paused while idle or the window is hidden). */
   activeSeconds: number;
   createdAt: string;

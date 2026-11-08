@@ -349,6 +349,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setKeepForever: (id: string, keepForever: boolean) =>
       ipcRenderer.invoke('conversations:setKeepForever', id, keepForever),
     setSceneNote: (id: string, note: string | null) => ipcRenderer.invoke('conversations:setSceneNote', id, note),
+    setMood: (id: string, speakerId: string, mood: string | null) =>
+      ipcRenderer.invoke('conversations:setMood', id, speakerId, mood),
     addActiveSeconds: (id: string, seconds: number) =>
       ipcRenderer.invoke('conversations:addActiveSeconds', id, seconds),
     setImageMode: (id: string, input: unknown) => ipcRenderer.invoke('conversations:setImageMode', id, input),
