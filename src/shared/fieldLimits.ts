@@ -30,6 +30,8 @@ export const FIELD_LIMITS = {
   directions: 2_000,
   /** A chat's scene note: a sentence or two, shown to the model on every turn. */
   sceneNote: 600,
+  /** One speaker's mood in a chat: a short phrase or sentence, shown to the model on every turn. */
+  mood: 300,
   memory: 2_000,
   stopPhrases: 4_000,
   url: 2_048, // Ollama / Chatterbox host strings

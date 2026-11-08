@@ -11,6 +11,8 @@ export interface StyleReminderInput {
   directions?: string;
   /** True when the system prompt carries a memory section this turn. */
   hasMemories?: boolean;
+  /** How this speaker feels right now, as the user last set it; stays until they change it. */
+  mood?: string | null;
   /** The chat's scene note: where the story is now, until the user changes it. */
   sceneNote?: string | null;
   /** On a redo made because the last attempt fell back on overused wording: what it reused. */
@@ -34,6 +36,7 @@ export function buildStyleReminder({
   otherCharacters = [],
   directions,
   hasMemories = false,
+  mood,
   sceneNote,
   retryAvoid,
 }: StyleReminderInput): string {
@@ -44,6 +47,16 @@ export function buildStyleReminder({
   const direction = directions?.trim();
   if (direction) {
     lines.push(`Direction for this reply (the user wants this to happen -- do it): ${direction}`);
+  }
+
+  // The speaker's state of mind. Unlike directions it is not for this reply only: it holds from message
+  // to message until the user changes it, which is what keeps a character from drifting into a feeling
+  // their personality and the moment do not support. It frames the personality rather than replacing it.
+  const moodText = mood?.trim();
+  if (moodText) {
+    lines.push(
+      `${charName}'s current mood (set by the user; it holds until they change it): ${moodText}. Let it color how ${charName} feels, speaks and reacts in this reply, while staying true to ${charName}'s personality -- do not drift into a different emotional state unless the scene gives a real reason, and even then only a little.`
+    );
   }
 
   // Where the story is right now, as the user last set it. The scenario text in the system prompt

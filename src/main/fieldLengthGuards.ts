@@ -48,6 +48,10 @@ export function guardSceneNote(value: string | null | undefined): void {
   assertMaxLength(value, FIELD_LIMITS.sceneNote, 'Scene note');
 }
 
+export function guardMood(value: string | null | undefined): void {
+  assertMaxLength(value, FIELD_LIMITS.mood, 'Mood');
+}
+
 export function guardDirections(value: string | null | undefined): void {
   assertMaxLength(value, FIELD_LIMITS.directions, 'Directions');
 }

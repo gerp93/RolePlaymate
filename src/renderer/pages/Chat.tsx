@@ -244,6 +244,8 @@ export default function Chat() {
   // Where the story is now (shown to the model every turn), and a proposed replacement the latest
   // reply suggested -- see chatSession.checkScene.
   const [sceneNote, setSceneNote] = useState('');
+  // Each speaker's persistent mood (character id -> text), shown to the model on that speaker's replies.
+  const [moods, setMoods] = useState<Record<string, string>>({});
   const [sceneSuggestion, setSceneSuggestion] = useState<{
     conversationId: string;
     messageId: string;
@@ -561,12 +563,14 @@ export default function Chat() {
       setPersonaImageId(conversation.personaImageId);
       setKeepForever(conversation.keepForever);
       setSceneNote(conversation.sceneNote ?? '');
+      setMoods(conversation.moods ?? {});
     })();
   }, [conversationId, navigate]);
 
   useEffect(() => {
     setKeepForever(false);
     setSceneNote('');
+    setMoods({});
     setSceneSuggestion(null);
     void window.electronAPI.retention.setActiveConversation(conversationId ?? null);
     return () => {
@@ -704,6 +708,10 @@ export default function Chat() {
 
   const character = characters.find((c) => c.id === characterId) ?? null;
   const persona = personas.find((p) => p.id === personaId) ?? null;
+  // Whose mood the composer edits: whoever replies next. In a group that is `characterId`; in a one-character
+  // chat it is a guest while "Respond as" holds one, the owner otherwise -- the same pick send/continue use.
+  const moodSpeakerId = (!groupId && respondAsId) || characterId;
+  const moodSpeakerName = characters.find((c) => c.id === moodSpeakerId)?.name ?? '';
   const group = groups.find((g) => g.id === groupId) ?? null;
   const rosterCharacters = useMemo(
     () =>
@@ -1059,6 +1067,15 @@ export default function Chat() {
       } finally {
         setSceneSuggestion(null);
       }
+    },
+    [conversationId]
+  );
+
+  const handleMoodSave = useCallback(
+    async (speakerId: string, mood: string) => {
+      if (!conversationId || !speakerId) return;
+      const updated = await window.electronAPI.conversations.setMood(conversationId, speakerId, mood);
+      setMoods(updated.moods);
     },
     [conversationId]
   );
@@ -1695,6 +1712,15 @@ export default function Chat() {
                 onDirectionsChange={setDirections}
                 directionsOpen={directionsOpen}
                 onDirectionsOpenChange={setDirectionsOpen}
+                mood={
+                  conversationId && moodSpeakerId && moodSpeakerName
+                    ? {
+                        speakerName: moodSpeakerName,
+                        value: moods[moodSpeakerId] ?? '',
+                        onSave: (value) => void handleMoodSave(moodSpeakerId, value),
+                      }
+                    : undefined
+                }
                 // Directions with no message are a turn of their own: the speaker acts on them with
                 // no line from the user, which is what Continue already does (and it already honours
                 // directions), so that is the path they take.

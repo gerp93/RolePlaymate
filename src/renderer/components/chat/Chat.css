@@ -974,7 +974,8 @@
   cursor: not-allowed;
 }
 
-.chat-directions-toggle.active {
+.chat-directions-toggle.active,
+.chat-mood-toggle.active {
   background: var(--color-bg-hover);
 }
 
